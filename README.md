@@ -4,6 +4,13 @@ Documentation, wiring reference, system diagram, and control software for a **FU
 FMC4030 dual-X gantry** — two parallel X rails driven in hardware lockstep, with a Y
 cross-beam riding between them, controlled from a PC over Ethernet.
 
+![Isometric diagram of the dual-X gantry](docs/gantry_iso.png)
+
+<sub>Isometric view of the system: the two X rails (driven in lockstep), the Y cross-beam
+and carriage, the three motors, the FSK40 limit switches, the X-axis cable carrier (drag
+chain), and the control cabinet (FMC4030 controller, three drivers, and 24 V supply).
+Rendered from [`gantry_iso.svg`](gantry_iso.svg).</sub>
+
 This repository contains three things:
 
 | Path | What it is |
