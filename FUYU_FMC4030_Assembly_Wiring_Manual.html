@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FUYU FMC4030 Dual-X Gantry — Assembly &amp; Wiring Manual</title>
+<style>
+  :root{
+    --fuyu-red:#c0202a;
+    --ink:#1d2024;
+    --muted:#5a626b;
+    --line:#d8dce1;
+    --bg:#f4f6f8;
+    --warn-bg:#fff7e6;
+    --warn-br:#e0a800;
+    --danger-bg:#fdecec;
+    --danger-br:#c0202a;
+    --ok-bg:#eafaf0;
+    --ok-br:#1e8e4e;
+    --code-bg:#f0f2f4;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+    line-height:1.55;
+  }
+  .wrap{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 0 20px rgba(0,0,0,.06);}
+  header.cover{
+    background:linear-gradient(135deg,#1d2024 0%,#2c3138 60%,#3a1416 100%);
+    color:#fff;padding:54px 48px 40px;border-bottom:6px solid var(--fuyu-red);
+  }
+  header.cover .brand{font-weight:800;letter-spacing:3px;font-size:15px;color:#fff;opacity:.85;}
+  header.cover .brand span{color:var(--fuyu-red);}
+  header.cover h1{font-size:30px;margin:14px 0 6px;line-height:1.2;}
+  header.cover h2{font-size:17px;font-weight:400;margin:0;color:#c9ced4;}
+  header.cover .meta{margin-top:24px;font-size:13px;color:#aeb4bb;}
+  header.cover .meta b{color:#fff;font-weight:600;}
+
+  nav.toc{padding:26px 48px;background:#fafbfc;border-bottom:1px solid var(--line);}
+  nav.toc h3{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);}
+  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:36px;font-size:14px;}
+  nav.toc li{margin:4px 0;break-inside:avoid;}
+  nav.toc a{color:var(--ink);text-decoration:none;}
+  nav.toc a:hover{color:var(--fuyu-red);text-decoration:underline;}
+
+  main{padding:8px 48px 56px;}
+  section{padding-top:26px;margin-top:18px;border-top:1px solid var(--line);}
+  section:first-of-type{border-top:none;}
+  h2.sec{font-size:22px;color:var(--ink);margin:8px 0 6px;display:flex;align-items:baseline;gap:12px;}
+  h2.sec .num{color:var(--fuyu-red);font-weight:800;font-size:18px;}
+  h3{font-size:16px;margin:22px 0 8px;color:#2c3138;}
+  h4{font-size:14px;margin:16px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0;padding-left:22px;}
+  li{margin:5px 0;}
+  code{background:var(--code-bg);padding:1px 6px;border-radius:4px;font-family:Consolas,"Courier New",monospace;font-size:13px;color:#9c1a22;}
+
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#2c3138;color:#fff;font-weight:600;}
+  tbody tr:nth-child(even){background:#fafbfc;}
+  td.center,th.center{text-align:center;}
+
+  /* Axis colour coding */
+  .ax-xl{background:#e3eefb !important;} /* X-Left  — blue   */
+  .ax-xr{background:#e6f7ea !important;} /* X-Right — green  */
+  .ax-y {background:#f1e9fb !important;} /* Y       — purple */
+  .ax-xpair{background:linear-gradient(105deg,#e3eefb 0,#e3eefb 50%,#e6f7ea 50%,#e6f7ea 100%) !important;} /* shared X signal feeds both rails */
+  .legend{display:flex;gap:20px;flex-wrap:wrap;margin:12px 0;font-size:13px;align-items:center;}
+  .legend b{font-weight:600;color:var(--muted);margin-right:2px;}
+  .legend .lg{display:inline-flex;align-items:center;}
+  .legend .sw{display:inline-block;width:15px;height:15px;border-radius:3px;border:1px solid rgba(0,0,0,.22);margin-right:6px;}
+
+  .on{color:#1e8e4e;font-weight:700;}
+  .off{color:var(--muted);font-weight:700;}
+
+  .wire{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.25);vertical-align:-2px;margin-right:6px;}
+  .w-black{background:#1d2024;} .w-green{background:#1e8e4e;} .w-red{background:#c0202a;}
+  .w-blue{background:#1f6fd6;} .w-brown{background:#7a4a25;} .w-orange{background:#e08a1e;}
+  .w-yellow{background:#e6c200;}
+
+  .callout{border-left:5px solid;padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-size:14px;}
+  .callout b{display:block;margin-bottom:2px;}
+  .warn{background:var(--warn-bg);border-color:var(--warn-br);}
+  .danger{background:var(--danger-bg);border-color:var(--danger-br);}
+  .ok{background:var(--ok-bg);border-color:var(--ok-br);}
+  .note{background:#eef4fb;border-color:#1f6fd6;}
+
+  .ascii{background:#1d2024;color:#e6e9ec;padding:16px 18px;border-radius:8px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.4;overflow-x:auto;white-space:pre;}
+  .ascii .hl{color:#ff6b6b;} .ascii .g{color:#5fd38d;} .ascii .b{color:#6fb3ff;} .ascii .y{color:#ffd166;}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:#fff;}
+  .card h4{margin-top:0;}
+
+  .step{border:1px solid var(--line);border-left:4px solid var(--fuyu-red);border-radius:0 6px 6px 0;padding:10px 16px;margin:10px 0;background:#fff;}
+  .step .tag{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--fuyu-red);text-transform:uppercase;}
+
+  .chk{list-style:none;padding-left:0;}
+  .chk li{padding-left:28px;position:relative;margin:7px 0;}
+  .chk li:before{content:"";position:absolute;left:0;top:2px;width:16px;height:16px;border:2px solid var(--fuyu-red);border-radius:3px;}
+
+  footer{padding:24px 48px;background:#1d2024;color:#aeb4bb;font-size:12px;}
+  footer b{color:#fff;}
+
+  @media print{
+    body{background:#fff;}
+    .wrap{box-shadow:none;max-width:100%;}
+    nav.toc ol{columns:2;}
+    section{break-inside:avoid-page;}
+    header.cover{background:#1d2024 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    th{background:#2c3138 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .ax-xl,.ax-xr,.ax-y,.ax-xpair,.legend .sw,.wire,.callout,.ascii{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
+  @media(max-width:680px){
+    main,header.cover,nav.toc,footer{padding-left:22px;padding-right:22px;}
+    nav.toc ol{columns:1;} .grid2{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="cover">
+  <div class="brand">FU<span>Y</span>U TECHNOLOGY</div>
+  <h1>FMC4030 Dual-X Gantry System<br>Assembly &amp; Wiring Manual</h1>
+  <h2>Hardware build guide — controller, stepper drivers, motors &amp; limit switches</h2>
+  <div class="meta">
+    <b>Configuration:</b> Gantry — two parallel <b>X</b> rails (X-Left &amp; X-Right) driven in hardware lockstep from a single controller axis, with a <b>Y</b> cross-beam riding across them.<br>
+    <b>System:</b> FMC4030 controller · FMDD50D40NOM drivers (×3) · 57HS056TF075A-03 stepper motors (×3) · FSK40 NPN limit switches<br>
+    <b>Axis mapping:</b> Controller <b>axis 1 → both X drivers</b> (shared PU/DR) · axis 2 unused · axis 3 → Y<br>
+    <b>Scope:</b> Mechanical assembly and electrical wiring only. Software/SDK setup is covered separately.<br>
+    <b>Document revision:</b> 1.0 &nbsp;·&nbsp; Compiled from FUYU OEM documentation
+  </div>
+</header>
+
+<nav class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#overview">System Overview</a></li>
+    <li><a href="#bom">Bill of Materials</a></li>
+    <li><a href="#safety">Safety &amp; Tools</a></li>
+    <li><a href="#specs">Component Specifications</a></li>
+    <li><a href="#mech">Mechanical Assembly</a></li>
+    <li><a href="#dip">Driver DIP Switch Setup</a></li>
+    <li><a href="#power">Power Distribution Wiring</a></li>
+    <li><a href="#motor-driver">Motor → Driver Wiring</a></li>
+    <li><a href="#driver-ctrl">Driver → Controller Wiring</a></li>
+    <li><a href="#limits">Limit Switch Wiring</a></li>
+    <li><a href="#io-comm">I/O &amp; Communication</a></li>
+    <li><a href="#pinout">Terminal Reference (Controller &amp; Driver)</a></li>
+    <li><a href="#checklist">Pre-Power Checklist</a></li>
+    <li><a href="#poweron">First Power-On</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#software">Control Software (app)</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 1 -->
+<section id="overview">
+  <h2 class="sec"><span class="num">1</span>System Overview</h2>
+  <p>This is a <b>dual-X gantry</b>. Two parallel rails — <b>X-Left</b> and <b>X-Right</b> — run in the same
+  direction and move together; a <b>Y</b> cross-beam spans between them and travels along their length. Each
+  motor keeps its own FMDD50D40NOM driver, but the <b>two X drivers share one controller axis</b> — they receive
+  the <i>same</i> pulse and direction signals, so the two rails step in perfect hardware lockstep and cannot drift
+  out of sync. The Y beam has its own axis. The gantry is squared <b>mechanically</b> at assembly (it is not
+  squared electronically).</p>
+
+  <p>The FMC4030 is a pulse-type, 3-axis motion controller built around a 32-bit ARM chip. It generates
+  <b>pulse (PU)</b> and <b>direction (DR)</b> signals for three external stepper drivers, reads the
+  axis limit/home switches (this build uses <b>four</b> — a positive/negative pair on X-Left and a pair on Y),
+  and provides 4 digital inputs and 4 digital outputs. A host PC connects over <b>Ethernet</b> (default <code>192.168.0.30 : 8088</code>).</p>
+
+  <h4>Axis mapping</h4>
+  <table>
+    <thead><tr><th>Physical axis</th><th>Controller channel</th><th>Pulse / Dir / 5V</th><th>Limit inputs</th></tr></thead>
+    <tbody>
+      <tr class="ax-xl"><td><b>X-Left</b> (gantry rail 1)</td><td rowspan="2" class="ax-xpair" style="vertical-align:middle"><b>Axis 1</b><br>(both X drivers<br>share this axis)</td><td rowspan="2" class="ax-xpair" style="vertical-align:middle"><code>PU1 / DR1 / 5V</code></td><td><code>LP1 / LN1</code></td></tr>
+      <tr class="ax-xr"><td><b>X-Right</b> (gantry rail 2)</td><td><span style="color:#888">none — no switch fitted</span></td></tr>
+      <tr class="ax-y"><td><b>Y</b> (cross-beam)</td><td>Axis 3</td><td><code>PU3 / DR3 / 5V</code></td><td><code>LP3 / LN3</code></td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted)">Axis 2 (<code>PU2 / DR2</code>) and its limit inputs (<code>LP2 / LN2</code>) are <b>unused</b> — both X drivers are fed from axis 1.</p>
+
+  <div class="legend">
+    <b>Colour key:</b>
+    <span class="lg"><span class="sw ax-xl"></span>X-Left rail</span>
+    <span class="lg"><span class="sw ax-xr"></span>X-Right rail</span>
+    <span class="lg"><span class="sw ax-xpair"></span>Shared X signal (both rails)</span>
+    <span class="lg"><span class="sw ax-y"></span>Y</span>
+  </div>
+  <p style="font-size:13px;color:var(--muted)">Blue = X-Left rail/driver/motor, green = X-Right rail/driver/motor, the blue-green split = the one controller axis that feeds <b>both</b> X drivers, purple = Y. Shared terminals (power, ground, PE, generic I/O) are left uncoloured.</p>
+
+  <h4>Physical layout (isometric)</h4>
+  <figure style="margin:14px 0;border:1px solid var(--line);border-radius:8px;padding:10px 8px 6px;background:#fff">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 400" width="100%" style="height:auto;max-width:600px;display:block;margin:0 auto" font-family="Segoe UI,Arial,sans-serif" role="img" aria-label="Isometric view of the dual-X gantry: Y axis longer than X, with motors and side-mounted limit switches">
+<rect width="520" height="400" fill="#ffffff"/>
+<text x="260" y="24" font-size="14.5" font-weight="700" fill="#1d2024" text-anchor="middle">Dual-X Gantry — isometric</text>
+<polygon points="300.5,48.9 502.0,165.3 219.5,328.4 18.0,212.0" fill="#eef1f4" stroke="#dfe4e9" stroke-width="1.0" stroke-linejoin="round"/>
+<polygon points="411.2,237.4 489.2,282.5 360.1,357.1 282.0,312.0" fill="#e7eaee" stroke="#cfd4da" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="289.1,68.6 431.0,150.6 431.0,165.3 289.1,83.4" fill="#767d84" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="442.4,144.0 431.0,150.6 431.0,165.3 442.4,158.7" fill="#949ca5" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="300.5,62.1 442.4,144.0 431.0,150.6 289.1,68.6" fill="#b9c4cf" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="424.6,141.1 448.8,155.1 448.8,182.9 424.6,169.0" fill="#84252b" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="472.9,141.1 448.8,155.1 448.8,182.9 472.9,169.0" fill="#a52e36" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="448.8,127.2 472.9,141.1 448.8,155.1 424.6,141.1" fill="#cf3a44" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="87.5,185.0 229.5,266.9 229.5,281.7 87.5,199.7" fill="#767d84" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="240.8,260.4 229.5,266.9 229.5,281.7 240.8,275.1" fill="#949ca5" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="98.9,178.4 240.8,260.4 229.5,266.9 87.5,185.0" fill="#b9c4cf" stroke="#5a6671" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="223.1,257.5 247.2,271.4 247.2,299.3 223.1,285.4" fill="#84252b" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="271.4,257.5 247.2,271.4 247.2,299.3 271.4,285.4" fill="#a52e36" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="247.2,243.6 271.4,257.5 247.2,271.4 223.1,257.5" fill="#cf3a44" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="91.8,200.5 101.7,206.3 101.7,217.8 91.8,212.0" fill="#93661d" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="111.7,200.5 101.7,206.3 101.7,217.8 111.7,212.0" fill="#b88024" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="101.7,194.8 111.7,200.5 101.7,206.3 91.8,200.5" fill="#e6a02e" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="195.4,260.4 205.4,266.1 205.4,277.6 195.4,271.8" fill="#93661d" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="215.3,260.4 205.4,266.1 205.4,277.6 215.3,271.8" fill="#b88024" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="205.4,254.6 215.3,260.4 205.4,266.1 195.4,260.4" fill="#e6a02e" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="172.0,288.6 178.4,292.3 178.4,303.0 172.0,299.3" fill="#4c525a" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="188.3,286.6 178.4,292.3 178.4,303.0 188.3,297.2" fill="#646b73" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="181.9,282.9 188.3,286.6 178.4,292.3 172.0,288.6" fill="#828a93" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="99.6,231.3 106.0,235.0 106.0,244.0 99.6,240.3" fill="#4c525a" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="148.6,210.4 106.0,235.0 106.0,244.0 148.6,219.4" fill="#646b73" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="142.2,206.7 148.6,210.4 106.0,235.0 99.6,231.3" fill="#828a93" stroke="#3b4148" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="53.8,221.2 58.9,224.1 58.9,230.7 53.8,227.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.0,220.0 58.9,224.1 58.9,230.7 66.0,226.6" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.9,217.1 66.0,220.0 58.9,224.1 53.8,221.2" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.2,224.9 65.3,227.8 65.3,234.4 60.2,231.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="72.4,223.7 65.3,227.8 65.3,234.4 72.4,230.3" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="67.3,220.8 72.4,223.7 65.3,227.8 60.2,224.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.5,228.6 71.7,231.5 71.7,238.1 66.5,235.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="78.7,227.4 71.7,231.5 71.7,238.1 78.7,234.0" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="73.6,224.5 78.7,227.4 71.7,231.5 66.5,228.6" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="72.9,232.3 78.0,235.2 78.0,241.8 72.9,238.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="85.1,231.1 78.0,235.2 78.0,241.8 85.1,237.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="80.0,228.2 85.1,231.1 78.0,235.2 72.9,232.3" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="79.3,235.9 84.4,238.9 84.4,245.4 79.3,242.5" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="91.5,234.8 84.4,238.9 84.4,245.4 91.5,241.4" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="86.4,231.8 91.5,234.8 84.4,238.9 79.3,235.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="85.7,239.6 90.8,242.6 90.8,249.1 85.7,246.2" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="97.9,238.5 90.8,242.6 90.8,249.1 97.9,245.0" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="92.8,235.5 97.9,238.5 90.8,242.6 85.7,239.6" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="92.1,243.3 97.2,246.3 97.2,252.8 92.1,249.9" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="104.3,242.2 97.2,246.3 97.2,252.8 104.3,248.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="99.2,239.2 104.3,242.2 97.2,246.3 92.1,243.3" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="98.5,247.0 103.6,250.0 103.6,256.5 98.5,253.6" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="110.7,245.9 103.6,250.0 103.6,256.5 110.7,252.4" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="105.6,242.9 110.7,245.9 103.6,250.0 98.5,247.0" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="104.9,250.7 110.0,253.6 110.0,260.2 104.9,257.2" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="117.1,249.5 110.0,253.6 110.0,260.2 117.1,256.1" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="112.0,246.6 117.1,249.5 110.0,253.6 104.9,250.7" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="111.3,254.4 116.4,257.3 116.4,263.9 111.3,260.9" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="123.5,253.2 116.4,257.3 116.4,263.9 123.5,259.8" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="118.3,250.3 123.5,253.2 116.4,257.3 111.3,254.4" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="117.6,258.1 122.7,261.0 122.7,267.6 117.6,264.6" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="129.8,256.9 122.7,261.0 122.7,267.6 129.8,263.5" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="124.7,254.0 129.8,256.9 122.7,261.0 117.6,258.1" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="124.0,261.8 129.1,264.7 129.1,271.3 124.0,268.3" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="136.2,260.6 129.1,264.7 129.1,271.3 136.2,267.2" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="131.1,257.7 136.2,260.6 129.1,264.7 124.0,261.8" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="130.4,265.4 135.5,268.4 135.5,274.9 130.4,272.0" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="142.6,264.3 135.5,268.4 135.5,274.9 142.6,270.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="137.5,261.3 142.6,264.3 135.5,268.4 130.4,265.4" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="136.8,269.1 141.9,272.1 141.9,278.6 136.8,275.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="149.0,268.0 141.9,272.1 141.9,278.6 149.0,274.5" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="143.9,265.0 149.0,268.0 141.9,272.1 136.8,269.1" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="143.2,272.8 148.3,275.8 148.3,282.3 143.2,279.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="155.4,271.7 148.3,275.8 148.3,282.3 155.4,278.2" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="150.3,268.7 155.4,271.7 148.3,275.8 143.2,272.8" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="149.6,276.5 154.7,279.5 154.7,286.0 149.6,283.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="161.8,275.4 154.7,279.5 154.7,286.0 161.8,281.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="156.7,272.4 161.8,275.4 154.7,279.5 149.6,276.5" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="156.0,280.2 161.1,283.1 161.1,289.7 156.0,286.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="168.2,279.0 161.1,283.1 161.1,289.7 168.2,285.6" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="163.1,276.1 168.2,279.0 161.1,283.1 156.0,280.2" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="162.3,283.9 167.5,286.8 167.5,293.4 162.3,290.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="174.6,282.7 167.5,286.8 167.5,293.4 174.6,289.3" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="169.4,279.8 174.6,282.7 167.5,286.8 162.3,283.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="168.7,287.6 173.8,290.5 173.8,297.1 168.7,294.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="180.9,286.4 173.8,290.5 173.8,297.1 180.9,293.0" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="175.8,283.5 180.9,286.4 173.8,290.5 168.7,287.6" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="175.1,291.3 180.2,294.2 180.2,300.8 175.1,297.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="187.3,290.1 180.2,294.2 180.2,300.8 187.3,296.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="182.2,287.2 187.3,290.1 180.2,294.2 175.1,291.3" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="53.8,206.4 58.9,209.4 58.9,215.9 53.8,213.0" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.0,205.3 58.9,209.4 58.9,215.9 66.0,211.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.9,202.3 66.0,205.3 58.9,209.4 53.8,206.4" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.2,210.1 65.3,213.1 65.3,219.6 60.2,216.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="72.4,209.0 65.3,213.1 65.3,219.6 72.4,215.5" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="67.3,206.0 72.4,209.0 65.3,213.1 60.2,210.1" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.5,213.8 71.7,216.8 71.7,223.3 66.5,220.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="78.7,212.7 71.7,216.8 71.7,223.3 78.7,219.2" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="73.6,209.7 78.7,212.7 71.7,216.8 66.5,213.8" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="72.9,217.5 78.0,220.5 78.0,227.0 72.9,224.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="85.1,216.4 78.0,220.5 78.0,227.0 85.1,222.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="80.0,213.4 85.1,216.4 78.0,220.5 72.9,217.5" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="79.3,221.2 84.4,224.1 84.4,230.7 79.3,227.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="91.5,220.0 84.4,224.1 84.4,230.7 91.5,226.6" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="86.4,217.1 91.5,220.0 84.4,224.1 79.3,221.2" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="85.7,224.9 90.8,227.8 90.8,234.4 85.7,231.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="97.9,223.7 90.8,227.8 90.8,234.4 97.9,230.3" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="92.8,220.8 97.9,223.7 90.8,227.8 85.7,224.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="92.1,228.6 97.2,231.5 97.2,238.1 92.1,235.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="104.3,227.4 97.2,231.5 97.2,238.1 104.3,234.0" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="99.2,224.5 104.3,227.4 97.2,231.5 92.1,228.6" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="98.5,232.3 103.6,235.2 103.6,241.8 98.5,238.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="110.7,231.1 103.6,235.2 103.6,241.8 110.7,237.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="105.6,228.2 110.7,231.1 103.6,235.2 98.5,232.3" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="53.8,221.5 58.9,224.5 58.9,230.4 53.8,227.4" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.0,220.4 58.9,224.5 58.9,230.4 66.0,226.3" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.9,217.4 66.0,220.4 58.9,224.5 53.8,221.5" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="51.0,219.2 56.1,222.1 56.1,228.0 51.0,225.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="63.2,218.0 56.1,222.1 56.1,228.0 63.2,223.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="58.1,215.1 63.2,218.0 56.1,222.1 51.0,219.2" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="48.8,215.9 53.9,218.8 53.9,224.7 48.8,221.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="61.0,214.7 53.9,218.8 53.9,224.7 61.0,220.6" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="55.9,211.8 61.0,214.7 53.9,218.8 48.8,215.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="47.5,212.2 52.7,215.1 52.7,221.0 47.5,218.1" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="59.7,211.0 52.7,215.1 52.7,221.0 59.7,216.9" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="54.6,208.1 59.7,211.0 52.7,215.1 47.5,212.2" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="47.5,208.9 52.7,211.9 52.7,217.8 47.5,214.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="59.7,207.8 52.7,211.9 52.7,217.8 59.7,213.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="54.6,204.8 59.7,207.8 52.7,211.9 47.5,208.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="48.8,206.7 53.9,209.6 53.9,215.5 48.8,212.6" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="61.0,205.5 53.9,209.6 53.9,215.5 61.0,211.4" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="55.9,202.6 61.0,205.5 53.9,209.6 48.8,206.7" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="51.0,205.9 56.1,208.8 56.1,214.8 51.0,211.8" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="63.2,204.8 56.1,208.8 56.1,214.8 63.2,210.7" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="58.1,201.8 63.2,204.8 56.1,208.8 51.0,205.9" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="53.8,206.8 58.9,209.7 58.9,215.6 53.8,212.7" fill="#282c31" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="66.0,205.6 58.9,209.7 58.9,215.6 66.0,211.5" fill="#373c42" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="60.9,202.7 66.0,205.6 58.9,209.7 53.8,206.8" fill="#4a5159" stroke="#1b1e22" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="128.7,195.6 145.7,205.5 145.7,218.6 128.7,208.7" fill="#637690" stroke="#3f5f8c" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="358.6,82.5 145.7,205.5 145.7,218.6 358.6,95.7" fill="#7c94b4" stroke="#3f5f8c" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="341.6,72.7 358.6,82.5 145.7,205.5 128.7,195.6" fill="#9cb9e2" stroke="#3f5f8c" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="316.1,107.9 326.0,113.7 326.0,125.2 316.1,119.4" fill="#93661d" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="335.9,107.9 326.0,113.7 326.0,125.2 335.9,119.4" fill="#b88024" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="326.0,102.2 335.9,107.9 326.0,113.7 316.1,107.9" fill="#e6a02e" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="178.4,187.4 188.3,193.2 188.3,204.6 178.4,198.9" fill="#93661d" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="198.3,187.4 188.3,193.2 188.3,204.6 198.3,198.9" fill="#b88024" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="188.3,181.7 198.3,187.4 188.3,193.2 178.4,187.4" fill="#e6a02e" stroke="#8a5413" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="233.7,113.7 256.5,126.8 256.5,144.8 233.7,131.7" fill="#444b53" stroke="#3c434b" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="277.7,114.5 256.5,126.8 256.5,144.8 277.7,132.5" fill="#555e68" stroke="#3c434b" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="255.0,101.4 277.7,114.5 256.5,126.8 233.7,113.7" fill="#6b7682" stroke="#3c434b" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="101.0,192.8 125.2,206.7 125.2,234.5 101.0,220.6" fill="#84252b" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="149.3,192.8 125.2,206.7 125.2,234.5 149.3,220.6" fill="#a52e36" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="125.2,178.8 149.3,192.8 125.2,206.7 101.0,192.8" fill="#cf3a44" stroke="#6f1f25" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="398.4,233.3 435.3,254.6 435.3,275.9 398.4,254.6" fill="#36405a" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="441.0,251.3 435.3,254.6 435.3,275.9 441.0,272.7" fill="#475471" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="404.1,230.0 441.0,251.3 435.3,254.6 398.4,233.3" fill="#5b6a86" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="390.6,237.8 427.5,259.1 427.5,280.4 390.6,259.1" fill="#36405a" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="433.2,255.9 427.5,259.1 427.5,280.4 433.2,277.2" fill="#475471" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="396.3,234.5 433.2,255.9 427.5,259.1 390.6,237.8" fill="#5b6a86" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="382.8,242.3 419.7,263.6 419.7,284.9 382.8,263.6" fill="#36405a" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="425.4,260.4 419.7,263.6 419.7,284.9 425.4,281.7" fill="#475471" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="388.5,239.1 425.4,260.4 419.7,263.6 382.8,242.3" fill="#5b6a86" stroke="#2c3550" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="343.7,273.9 387.7,299.3 387.7,311.6 343.7,286.2" fill="#21272e" stroke="#15191e" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="416.1,282.9 387.7,299.3 387.7,311.6 416.1,295.2" fill="#2c343c" stroke="#15191e" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="372.1,257.5 416.1,282.9 387.7,299.3 343.7,273.9" fill="#3a454f" stroke="#15191e" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="303.3,294.8 361.5,328.4 361.5,343.1 303.3,309.5" fill="#8d949b" stroke="#7a828a" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="391.3,311.2 361.5,328.4 361.5,343.1 391.3,325.9" fill="#a8afb6" stroke="#7a828a" stroke-width="1.3" stroke-linejoin="round"/>
+<polygon points="333.1,277.6 391.3,311.2 361.5,328.4 303.3,294.8" fill="#c4cad0" stroke="#7a828a" stroke-width="1.3" stroke-linejoin="round"/>
+<line x1="240.8" y1="88.3" x2="348.7" y2="150.6" stroke="#c0202a" stroke-width="3" stroke-linecap="round"/>
+<polygon points="240.8,88.3 249.8,88.3 245.3,96.1" fill="#c0202a" stroke="#c0202a" stroke-width="0"/>
+<polygon points="348.7,150.6 339.7,150.6 344.2,142.8" fill="#c0202a" stroke="#c0202a" stroke-width="0"/>
+<line x1="333.1" y1="59.6" x2="154.3" y2="162.8" stroke="#1f6fd6" stroke-width="2.6" stroke-linecap="round"/>
+<polygon points="333.1,59.6 328.6,67.4 324.1,59.6" fill="#1f6fd6" stroke="#1f6fd6" stroke-width="0"/>
+<polygon points="154.3,162.8 158.8,155.1 163.3,162.8" fill="#1f6fd6" stroke="#1f6fd6" stroke-width="0"/>
+<line x1="372.8" y1="110.4" x2="418.9" y2="115.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="372.8" cy="110.4" r="2.2" fill="#9aa3ac"/>
+<text x="504.0" y="120.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="end">X-RIGHT rail</text>
+<line x1="448.8" y1="155.1" x2="477.0" y2="194.6" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="448.8" cy="155.1" r="2.2" fill="#9aa3ac"/>
+<text x="504.0" y="209.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="end">X motors</text>
+<line x1="255.7" y1="114.1" x2="432.4" y2="149.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="255.7" cy="114.1" r="2.2" fill="#9aa3ac"/>
+<text x="504.0" y="154.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="end">Y carriage</text>
+<line x1="125.2" y1="192.8" x2="67.3" y2="195.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="125.2" cy="192.8" r="2.2" fill="#9aa3ac"/>
+<text x="16.0" y="200.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="start">Y motor</text>
+<line x1="164.2" y1="222.7" x2="94.4" y2="299.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="164.2" cy="222.7" r="2.2" fill="#9aa3ac"/>
+<text x="16.0" y="304.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="start">X-LEFT rail</text>
+<line x1="193.3" y1="196.0" x2="128.2" y2="119.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="193.3" cy="196.0" r="2.2" fill="#9aa3ac"/>
+<text x="16.0" y="124.0" font-size="13" font-weight="600" fill="#8a5413" text-anchor="start">Y limit switches</text>
+<line x1="260.7" y1="129.2" x2="384.9" y2="63.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="260.7" cy="129.2" r="2.2" fill="#9aa3ac"/>
+<text x="470.0" y="68.0" font-size="13" font-weight="600" fill="#1d2024" text-anchor="end">Y cross-beam</text>
+<line x1="411.9" y1="246.8" x2="432.4" y2="251.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="411.9" cy="246.8" r="2.2" fill="#9aa3ac"/>
+<text x="504.0" y="256.0" font-size="13" font-weight="600" fill="#36405a" text-anchor="end">Drivers ×3</text>
+<line x1="332.4" y1="311.6" x2="385.1" y2="329.8" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="332.4" cy="311.6" r="2.2" fill="#9aa3ac"/>
+<text x="504.0" y="334.0" font-size="13" font-weight="600" fill="#5a626b" text-anchor="end">24 V power supply</text>
+<line x1="365.7" y1="286.6" x2="300.0" y2="361.6" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="365.7" cy="286.6" r="2.2" fill="#9aa3ac"/>
+<text x="300.0" y="376.0" font-size="13" font-weight="600" fill="#21272e" text-anchor="middle">FMC4030 controller</text>
+<line x1="53.5" y1="212.8" x2="103.9" y2="327.6" stroke="#9aa3ac" stroke-width="1.1" stroke-linecap="round"/>
+<circle cx="53.5" cy="212.8" r="2.2" fill="#9aa3ac"/>
+<text x="16.0" y="342.0" font-size="13" font-weight="600" fill="#282c31" text-anchor="start">Cable carrier (drag chain)</text>
+<text x="354.7" y="142.6" font-size="11.5" font-weight="700" fill="#c0202a" text-anchor="middle">X travel</text>
+<text x="148.3" y="176.8" font-size="11.5" font-weight="700" fill="#1f6fd6" text-anchor="end">Y travel</text>
+<line x1="58" y1="58" x2="78.3" y2="69.7" stroke="#c0202a" stroke-width="2.2" stroke-linecap="round"/>
+<text x="83.3" y="81.7" font-size="12" font-weight="700" fill="#c0202a" text-anchor="middle">X</text>
+<line x1="58" y1="58" x2="37.7" y2="69.7" stroke="#1e8e4e" stroke-width="2.2" stroke-linecap="round"/>
+<text x="29.7" y="81.7" font-size="12" font-weight="700" fill="#1e8e4e" text-anchor="middle">Y</text>
+<line x1="58" y1="58" x2="58" y2="34.6" stroke="#1f6fd6" stroke-width="2.2" stroke-linecap="round"/>
+<text x="58" y="30.6" font-size="12" font-weight="700" fill="#1f6fd6" text-anchor="middle">Z</text>
+</svg>
+  <figcaption style="font-size:12px;color:var(--muted);text-align:center;margin-top:6px">Figure 1 — Dual-X gantry: two X rails with motors at the <b>same end &amp; orientation</b> (wired identically), and a longer <b>Y cross-beam</b> whose <b>Y-axis motor</b> at one end drives the carriage (<b>Y travel exceeds X travel</b>). The four FSK40 limit switches are <b>side-mounted</b> — the X pair on the <b>outside face of the left rail</b>, the Y pair on the <b>viewer-side face of the beam</b>. The control electronics on the base are the <b>FMC4030 controller</b>, <b>three stepper drivers</b>, and a <b>24 V power supply</b>. A <b>cable carrier (drag chain)</b> runs along the left X rail.</figcaption>
+  </figure>
+
+  <p>Signal flow and power:</p>
+  <div class="ascii">  <span class="y">[ PC ]</span> --Ethernet--> <span class="hl">[ FMC4030 ]</span> --PU/DR (5V)--> <span class="g">[ 3× FMDD50D40NOM ]</span> --A/B--> <span class="b">[ 3× 57HS motor ]</span>
+                              ^
+                              |  LP/LN limit signals (24V NPN, 4 switches: X pair + Y pair)
+                       <span class="b">[ FSK40 limit switches ]</span>
+
+  <span class="hl">24 VDC</span> bus powers: controller (VN+/VN-), all three drivers (V+/V-), and all limit switches (brown/blue).</div>
+
+  <div class="callout warn"><b>Gantry essentials (read before wiring)</b>
+  Because both X drivers share one controller axis, the two rails are synchronised in hardware — but two things still matter:
+  <ul style="margin:6px 0 0">
+    <li><b>Wire both X motors identically — no reversal needed.</b> Both rails are mounted the <i>same</i> way (same orientation, motors on the same end), so the shared direction signal moves both carriages the same physical direction. Use the standard coil colours on both motors. (Only a <i>mirror</i>-mounted build would need one motor's <code>A+/A−</code> swapped — not your case.) The §14 jog test confirms direction; see §8.</li>
+    <li><b>Squaring is mechanical.</b> The controller can't move one rail relative to the other, so the gantry's square comes entirely from the build (§5.1) and is held by the rigid beam.</li>
+  </ul></div>
+
+  <div class="callout note"><b>Build order (recommended)</b>
+  Mechanical assembly → set driver DIP switches → power distribution → motor-to-driver → driver-to-controller → limit switches → communication → pre-power checks → power on &amp; test. Follow the sections below in order.</div>
+</section>
+
+<!-- 2 -->
+<section id="bom">
+  <h2 class="sec"><span class="num">2</span>Bill of Materials</h2>
+  <table>
+    <thead><tr><th>Qty</th><th>Item</th><th>Model / Spec</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td class="center">1</td><td>Motion controller</td><td>FMC4030 (3-axis)</td><td>Generates pulse/dir, reads limits, host comms</td></tr>
+      <tr><td class="center">3</td><td>Stepper driver</td><td>FMDD50D40NOM (DC20–50V, 1.0–4.0 A/phase)</td><td>One each: X-Left, X-Right, Y</td></tr>
+      <tr><td class="center">3</td><td>Stepper motor</td><td>57HS056TF075A-03 (NEMA 23, 2-phase, 1.8°, 2.0 A, ≥80 N·cm)</td><td>X-Left rail, X-Right rail, Y cross-beam</td></tr>
+      <tr><td class="center">4</td><td>Limit / home switch</td><td>FSK40 photoelectric, <b>NPN, normally-open (NO)</b>, 5–24 V</td><td>One pair on <b>X-Left</b> (+/−) and one pair on <b>Y</b> (+/−). X-Right has none.</td></tr>
+      <tr><td class="center">1</td><td>DC power supply</td><td><b>24 VDC</b>, sized for total load (≥ 3 × motor current + margin)</td><td>System power; AC 100–220 V input</td></tr>
+      <tr><td class="center">1</td><td>Ethernet cable</td><td>Standard RJ45 (to PC, router, or switch)</td><td>Host communication (CN3)</td></tr>
+      <tr><td class="center">—</td><td>Wiring</td><td>Hook-up wire, ferrules, ground (PE) wire, cable, fuse/breaker on AC</td><td>Interconnect</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><b>Power supply sizing</b>
+  Each 57HS motor is rated 2.0 A. With three axes plus driver and controller overhead, choose a 24 V supply with comfortable headroom (a 24 V / 10 A unit is a safe starting point). The driver accepts DC 20–50 V, so 24 V is well within range.</div>
+</section>
+
+<!-- 3 -->
+<section id="safety">
+  <h2 class="sec"><span class="num">3</span>Safety &amp; Tools</h2>
+  <div class="callout danger"><b>⚠ Electrical safety</b>
+  The power supply primary side carries <b>100–220 VAC</b>. All wiring must be done with the system fully de-energized and the AC plug removed. Mains termination should be done by a qualified person. Never work on live terminals.</div>
+  <div class="grid2">
+    <div class="card">
+      <h4>Do</h4>
+      <ul>
+        <li>Wire everything with power OFF.</li>
+        <li>Bond the controller <code>PE</code> terminal and the machine frame to protective earth.</li>
+        <li>Double-check polarity (24V+ / 24V−) before powering up.</li>
+        <li>Use ferrules on stranded wire entering screw terminals.</li>
+        <li>Keep motor/driver power wiring separated from signal/Ethernet wiring.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Don't</h4>
+      <ul>
+        <li>Don't plug/unplug the motor while the driver is powered — it can damage the driver.</li>
+        <li>Don't exceed <b>DC 50 V</b> on the driver power input.</li>
+        <li>Don't connect the motor connector with reversed coil pairs.</li>
+        <li>Don't share the 5 V signal common with the 24 V power ground arbitrarily.</li>
+      </ul>
+    </div>
+  </div>
+  <h4>Tools</h4>
+  <p>Small flat &amp; Phillips screwdrivers, Allen/hex key set (for motor &amp; flag mounts), wire stripper/crimper, ferrules, multimeter (continuity &amp; voltage), and a PC with an Ethernet port.</p>
+</section>
+
+<!-- 4 -->
+<section id="specs">
+  <h2 class="sec"><span class="num">4</span>Component Specifications</h2>
+
+  <h3>4.1 Stepper motor — 57HS056TF075A-03</h3>
+  <table>
+    <tbody>
+      <tr><th>Phases</th><td>2</td><th>Step angle</th><td>1.8° ±5%</td></tr>
+      <tr><th>Rated current</th><td>2.0 A / phase</td><th>Rated voltage</th><td>1.5 VDC</td></tr>
+      <tr><th>Resistance</th><td>0.75 Ω ±10%</td><th>Inductance</th><td>2.7 mH ±20%</td></tr>
+      <tr><th>Holding torque</th><td>≥ 80 N·cm</td><th>Weight</th><td>0.7 kg</td></tr>
+      <tr><th>Leads</th><td>4-wire (XH-4 connector)</td><th>Frame</th><td>NEMA 23 (57 mm), Ø8 mm shaft</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.2 Stepper driver — FMDD50D40NOM</h3>
+  <table>
+    <tbody>
+      <tr><th>Type</th><td>2-phase, DSP-based</td><th>Power input</th><td>DC 20–50 V</td></tr>
+      <tr><th>Drive current</th><td>1.0–4.0 A/phase, 8 steps (SW1–SW3)</td><th>Microstep</th><td>up to 40000 steps/rev, 16 steps (SW5–SW8)</td></tr>
+      <tr><th>Max pulse rate</th><td>200 Kpps</td><th>Pulse edge</th><td>Falling edge active</td></tr>
+      <tr><th>Idle current</th><td>Auto halves after pulses stop &gt;1.5 s</td><th>Size / weight</th><td>118 × 24.3 × 75.5 mm · 0.2 kg</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.3 Limit / home switch — FSK40 (NPN, NO)</h3>
+  <p>Photoelectric switch, rated 5–24 V. <b>NPN normally-open, low-level active</b> — required by the FMC4030.
+  When the flag blocks the beam, the switch triggers and the signal line is pulled to the active level.</p>
+  <table>
+    <thead><tr><th>Wire colour</th><th>Function</th><th>Connects to</th></tr></thead>
+    <tbody>
+      <tr><td><span class="wire w-brown"></span>Brown</td><td>+24 V supply</td><td>24 V+ bus</td></tr>
+      <tr><td><span class="wire w-blue"></span>Blue</td><td>0 V (24 V−)</td><td>24 V− bus</td></tr>
+      <tr><td><span class="wire w-black"></span>Black</td><td>Signal (NO)</td><td>Controller limit input (LP / LN)</td></tr>
+    </tbody>
+  </table>
+  <div class="callout note"><b>On the FMC4030, these switches double as home/origin references.</b>
+  Per the FUYU limit-switch note, on a three-axis 4030 system the photoelectric switch provides the <b>origin position</b> for each axis (used by the zero-return / homing routine) in addition to acting as an end-of-travel limit. Install at least one per axis; install both ends for full positive/negative protection.</div>
+
+  <h3>4.4 Controller — FMC4030</h3>
+  <table>
+    <tbody>
+      <tr><th>Controller power</th><td>24 VDC (VN+/VN−)</td><th>Axis signal</th><td>5 V pulse + direction, ×3</td></tr>
+      <tr><th>Limit inputs</th><td>6 (LP/LN ×3), 24 V NPN-NO</td><th>Digital I/O</th><td>4 in (24 V, low-active) · 4 out (24 V open-drain, ≤300 mA)</td></tr>
+      <tr><th>Comms</th><td>Ethernet (CN3), RS-232 DB9 (CN1), RS-232/485 RJ45 (CN2)</td><th>Default network</th><td>IP <code>192.168.0.30</code>, port <code>8088</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 5 -->
+<section id="mech">
+  <h2 class="sec"><span class="num">5</span>Mechanical Assembly</h2>
+
+  <div class="step"><span class="tag">Step 5.1 — Set up the gantry frame</span>
+  <p>Mount the two <b>X rails parallel</b> to each other and the <b>Y cross-beam square (90°)</b> across them. Gantry accuracy depends on this:</p>
+  <ul>
+    <li>Set the two X rails truly parallel and at the same height — measure the rail-to-rail distance at both ends and confirm it is equal.</li>
+    <li>Mount the Y beam perpendicular to the rails; check the diagonals of the rectangle are equal to confirm square.</li>
+    <li>Make sure both X carriages start at the same position along the rails before fixing the beam, so the gantry is square at its mechanical start.</li>
+  </ul></div>
+
+  <div class="step"><span class="tag">Step 5.2 — Mount the motors</span>
+  <p>Bolt each 57HS motor to its actuator/axis motor mount using four M5 screws (NEMA 23 pattern, 47.14 mm): one on the <b>X-Left</b> rail, one on the <b>X-Right</b> rail, one on the <b>Y</b> beam. Make sure each motor shaft and lead-screw are concentric before tightening the coupling, and tighten the set-screws onto the shaft flats.</p>
+  <div class="callout note"><b>Mount both X motors the same way.</b> Install the two X motors in the <b>same orientation, on the same end</b> of their rails (same-hand leadscrews). Then the same shaft rotation moves both carriages the same physical direction, so both motors get identical coil wiring and no reversal is needed (§8). (Only if a build mirror-mounts the two motors would one need its coils swapped — the §14 jog test would reveal it.)</div></div>
+
+  <div class="step"><span class="tag">Step 5.3 — Assign &amp; label the axes</span>
+  <p>Label each motor cable and each driver. Both X drivers are fed from <b>controller axis 1</b> (the shared X-gantry axis); the Y driver uses <b>axis 3</b>. <b>Axis 2 is unused.</b></p>
+  <ul>
+    <li><b>X-Left</b> driver/motor → controller axis 1 (<code>5V/PU1/DR1</code>)</li>
+    <li><b>X-Right</b> driver/motor → controller axis 1 (<code>5V/PU1/DR1</code>) — same terminals, paralleled</li>
+    <li><b>Y</b> driver/motor → controller axis 3 (<code>5V/PU3/DR3</code>)</li>
+  </ul></div>
+
+  <div class="step"><span class="tag">Step 5.4 — Install limit-switch flags &amp; sensors</span>
+  <p>The FSK40 photoelectric sensor mounts to the actuator carriage/rail; the red trigger flag mounts to the moving block so it passes through the sensor slot at each end of travel (see the FSK40 installation photo). With four switches, fit a + and − pair on <b>X-Left</b> and a + and − pair on <b>Y</b> — four total. <b>X-Right gets none.</b></p>
+  <ul>
+    <li>Mount the sensor body so the moving flag enters the optical gap without mechanical contact.</li>
+    <li>Position the <b>positive-end</b> sensor at the far/maximum-travel end, and the <b>negative-end</b> sensor at the home/zero end of each axis.</li>
+    <li>Leave a few millimetres of margin before the hard mechanical stop so the switch trips before the carriage bottoms out.</li>
+    <li>Confirm the indicator LED on the sensor changes state as the flag enters/leaves the slot.</li>
+  </ul>
+  <div class="callout warn"><b>Square the gantry mechanically.</b> The X pair (on <code>LP1/LN1</code>, axis 1) becomes the home/limit for the <i>whole</i> gantry — homing axis 1 moves both motors together, so the gantry slides home as one unit with no fighting. But the controller can't move one rail relative to the other, so squareness comes entirely from the build (Step 5.1) and the rigid beam. Mount the X switch flags on one rail (e.g. X-Left). The opposite rail end has <b>no over-travel switch</b>, so set conservative soft-travel limits in software.</div></div>
+
+  <div class="step"><span class="tag">Step 5.5 — Mount controller, drivers &amp; power supply</span>
+  <ul>
+    <li>Mount the FMC4030, the three drivers, and the 24 V supply in the control cabinet/panel.</li>
+    <li>If drivers are mounted side-by-side, keep <b>≥ 50 mm</b> between them for heat dissipation (they have thermal shutdown at 80 °C).</li>
+    <li>Keep AC mains wiring physically separated from low-voltage signal wiring.</li>
+  </ul></div>
+</section>
+
+<!-- 6 -->
+<section id="dip">
+  <h2 class="sec"><span class="num">6</span>Driver DIP Switch Setup</h2>
+  <p>Set the DIP switches on <b>each</b> FMDD50D40NOM driver <i>before</i> wiring power. There are 8 switches:
+  SW1–SW3 set current, SW4 sets mode, SW5–SW8 set microstepping.</p>
+
+  <div class="callout danger"><b>SW4 must be OFF</b>
+  <code>SW4 = OFF</code> selects <b>pulse/subdivision mode</b> — this is required when driven by the FMC4030's PU/DR pulse signals. <code>SW4 = ON</code> puts the driver in I/O mode and the motor will not respond to pulses.</div>
+
+  <h3>6.1 Output current (SW1–SW3)</h3>
+  <p>Set the operating current to match the motor's rated <b>2.0 A</b>. Peak = operating × 1.4.</p>
+  <table>
+    <thead><tr><th>Operating A</th><th class="center">1.0</th><th class="center">1.2</th><th class="center">1.5</th><th class="center" style="background:#9c1a22">2.0 ★</th><th class="center">2.5</th><th class="center">3.0</th><th class="center">3.5</th><th class="center">4.0</th></tr></thead>
+    <tbody>
+      <tr><td>Peak A</td><td class="center">1.4</td><td class="center">1.7</td><td class="center">2.1</td><td class="center">2.8</td><td class="center">3.5</td><td class="center">4.2</td><td class="center">4.9</td><td class="center">5.6</td></tr>
+      <tr><td>SW1</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td></tr>
+      <tr><td>SW2</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW3</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+    </tbody>
+  </table>
+  <div class="callout ok"><b>★ Recommended for the 57HS motor (2.0 A):</b> &nbsp; SW1 = <span class="off">OFF</span> · SW2 = <span class="off">OFF</span> · SW3 = <span class="on">ON</span></div>
+
+  <h3>6.2 Microstepping (SW5–SW8, with SW4 = OFF)</h3>
+  <p>Higher microstepping = smoother, quieter motion but more pulses per revolution (watch your max speed). A common general-purpose choice is <b>1600 steps/rev</b> (8× microstep). Pick the same value on all three drivers and remember it — the software needs the steps/rev to compute distances.</p>
+  <table>
+    <thead><tr><th>Steps/rev</th><th class="center">200</th><th class="center">400</th><th class="center">800</th><th class="center" style="background:#9c1a22">1600 ★</th><th class="center">3200</th><th class="center">6400</th><th class="center">12800</th><th class="center">25600</th></tr></thead>
+    <tbody>
+      <tr><td>SW5</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td></tr>
+      <tr><td>SW6</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW7</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW8</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted)">A second bank of values (1000–40000 steps/rev) is available with SW8 = OFF; see the driver datasheet if you need those.</p>
+  <div class="callout ok"><b>★ Suggested start (1600 steps/rev):</b> &nbsp; SW5 = <span class="off">OFF</span> · SW6 = <span class="off">OFF</span> · SW7 = <span class="on">ON</span> · SW8 = <span class="on">ON</span> &nbsp;·&nbsp; (SW4 = <span class="off">OFF</span>)</div>
+</section>
+
+<!-- 7 -->
+<section id="power">
+  <h2 class="sec"><span class="num">7</span>Power Distribution Wiring</h2>
+  <p>Build a simple 24 V bus from the supply and feed every device from it. Mains (100–220 VAC) goes only to the supply's L / N / earth terminals.</p>
+
+  <div class="ascii">  AC 100–220 V ──► <span class="y">[ 24 VDC SUPPLY ]</span> ──► <span class="hl">24V+ bus</span> ─┬─► Controller <span class="hl">VN+</span>
+       L  N  ⏚                          <span class="hl">24V− bus</span> ─┼─► Controller <span class="hl">VN−</span>
+                                                    ├─► Driver X-Left / X-Right / Y  <span class="g">V+ , V−</span>
+                                                    └─► All limit switches  <span class="b">Brown(+24) , Blue(0V)</span>
+
+  Controller <span class="hl">PE</span> ──► machine frame ──► protective earth ⏚</div>
+
+  <table>
+    <thead><tr><th>From (24 V supply)</th><th>To</th><th>Wire</th></tr></thead>
+    <tbody>
+      <tr><td>V+ (24 V+)</td><td>Controller <code>VN+</code></td><td><span class="wire w-orange"></span>24 V+</td></tr>
+      <tr><td>V− (24 V−)</td><td>Controller <code>VN−</code></td><td><span class="wire w-blue"></span>24 V−</td></tr>
+      <tr><td>V+ (24 V+)</td><td>Each driver <code>V+</code></td><td><span class="wire w-orange"></span>24 V+</td></tr>
+      <tr><td>V− (24 V−)</td><td>Each driver <code>V−</code></td><td><span class="wire w-blue"></span>24 V−</td></tr>
+      <tr><td>V+ (24 V+)</td><td>All limit switches <b>Brown</b></td><td><span class="wire w-brown"></span>24 V+</td></tr>
+      <tr><td>V− (24 V−)</td><td>All limit switches <b>Blue</b></td><td><span class="wire w-blue"></span>24 V−</td></tr>
+      <tr><td>Earth ⏚</td><td>Controller <code>PE</code> + frame</td><td><span class="wire" style="background:#e6c200"></span>PE</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><b>Check polarity before connecting anything else.</b> With the supply on but no devices yet, meter the bus: it must read ≈ +24 V from 24V+ to 24V−. Then power off again before continuing.</div>
+</section>
+
+<!-- 8 -->
+<section id="motor-driver">
+  <h2 class="sec"><span class="num">8</span>Motor → Driver Wiring</h2>
+  <p>Each motor connects to its driver's <b>A+/A−/B+/B−</b> coil terminals. The 57HS motor's 4-pin (XH-4) connector colours map directly to the driver:</p>
+
+  <table>
+    <thead><tr><th>Motor pin</th><th>Motor colour</th><th>Coil</th><th>Driver terminal</th></tr></thead>
+    <tbody>
+      <tr><td class="center">1</td><td><span class="wire w-black"></span>Black</td><td>A (A+)</td><td><code>A+</code></td></tr>
+      <tr><td class="center">2</td><td><span class="wire w-green"></span>Green</td><td>Ā (A−)</td><td><code>A−</code></td></tr>
+      <tr><td class="center">3</td><td><span class="wire w-red"></span>Red</td><td>B (B+)</td><td><code>B+</code></td></tr>
+      <tr><td class="center">4</td><td><span class="wire w-blue"></span>Blue</td><td>B̄ (B−)</td><td><code>B−</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout note"><b>Coil pairing is what matters.</b>
+  A = Black + Green, B = Red + Blue. If a motor runs rough, vibrates in place, or won't turn, you most likely split a coil pair — verify with a multimeter: the two wires of one coil show continuity (~0.75 Ω), across coils shows open.</div>
+  <div class="callout warn"><b>Direction.</b> Wire all three motors (X-Left, X-Right, Y) to their drivers using the colour map above. To flip a motor's direction, swap its <b>A+ ↔ A−</b> with power off. For the <b>Y</b> axis you can alternatively invert direction in software — but <b>not for the X rails</b> (they share one axis, so X direction is set only by wiring; see below).</div>
+
+  <div class="callout note"><b>Gantry direction: wire both X motors identically (same-orientation mounting).</b>
+  Both X drivers share <i>one</i> direction signal (axis 1), so both motors always rotate the same way at the same instant. Because both rails are mounted the <b>same way</b> (Step 5.2), that shared rotation moves both carriages the <b>same</b> physical direction — so use the standard coil colours (Black/Green/Red/Blue) on <i>both</i> motors. <b>No <code>A+/A−</code> swap.</b>
+  <br><br><b>Why a swap is sometimes needed (not your case):</b> if the two motors were instead <i>mirror</i>-mounted (one flipped 180°), the mirror would turn the same rotation into opposite travel and rack the gantry; you'd then swap <b>A+ ↔ A−</b> on one motor to cancel it. Since the DIR signal is shared, that correction can only be made in wiring, never in software.
+  <br><br><b>Confirm with the §14 jog test:</b> nudge axis 1 a few mm — both rails should move together in the same direction. If they move apart, one motor is effectively reversed (e.g. an opposite-hand screw or a flipped mount): power off and swap that motor's <code>A+/A−</code>.</div>
+</section>
+
+<!-- 9 -->
+<section id="driver-ctrl">
+  <h2 class="sec"><span class="num">9</span>Driver → Controller Signal Wiring</h2>
+  <p>Each driver takes three signals: a <b>5 V</b>, a <b>pulse</b> (PU), and a <b>direction</b> (DR), in a
+  <b>common-anode</b> connection — the controller's 5 V drives the driver's PU+ and DR+ (tied together), and the
+  controller's pulse/direction pins sink into PU− and DR−. The key point for this gantry: the <b>two X drivers are
+  wired in parallel to the same controller axis (axis 1)</b>, so both receive identical pulses and step in lockstep.
+  The Y driver uses axis 3. Axis 2 is unused.</p>
+
+  <div class="ascii">  FMC4030 axis 1                       Both X drivers (paralleled)
+  ──────────────                       ───────────────────────────
+  <span class="hl">5V</span>  ──┬──────────────────────────────► <span class="b">X-LEFT</span>  PU+ &amp; DR+
+        └──────────────────────────────► <span class="g">X-RIGHT</span> PU+ &amp; DR+
+  <span class="hl">PU1</span> ──┬──────────────────────────────► <span class="b">X-LEFT</span>  PU−
+        └──────────────────────────────► <span class="g">X-RIGHT</span> PU−
+  <span class="hl">DR1</span> ──┬──────────────────────────────► <span class="b">X-LEFT</span>  DR−
+        └──────────────────────────────► <span class="g">X-RIGHT</span> DR−
+                                         (MF+/MF− on both: leave open)
+
+  FMC4030 axis 3:  <span class="hl">5V → PU+/DR+</span>,  <span class="hl">PU3 → PU−</span>,  <span class="hl">DR3 → DR−</span>   ──►  <span class="y">Y driver</span></div>
+
+  <table>
+    <thead><tr><th>Driver</th><th>Controller axis</th><th>5 V →</th><th>Pulse →</th><th>Dir →</th></tr></thead>
+    <tbody>
+      <tr class="ax-xl"><td class="center"><b>X-Left</b></td><td class="center ax-xpair"><b>Axis 1</b></td><td><code>5V</code> → <code>PU+</code> &amp; <code>DR+</code></td><td><code>PU1</code> → <code>PU−</code></td><td><code>DR1</code> → <code>DR−</code></td></tr>
+      <tr class="ax-xr"><td class="center"><b>X-Right</b></td><td class="center ax-xpair"><b>Axis 1</b><br><span style="font-size:11px">(same terminals)</span></td><td><code>5V</code> → <code>PU+</code> &amp; <code>DR+</code></td><td><code>PU1</code> → <code>PU−</code></td><td><code>DR1</code> → <code>DR−</code></td></tr>
+      <tr class="ax-y"><td class="center"><b>Y</b></td><td class="center">Axis 3</td><td><code>5V</code> → <code>PU+</code> &amp; <code>DR+</code></td><td><code>PU3</code> → <code>PU−</code></td><td><code>DR3</code> → <code>DR−</code></td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:13px;color:var(--muted)">Both X rows reference the <b>same</b> axis-1 terminals — you are landing two wires (one to each X driver) on each of <code>5V</code>, <code>PU1</code>, <code>DR1</code>. Axis 2 (<code>PU2/DR2</code>) stays empty.</p>
+
+  <div class="callout note"><b>Why this gives perfect sync.</b> With one pulse source feeding both X drivers, the controller physically cannot command the two rails differently — they step together by construction. No software interpolation or "move both axes equally" discipline is needed. The trade-off is that you cannot square the rails electronically (it's mechanical, §5.1) and X direction is fixed in wiring (§8).</div>
+
+  <div class="callout note"><b>Signal load:</b> each driver input draws ~15–17 mA at 5 V; two in parallel (~35 mA) is well within the controller's drive capability. Keep the paralleled signal wires short / run them together. <b>Note the 5 V only feeds the opto-isolator LEDs — it carries no motor current.</b> Each driver makes its own motor current from its 24 V <code>V+/V−</code>.</div>
+
+  <div class="callout note"><b>Optional — split the 5 V across two terminals.</b> The <code>5V</code> pins on all three axes are the same internal 5 V rail, so if you'd rather distribute the anode load you may take X-Right's <code>PU+/DR+</code> from the unused <b>Axis-2 <code>5V</code></b> terminal instead of Axis-1 <code>5V</code>:
+  <div class="ascii">  <span class="b">X-LEFT</span>  PU+/DR+ ← <span class="hl">Axis-1 5V</span>    PU− ← <span class="hl">PU1</span>   DR− ← <span class="hl">DR1</span>
+  <span class="g">X-RIGHT</span> PU+/DR+ ← <span class="hl">Axis-2 5V</span>    PU− ← <span class="hl">PU1</span>   DR− ← <span class="hl">DR1</span>   ◄ signals STILL on axis 1</div>
+  <b>Only the 5 V tap moves — both drivers' <code>PU−</code>/<code>DR−</code> must stay on Axis 1's <code>PU1</code>/<code>DR1</code></b>, or you lose synchronisation. This is electrically unnecessary (two opto inputs total only ~34 mA, and it doesn't reduce the <code>PU1</code>/<code>DR1</code> sink current) but harmless. Meter Axis-1 ↔ Axis-2 <code>5V</code> for continuity first to confirm they're the same rail.</div>
+
+  <div class="callout danger"><b>Use the controller's 5 V — not 24 V — for PU+/DR+.</b>
+  Bridge axis 1's <code>5V</code> terminal to both PU+ and DR+ on <i>both</i> X drivers. Do not feed 24 V into the driver's PU/DR inputs in this configuration.</div>
+  <div class="callout note"><b>MF (motor-free / enable):</b> Leave <code>MF+</code>/<code>MF−</code> open on all drivers. When MF is energised (active-low) the driver releases the motor (no holding torque). You normally want holding torque, so leave it disconnected.</div>
+</section>
+
+<!-- 10 -->
+<section id="limits">
+  <h2 class="sec"><span class="num">10</span>Limit / Home Switch Wiring</h2>
+  <p>Each FSK40 switch has three wires: <b>Brown → 24 V+</b>, <b>Blue → 24 V−</b>, <b>Black → signal</b>. The black
+  signal wire goes to the matching limit input on the controller. Positive-end switches use <code>LP</code>
+  inputs; negative-end switches use <code>LN</code> inputs.</p>
+
+  <div class="ascii">  <span class="b">FSK40 switch</span>            FMC4030
+  ────────────            ───────
+  <span class="wire w-brown" style="vertical-align:0"></span>Brown ──► <span class="hl">24 V+</span> bus
+  <span class="wire w-blue"  style="vertical-align:0"></span>Blue  ──► <span class="hl">24 V−</span> bus
+  <span class="wire w-black" style="vertical-align:0"></span>Black ──► <span class="hl">LP1 / LN1</span> (X gantry, axis 1)  ·  <span class="hl">LP3 / LN3</span> (Y)  — per table below</div>
+
+  <table>
+    <thead><tr><th>Axis</th><th>Positive-end switch (black →)</th><th>Negative-end switch (black →)</th><th>Signal ground</th></tr></thead>
+    <tbody>
+      <tr class="ax-xl"><td class="center"><b>X gantry</b><br>(axis 1)<br><span style="font-size:11px;font-weight:400">flags on one rail</span></td><td><code>LP1</code> (gantry X +)</td><td><code>LN1</code> (gantry X −, home)</td><td class="ax-xl"><b><code>GND</code></b> — axis-1 limit ground (use for this pair)</td></tr>
+      <tr><td class="center" style="color:#888"><b>Axis 2</b></td><td colspan="3" style="color:#888"><b>Unused.</b> The X rails share axis 1, so axis 2 has no role — leave <code>LP2</code> / <code>LN2</code> unconnected. (You have 4 switches: the X pair here on axis 1, the Y pair on axis 3.)</td></tr>
+      <tr class="ax-y"><td class="center"><b>Y</b><br>(axis 3)</td><td><code>LP3</code> (Y +)</td><td><code>LN3</code> (Y −, home)</td><td class="ax-y"><b><code>GND</code></b> — axis-3 limit ground (use for this pair)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout note"><b>One ground per switch pair.</b> Wire the <b>X-Left</b> pair's blue (0 V) and the controller-side return to the <span style="background:#e3eefb;padding:0 4px;border-radius:3px">blue-tinted <code>GND</code></span> in the axis-1 group (next to <code>LN1</code>). Wire the <b>Y</b> pair to the <span style="background:#f1e9fb;padding:0 4px;border-radius:3px">purple-tinted <code>GND</code></span> in the axis-3 group (next to <code>LN3</code>). The three LimitGND terminals are internally common, so electrically any LimitGND works — but using the one in each pair's own group keeps the harness tidy and matches the colour code.</div>
+
+  <div class="callout warn"><b>Must be NPN, normally-open (NO).</b> The FMC4030 limit inputs are low-level active. A PNP switch will not read correctly. The brown/blue/black colour scheme above is for the FUYU FSK40 — verify against your switch's own label before connecting.</div>
+  <div class="callout note"><b>Polarity / direction sanity check:</b> after power-on, manually slide each carriage toward an end and confirm the correct LP/LN input registers in the software's status panel. If "X+" trips when you move toward the X− end, swap that axis's LP and LN wires (power off first).</div>
+</section>
+
+<!-- 11 -->
+<section id="io-comm">
+  <h2 class="sec"><span class="num">11</span>Digital I/O &amp; Communication (optional)</h2>
+
+  <h3>11.1 Digital inputs (IN0–IN3)</h3>
+  <p>Four 24 V inputs, <b>active low</b>. Wire a switch/sensor signal to <code>IN0…IN3</code> and its return to the input <code>GND</code>. Use for external start buttons, sensors, e-stop sense, etc.</p>
+
+  <h3>11.2 Digital outputs (OP1–OP4)</h3>
+  <p>Four 24 V <b>open-drain</b> outputs (sink ≤ 300 mA). Wire the load between <b>24 V+</b> and the output pin; the output pulls the load's low side to ground when active. Use for relays, valves, indicators, etc.</p>
+  <div class="ascii">  <span class="hl">24V+</span> ──► [ Load / relay coil ] ──► <span class="hl">OPx</span>  (FMC4030 sinks to GND when ON)</div>
+
+  <h3>11.3 Host communication — Ethernet (CN3)</h3>
+  <ul>
+    <li>Connect a standard RJ45 cable from the controller's <b>CN3</b> to your PC, router, or switch.</li>
+    <li>Controller defaults: IP <code>192.168.0.30</code>, port <code>8088</code>.</li>
+    <li>Set the PC's network adapter to the same subnet, e.g. IP <code>192.168.0.35</code>, mask <code>255.255.255.0</code>, gateway <code>192.168.0.1</code>.</li>
+    <li>Verify with <code>ping 192.168.0.30 -t</code>. Replies = link is good.</li>
+  </ul>
+  <div class="callout note"><b>Other ports (not needed for basic bring-up):</b> CN1 = RS-232 DB9 (pin 2 TX, pin 3 RX) for touch screen/PC; CN2 = RJ45 carrying RS-232 debug and RS-485 (lines 4 &amp; 5). Ethernet is the primary control link.</div>
+</section>
+
+<!-- 12 -->
+<section id="pinout">
+  <h2 class="sec"><span class="num">12</span>Terminal Reference (Controller &amp; Driver)</h2>
+
+  <h3>12.1 FMC4030 controller — every terminal in order</h3>
+  <p>The controller has two terminal banks running along opposite edges of the board. Each bank is listed below
+  in silkscreen order (left → right) with a short description on the outside, so each edge reads down its own column.</p>
+  <div class="callout note"><b>Each edge is independent.</b> The two terminal columns are the two physical edges of the controller. Terminals sharing a row are <i>not</i> electrically related — the banks are simply shown side by side. The two banks also differ in length (14 vs 17 terminals).</div>
+
+  <div class="legend">
+    <b>Colour key:</b>
+    <span class="lg"><span class="sw ax-xpair"></span>Axis 1 = both X drivers (gantry)</span>
+    <span class="lg"><span class="sw ax-xl"></span>X-Left limit</span>
+    <span class="lg"><span class="sw ax-y"></span>Y</span>
+    <span class="lg"><span class="sw" style="background:#fff"></span>Shared / power / I/O / unused</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:27%">What it does ◄</th>
+        <th class="center" style="width:18%">Signal / Output edge</th>
+        <th class="center" style="width:18%">Power / Limit / Input edge</th>
+        <th style="width:37%">► What it does</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="ax-xpair">5 V out → <b>both X drivers</b> (PU+ &amp; DR+)</td><td class="center ax-xpair"><code>5V</code></td><td class="center"><code>VN+</code></td><td>24 V controller power input (+)</td></tr>
+      <tr><td class="ax-xpair">Direction → <b>both X drivers</b> (gantry)</td><td class="center ax-xpair"><code>DR1</code></td><td class="center"><code>VN−</code></td><td>24 V controller power input (−)</td></tr>
+      <tr><td class="ax-xpair">Pulse / step → <b>both X drivers</b> (gantry)</td><td class="center ax-xpair"><code>PU1</code></td><td class="center"><code>PE</code></td><td>Protective earth / chassis ground</td></tr>
+      <tr><td style="color:#aeb4bb">Axis 2 5 V — <b>unused</b></td><td class="center" style="color:#aeb4bb"><code>5V</code></td><td class="center ax-xl"><code>LP1</code></td><td class="ax-xl">Gantry X positive limit</td></tr>
+      <tr><td style="color:#aeb4bb">Axis 2 direction — <b>unused</b></td><td class="center" style="color:#aeb4bb"><code>DR2</code></td><td class="center ax-xl"><code>LN1</code></td><td class="ax-xl">Gantry X negative limit (home)</td></tr>
+      <tr><td style="color:#aeb4bb">Axis 2 pulse — <b>unused</b></td><td class="center" style="color:#aeb4bb"><code>PU2</code></td><td class="center ax-xl"><code>GND</code></td><td class="ax-xl"><b>Gantry X limit ground</b> — use for the X pair</td></tr>
+      <tr><td class="ax-y">5 V out → Y driver (PU+ &amp; DR+)</td><td class="center ax-y"><code>5V</code></td><td class="center"><code>LP2</code></td><td style="color:#aeb4bb">Axis 2 limit — <b>unused</b></td></tr>
+      <tr><td class="ax-y">Direction signal → Y</td><td class="center ax-y"><code>DR3</code></td><td class="center"><code>LN2</code></td><td style="color:#aeb4bb">Axis 2 limit — <b>unused</b></td></tr>
+      <tr><td class="ax-y">Pulse / step → Y</td><td class="center ax-y"><code>PU3</code></td><td class="center"><code>GND</code></td><td style="color:#aeb4bb">Axis 2 limit ground — unused</td></tr>
+      <tr><td>Digital output 4 (24 V open-drain)</td><td class="center"><code>OP4</code></td><td class="center ax-y"><code>LP3</code></td><td class="ax-y">Y positive limit</td></tr>
+      <tr><td>Digital output 3</td><td class="center"><code>OP3</code></td><td class="center ax-y"><code>LN3</code></td><td class="ax-y">Y negative limit (home)</td></tr>
+      <tr><td>Digital output 2</td><td class="center"><code>OP2</code></td><td class="center ax-y"><code>GND</code></td><td class="ax-y"><b>Y limit ground</b> — use for the Y pair</td></tr>
+      <tr><td>Digital output 1</td><td class="center"><code>OP1</code></td><td class="center"><code>IN0</code></td><td>Digital input 0 (24 V, active low)</td></tr>
+      <tr><td>Output common ground</td><td class="center"><code>GND</code></td><td class="center"><code>IN1</code></td><td>Digital input 1</td></tr>
+      <tr><td style="color:#aeb4bb">— (end of edge)</td><td class="center">—</td><td class="center"><code>IN2</code></td><td>Digital input 2</td></tr>
+      <tr><td style="color:#aeb4bb">—</td><td class="center">—</td><td class="center"><code>IN3</code></td><td>Digital input 3</td></tr>
+      <tr><td style="color:#aeb4bb">—</td><td class="center">—</td><td class="center"><code>GND</code></td><td>Input common ground</td></tr>
+    </tbody>
+  </table>
+
+  <h3>12.2 FMDD50D40NOM driver — every terminal in order</h3>
+  <p>Each driver carries control-signal terminals on one end and power/motor terminals on the other end, listed
+  the same way: terminal label inside, short description outside. <b>All three drivers (X-Left, X-Right, Y) are wired
+  identically</b>, so this table is not axis-coloured — it applies to each driver the same. The colours below are
+  motor wire colours, not axis colours.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:33%">What it does ◄</th>
+        <th class="center" style="width:15%">Control-signal end</th>
+        <th class="center" style="width:15%">Power / Motor end</th>
+        <th style="width:37%">► What it does</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Pulse opto-anode → tie to controller <code>5V</code></td><td class="center"><code>PU+</code></td><td class="center"><code>V+</code></td><td>DC power input + (20–50 V; 24 V here)</td></tr>
+      <tr><td>Pulse / step input → controller <code>PUx</code> (falling-edge active)</td><td class="center"><code>PU−</code></td><td class="center"><code>V−</code></td><td>DC power input − (0 V)</td></tr>
+      <tr><td>Direction opto-anode → tie to controller <code>5V</code></td><td class="center"><code>DR+</code></td><td class="center"><code>A+</code></td><td><span class="wire w-black"></span>Motor coil A+ — Black</td></tr>
+      <tr><td>Direction input → controller <code>DRx</code></td><td class="center"><code>DR−</code></td><td class="center"><code>A−</code></td><td><span class="wire w-green"></span>Motor coil A− — Green</td></tr>
+      <tr><td>Enable opto-anode (leave open)</td><td class="center"><code>MF+</code></td><td class="center"><code>B+</code></td><td><span class="wire w-red"></span>Motor coil B+ — Red</td></tr>
+      <tr><td>Motor-free / enable — active releases the motor (leave open)</td><td class="center"><code>MF−</code></td><td class="center"><code>B−</code></td><td><span class="wire w-blue"></span>Motor coil B− — Blue</td></tr>
+      <tr><td>24 V signal common — only for 24 V-signal mode (unused in this 5 V common-anode wiring)</td><td class="center"><code>COM24V</code><br><span style="font-size:11px;color:var(--muted)">(HSC)</span></td><td class="center" style="color:#aeb4bb">—</td><td style="color:#aeb4bb">— (end of edge)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 13 -->
+<section id="checklist">
+  <h2 class="sec"><span class="num">13</span>Pre-Power Checklist</h2>
+  <p>Walk this list with the system still de-energized and a multimeter in hand.</p>
+  <ul class="chk">
+    <li>AC mains landed correctly on the supply L / N / earth; cover/strain-relief in place.</li>
+    <li>24 V bus polarity verified: +24 V from 24V+ to 24V− (no short to PE).</li>
+    <li>Controller <code>VN+/VN−</code> correct; <code>PE</code> bonded to frame and earth.</li>
+    <li>Each driver <code>V+/V−</code> correct polarity.</li>
+    <li>Each motor coil pairs verified by continuity: A = Black+Green, B = Red+Blue.</li>
+    <li>No motor connector to be plugged/unplugged with power on (connect now, while off).</li>
+    <li>Both X drivers paralleled on <b>axis 1</b>: <code>5V</code> → both PU+ &amp; DR+; <code>PU1</code> → both PU−; <code>DR1</code> → both DR−. Y driver on axis 3 (<code>5V/PU3/DR3</code>). Axis 2 (<code>PU2/DR2</code>) empty.</li>
+    <li><b>Both X motors wired identically</b> (same-orientation mounting → no coil swap); direction confirmed by the §14 jog test.</li>
+    <li>Limit switches (4): Brown→24V+, Blue→24V−, Black→correct input. Gantry X pair → <code>LP1</code>/<code>LN1</code> + axis-1 <code>GND</code>; Y pair → <code>LP3</code>/<code>LN3</code> + axis-3 <code>GND</code>. <code>LP2</code>/<code>LN2</code> unconnected.</li>
+    <li>Gantry squared mechanically at build (it cannot be squared electronically).</li>
+    <li>Driver DIP set on all three: current = 2.0 A (SW1 OFF, SW2 OFF, SW3 ON), <code>SW4 OFF</code>, microstep chosen identically.</li>
+    <li>Ethernet cable seated in CN3; PC NIC set to 192.168.0.x subnet.</li>
+    <li>No loose strands, no terminals touching adjacent terminals, all screws tight.</li>
+  </ul>
+</section>
+
+<!-- 14 -->
+<section id="poweron">
+  <h2 class="sec"><span class="num">14</span>First Power-On &amp; Bring-Up</h2>
+  <ol>
+    <li><b>Energize.</b> Apply AC. Confirm the 24 V supply LED is on and the controller/driver power LEDs light. No driver should show a red <b>ALM</b> fault.</li>
+    <li><b>Network.</b> From the PC run <code>ping 192.168.0.30 -t</code> and confirm replies.</li>
+    <li><b>Connect software.</b> Launch the FUYU controller software, connect to <code>192.168.0.30 : 8088</code>. (You must interact within ~1 minute or the controller drops idle clients — just reconnect if so.)</li>
+    <li><b>Check limit feedback.</b> In the status panel, trip each fitted switch by hand and confirm the matching input toggles (gantry X → <code>LP1</code>/<code>LN1</code> on axis 1, Y → <code>LP3</code>/<code>LN3</code> on axis 3). Fix any swapped/active-state issues now.</li>
+    <li><b>Verify both X rails move together (do this first, tiny moves).</b> Jog <b>axis 1</b> a very small amount and watch <i>both</i> rails. They share the signal, so they move together — and with same-orientation mounting they should travel the <b>same</b> physical direction. If the carriages instead move <i>apart</i> (rack/bind), one motor is effectively reversed: power off and swap that motor's <code>A+ ↔ A−</code> (§8), then re-test. Don't make large moves until this is correct.</li>
+    <li><b>Jog the gantry (axis 1) and Y (axis 3) at low speed.</b> Confirm:
+      <ul>
+        <li>Both X rails move smoothly together, square, no binding (rough motion → recheck coil pairing).</li>
+        <li>Y moves smoothly.</li>
+        <li>Each axis stops when its limit switch triggers.</li>
+      </ul>
+    </li>
+    <li><b>Home the machine.</b> Home <b>axis 1</b> to <code>LN1</code> — both X motors drive together, so the whole gantry slides home as one unit (no fighting). Home <b>Y</b> (axis 3) to <code>LN3</code>. Set this position as zero. Squareness comes from the mechanical build (Step 5.1), not from homing.</li>
+  </ol>
+  <div class="callout note"><b>For the software phase:</b> the gantry X is a <b>single axis</b> to the controller — in the SDK this is axis index <code>0</code> (terminals PU1/DR1); the Y beam is axis index <code>2</code> (PU3/DR3). One X command moves both rails in lockstep. No interpolation or "move both axes equally" logic is needed — that's the whole point of sharing the signal.</div>
+  <div class="callout ok"><b>Hardware bring-up complete.</b> With both X rails moving together squarely, Y jogging, homing working, and all four limits verified, the mechanical/electrical build is done. You're ready to move on to SDK/programming.</div>
+</section>
+
+<!-- 15 -->
+<section id="trouble">
+  <h2 class="sec"><span class="num">15</span>Troubleshooting</h2>
+  <table>
+    <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Motor vibrates / buzzes but won't rotate</td><td>Coil pair split between A and B</td><td>Verify pairing: A = Black+Green, B = Red+Blue (continuity test)</td></tr>
+      <tr><td>Motor does nothing on jog</td><td>SW4 in wrong mode, or PU/DR mis-wired</td><td>Set <code>SW4 = OFF</code>; check 5V→PU+/DR+, PUx→PU−, DRx→DR−</td></tr>
+      <tr><td>Axis runs the wrong direction</td><td>Direction polarity</td><td>X rails: swap one motor's A+/A− (wiring only). Y: swap A+/A− or invert in software</td></tr>
+      <tr><td>Gantry racks / binds the instant X moves</td><td>The two X rails travel opposite ways — one motor wired opposite, or an opposite-hand screw / flipped (mirror) mount</td><td>Confirm both X motors are wired identically; if one rail still runs opposite, power off and swap that motor's <code>A+ ↔ A−</code> (§8)</td></tr>
+      <tr><td>Gantry drifts out of square over time</td><td>A motor lost steps (stall/overload) — open-loop, no feedback</td><td>Reduce acceleration; raise current/torque margin; re-home (axis 1) after any fault</td></tr>
+      <tr><td>Gantry not square</td><td>Square depends on the mechanical build (can't square electronically)</td><td>Square the frame physically (§5.1); keep both X carriages locked to the rigid beam</td></tr>
+      <tr><td>Driver red <b>ALM</b> light on</td><td>Over-temp (&gt;80 °C), over-current/short, or motor wiring fault</td><td>Power-cycle after cooling; check motor wiring/short; add spacing/heatsink</td></tr>
+      <tr><td>Limit never triggers / always triggered</td><td>Wrong switch type or LP/LN polarity</td><td>Must be NPN-NO; verify brown=24V+, blue=0V, black=signal; check correct input</td></tr>
+      <tr><td>"X+" trips when moving toward X−</td><td>LP/LN swapped</td><td>Swap that axis's LP and LN signal wires (power off)</td></tr>
+      <tr><td>No ping / can't connect</td><td>PC not on controller subnet</td><td>Set PC to 192.168.0.x / 255.255.255.0; cable in CN3</td></tr>
+      <tr><td>Connection drops after a minute</td><td>Idle timeout (by design)</td><td>Keep interacting, or just reconnect</td></tr>
+      <tr><td>Motor weak / overheating</td><td>Current set too low / too high</td><td>Set driver current to 2.0 A (SW1 OFF, SW2 OFF, SW3 ON)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 16 -->
+<section id="software">
+  <h2 class="sec"><span class="num">16</span>Control Software (FuyuRailController)</h2>
+  <p>With the hardware wired and powered (§1–§14), the rails are driven from a small Qt desktop
+  application — <b>FuyuRailController</b> — that talks to the FMC4030 over <b>Ethernet</b>. It
+  <b>reuses the lab's existing Velmex control panel</b> (the same sliders, Calibrate / Center /
+  Scan buttons and settings dialog) and only swaps the controller underneath to drive the FMC4030
+  instead of a serial Velmex VXM.</p>
+
+  <div class="callout note"><b>Scope.</b> §1–§15 are assembly &amp; wiring. This section is a short
+  operator guide to the control app; full build / SDK details live in the project's
+  <code>FuyuRailController/README.md</code>.</div>
+
+  <h3>16.1 Connect</h3>
+  <ul>
+    <li>Ethernet cable from the controller's <b>CN3</b> to the PC (§11.3).</li>
+    <li>Set the PC network adapter to the controller's subnet, e.g. <code>192.168.0.35 / 255.255.255.0</code>.</li>
+    <li>Controller default <code>192.168.0.30 : 8088</code>; verify with <code>ping 192.168.0.30 -t</code>.</li>
+    <li>Launch the app — a <b>connection dialog</b> appears first, with the controller's
+      <b>IP address</b> and <b>port</b> (a <code>Default</code> button restores
+      <code>192.168.0.30 : 8088</code>).</li>
+    <li>Click <b>OK</b> — the app tries to connect. On success it opens the control panel; on
+      failure it shows the error and stays so you can correct the address/port. The working
+      values are remembered for next time.</li>
+  </ul>
+
+  <h3>16.2 The control panel</h3>
+  <p>The window stacks one group box per axis: <b>X gantry</b> (SDK axis 0 — both rails) and
+  <b>Y beam</b> (SDK axis 2). Each axis is a 3-row grid of <i>label · slider · value box · button</i>:</p>
+  <div class="ascii">┌─ <span class="hl">X gantry Controls:</span> ──────────────────────────────────────────┐
+│<span class="y">[?]</span> Left Limit:      ●───────────────   [  0.000 mm]  [<span class="g">Calibrate</span>]│
+│    Slider Position: ────────●───────   [125.000 mm]  [<span class="g">Center  </span>]│
+│    Right Limit:     ───────────────●   [250.000 mm]  [<span class="g">Scan    </span>]│
+└──────────────────────────────────────────────────────────────────┘</div>
+
+  <table>
+    <thead><tr><th>Control</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><b>Left / Right Limit</b> sliders</td><td>The soft travel limits. Normally set <i>automatically</i> by Calibrate; can be nudged by hand.</td></tr>
+      <tr><td><b>Slider Position</b></td><td>Commands an absolute move — drag the handle or type a value in the box. It is a <i>setpoint</i> (it jumps, it doesn't scroll).</td></tr>
+      <tr><td><b>Calibrate</b></td><td>Homes to the <b>negative</b> switch (sets zero), then seeks the <b>positive</b> switch (sets the travel). The slider range then reflects the real travel.</td></tr>
+      <tr><td><b>Center</b></td><td>Jumps the axis to the middle of its travel.</td></tr>
+      <tr><td><b>Scan</b></td><td>Stepped sweep from left to right in <i>Scan Steps</i> stops (placeholder hook for a camera-capture loop).</td></tr>
+      <tr><td><b>?</b> (settings)</td><td>Units, Home Toward, Speed, Scan Steps — see §16.4.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>16.3 First moves</h3>
+  <ol>
+    <li><b>Calibrate each axis first.</b> It homes to the negative/home switch and seeks the positive switch, so the controller learns zero and the full travel from your limit switches (no travel is typed in by hand).</li>
+    <li><b>Then move:</b> drag the Position slider, type a value, or press Center. The carriage drives there; the live position streams back.</li>
+    <li><b>Scan</b> runs a stepped left→right sweep — wire its per-step signal to your capture routine when integrating with the recorder.</li>
+  </ol>
+  <div class="callout warn"><b>Gantry reminder.</b> The two X rails are one controller axis (shared PU/DR), so "X gantry" moves both rails together — there is no way (and no need) to move one rail alone. Squareness comes from the mechanical build (§5.1).</div>
+
+  <h3>16.4 Settings ( ? )</h3>
+  <table>
+    <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><b>Units</b></td><td><code>millimeters</code> (default) or <code>inches</code>. Switches the position readouts <i>and</i> the Speed field (mm/s ↔ in/s) on <b>every</b> axis.</td></tr>
+      <tr><td><b>Home Toward</b></td><td>Which end Calibrate homes to: <code>toward the motor end</code> (the +/<code>LP</code> switch) or <code>away from the motor end</code> (the −/<code>LN</code> home switch — the default).</td></tr>
+      <tr><td><b>Speed</b></td><td>Rail speed, 1–200 mm/s (shown in the selected unit).</td></tr>
+      <tr><td><b>Scan Steps</b></td><td>Number of stops in a Scan sweep.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>16.5 Build &amp; run</h3>
+  <ul>
+    <li><b>Simulation (default):</b> open <code>FuyuRailController.pro</code> in Qt Creator and Run — a built-in software simulator stands in for the controller, so the whole UI works with no hardware or SDK. Verified with <b>Qt 6.9.3 / MSVC 2022 (64-bit)</b>.</li>
+    <li><b>Real hardware:</b> build with <code>CONFIG+=hardware</code> (Projects ▸ Build ▸ qmake additional arguments). The vendor <code>FMC4030-Dll.dll</code> already sits in <code>FuyuRailController/sdk/</code> and is <b>auto-copied</b> next to the <code>.exe</code> by the project file — no manual copying.</li>
+  </ul>
+  <div class="callout note"><b>Runtime-loaded DLL.</b> The SDK library is loaded at <b>run time</b> (via <code>QLibrary</code>), so there is <i>no</i> link-time dependency — a hardware build launches even if the DLL is absent and simply reports <i>disconnected</i>. Use the 64-bit DLL with the 64-bit kit.</div>
+
+  <h3>16.6 Blocking vs non-blocking SDK</h3>
+  <p>FUYU ships <b>two</b> builds of <code>FMC4030-Dll.dll</code> — <i>blocking</i> and <i>non-blocking</i> —
+  with identical function names but different behaviour. This project uses the <b>non-blocking, 64-bit (X64)</b>
+  build, because the controller is <b>poll-based</b>: it issues one move command and then polls
+  "is&nbsp;the&nbsp;axis&nbsp;stopped?" on a 500&nbsp;ms timer.</p>
+  <table>
+    <thead><tr><th>&nbsp;</th><th>Non-blocking (used)</th><th>Blocking (do not use)</th></tr></thead>
+    <tbody>
+      <tr><td>Motion call returns</td><td>immediately</td><td>only when the move finishes</td></tr>
+      <tr><td>Live position during a move</td><td>yes — the poll updates it</td><td>no — jumps at the end</td></tr>
+      <tr><td>Stop / abort mid-move</td><td>works</td><td>can't until the move ends</td></tr>
+      <tr><td>Controller thread during a move</td><td>responsive</td><td>frozen inside the call</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><b>Don't swap in the blocking DLL.</b> With it the app still compiles, connects and completes simple moves — so it can look fine — but you lose live position feedback and the ability to <b>abort a move</b>, a safety concern on a gantry. If you re-extract the DLL, take it from the <b>"non&nbsp;blocking"</b> archive's <code>X64</code> subfolder (see <code>FuyuRailController/sdk/README.txt</code>).</div>
+
+  <div class="callout note"><b>Under the hood.</b> The app reuses the Velmex <code>LAUVelmexWidget</code> classes unchanged; only <code>LAUVelmexController</code> was reimplemented to drive the FMC4030 (Ethernet, native millimetres, non-blocking moves polled for completion). Internally 1 slider "count" = 1 µm.</div>
+</section>
+
+</main>
+
+<footer>
+  <b>FUYU FMC4030 Dual-X Gantry System — Assembly, Wiring &amp; Software Manual · Rev 2.5</b><br>
+  <span style="color:#7f868d">Rev 2.0: X rails wired in hardware lockstep — both X drivers share controller axis 1 (single shared PU/DR signal). &nbsp;Rev 2.1: optional 5 V split onto Axis-2 terminal; clarified why one X motor is reversed. &nbsp;Rev 2.2: same-orientation X mounting is the baseline — both X motors wired identically, no coil swap. &nbsp;Rev 2.3: added isometric layout figure (§1) with side-mounted limit switches. &nbsp;Rev 2.4: added §16 Control Software (FuyuRailController app). &nbsp;Rev 2.5: §16 updated — startup connection dialog, runtime-loaded DLL, and §16.6 blocking vs non-blocking SDK.</span><br>
+  Compiled from FUYU OEM documentation (FMC4030 Controller User Manual V2001, FMDD50D40NOM driver guide, 57HS056TF075A-03 motor drawing, FSK40 limit-switch note, and the FMC4030-50D40 wiring diagram). Values such as current and microstep settings are starting recommendations — confirm against your specific machine and the latest FUYU documentation. Software/SDK setup is covered separately.
+</footer>
+
+</div>
+</body>
+</html>

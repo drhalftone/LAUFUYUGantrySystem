@@ -1,0 +1,22 @@
+# Qt / qmake build artifacts
+*.o
+*.obj
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+Makefile*
+*.pro.user*
+.qmake.stash
+debug/
+release/
+build*/
+*.exe
+*.dll
+*.app/
+
+# Vendor SDK binaries (do not commit)
+sdk/FMC4030-Dll.dll
+sdk/FMC4030-Dll.lib
+sdk/FMC4030-Dll.h
+sdk/libFMC4030-Lib.*

@@ -1,0 +1,16 @@
+# Local Claude config
+.claude/
+
+# FUYU-supplied reference material — not redistributed
+国外FMC4030/
+*.pdf
+*.PDF
+*.docx
+*.jpg
+*.jpeg
+
+# Editor / build artifacts
+*.bak
+.qtcreator/
+_bc/
+_bc.log
