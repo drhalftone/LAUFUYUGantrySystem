@@ -76,8 +76,46 @@ complete — so it can look fine in casual testing — but you lose live positio
 ability to abort a move, which is a safety concern on a gantry. If you ever re-extract the DLL,
 take it from the **"non blocking"** archive (X64 subfolder). See `sdk/README.txt` for the path.
 
-The controller defaults to `192.168.0.30:8088`. Set your PC's network adapter to the same
-subnet (e.g. `192.168.0.35 / 255.255.255.0`).
+### Network setup
+
+The controller defaults to `192.168.0.30:8088`. Set the PC adapter that's cabled to it to a
+static address on the **same subnet** — e.g. `192.168.0.35 / 255.255.255.0` — and leave the
+**default gateway blank**: the controller sits on an isolated segment, and a gateway here
+would compete with the default route of whatever adapter carries your internet.
+
+**1. Find the right adapter.** The FMC4030 is a 10/100 device, so its port shows up at
+100 Mbps:
+
+```powershell
+Get-NetAdapter | Select-Object Name,ifIndex,Status,LinkSpeed
+Get-NetIPConfiguration | Select-Object InterfaceAlias,IPv4Address,IPv4DefaultGateway
+```
+
+An address of **`169.254.x.x`** on that port is the classic symptom: DHCP is on (or is off with
+no static address set), nothing answered, and Windows self-assigned an APIPA address. It cannot
+reach `192.168.0.0/24` in that state.
+
+**2. Set the static address** (needs an elevated prompt; substitute your adapter name):
+
+```powershell
+netsh interface ip set address name="Ethernet 2" static 192.168.0.35 255.255.255.0
+```
+
+**3. Verify** — both checks should pass before launching the app:
+
+```powershell
+ping 192.168.0.30
+Test-NetConnection -ComputerName 192.168.0.30 -Port 8088   # TcpTestSucceeded : True
+```
+
+`TcpTestSucceeded` is the one that matters — it proves the SDK's port is open. Note that
+`Test-NetConnection` may report `PingSucceeded : False` even when plain `ping` gets replies;
+that's its own ICMP path being filtered, not a controller fault.
+
+To undo, put the adapter back on DHCP: `netsh interface ip set address name="Ethernet 2" dhcp`.
+
+The app **remembers the last IP/port** in `QSettings`, so the `192.168.0.30` default only
+applies on a first run — if a stale address was saved, correct it in the `?` dialog.
 
 ---
 
