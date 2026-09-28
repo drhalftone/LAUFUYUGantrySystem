@@ -52,6 +52,40 @@ bool LAUVelmexController::velmexRailHasReachedLimitSwitch = false;
 QVector4D LAUVelmexWidget::scannerPosition;
 
 /****************************************************************************************************************/
+/* Mapping between a slider's integer counts and its spin box's display units (mm or inches).                    */
+/*                                                                                                              */
+/* Both directions MUST span (maximum - minimum) rather than maximum alone.  Before calibration the sliders sit  */
+/* at minimum 0, where the two forms happen to agree -- but Calibrate sets a NON-ZERO minimum (the homed end of  */
+/* the rail), and from then on a "val / maximum" mapping no longer inverts its counterpart.  Since each widget   */
+/* drives the other through valueChanged, that disagreement becomes a feedback loop whose fixed point is         */
+/* v = maximum, which silently walked the limit sliders out to the far end of the rail after every Calibrate     */
+/* (and took the "Center" position with them, because centre is computed from the limits).                       */
+/*                                                                                                              */
+/* Keeping the pair exact inverses makes a slider -> spin box -> slider round trip the identity, so the loop     */
+/* settles immediately.  The span guards also cover the degenerate min == max case, which a failed calibration   */
+/* can produce and which would otherwise divide by zero.                                                        */
+/****************************************************************************************************************/
+static double lauSliderToUnits(const QSlider *slider, const QDoubleSpinBox *spinBox, int val)
+{
+    const double span = (double)(slider->maximum() - slider->minimum());
+    if (span <= 0.0) {
+        return (spinBox->minimum());
+    }
+    const double lambda = (double)(val - slider->minimum()) / span;
+    return ((lambda * (spinBox->maximum() - spinBox->minimum())) + spinBox->minimum());
+}
+
+static int lauUnitsToSlider(const QSlider *slider, const QDoubleSpinBox *spinBox, double val)
+{
+    const double span = (spinBox->maximum() - spinBox->minimum());
+    if (span <= 0.0) {
+        return (slider->minimum());
+    }
+    const double lambda = (val - spinBox->minimum()) / span;
+    return (qRound(lambda * (double)(slider->maximum() - slider->minimum())) + slider->minimum());
+}
+
+/****************************************************************************************************************/
 /****************************************************************************************************************/
 /****************************************************************************************************************/
 LAUVelmexUserPathOffsetDialog::LAUVelmexUserPathOffsetDialog(int chn, QWidget *parent) : QDialog(parent), numChannels(chn), xSpinBox(nullptr), ySpinBox(nullptr), zSpinBox(nullptr), wSpinBox(nullptr)
@@ -1348,6 +1382,7 @@ LAUVelmexWidget::LAUVelmexWidget(int dim, LAUVelmexController *obj, QWidget *par
             connect(this, SIGNAL(emitSetVelocity(int, int)), controller, SLOT(onSetVelocity(int, int)), Qt::QueuedConnection);
             connect(this, SIGNAL(emitCalibrateSlider(int)), controller, SLOT(onCalibrateSlide(int)), Qt::QueuedConnection);
             connect(this, SIGNAL(emitSetSliderPosition(int, int)), controller, SLOT(onMoveToPosition(int, int)), Qt::QueuedConnection);
+            connect(controller, SIGNAL(emitConnected(bool)), this, SLOT(onConnected(bool)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitCalibrationComplete(int, int, int)), this, SLOT(onUpdateLimits(int, int, int)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitSliderPosition(int, int)), this, SLOT(onUpdatePositon(int, int)), Qt::QueuedConnection);
@@ -1367,6 +1402,11 @@ LAUVelmexWidget::LAUVelmexWidget(int dim, LAUVelmexController *obj, QWidget *par
             connect(this, SIGNAL(emitSetVelocity(int, int)), controller, SLOT(onSetVelocity(int, int)), Qt::QueuedConnection);
             connect(this, SIGNAL(emitCalibrateSlider(int)), controller, SLOT(onCalibrateSlide(int)), Qt::QueuedConnection);
             connect(this, SIGNAL(emitSetSliderPosition(int, int)), controller, SLOT(onMoveToPosition(int, int)), Qt::QueuedConnection);
+            // Without this the widget's isConnectedFlag never leaves false: isConnected() reports
+            // a wrong answer, and the panel is only ever re-enabled as a side effect of the first
+            // position poll reaching onUpdatePositon().  Wired here (rather than in the parent
+            // LAUMultiVelmexWidget) so it happens exactly once on either construction path.
+            connect(controller, SIGNAL(emitConnected(bool)), this, SLOT(onConnected(bool)), Qt::QueuedConnection);
             //connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitCalibrationComplete(int, int, int)), this, SLOT(onUpdateLimits(int, int, int)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitSliderPosition(int, int)), this, SLOT(onUpdatePositon(int, int)), Qt::QueuedConnection);
@@ -1521,10 +1561,7 @@ void LAUVelmexWidget::onLeftLimitSlider_valueChanged(int val)
     if (val > position) {
         leftLimitSlider->setValue(position);
     } else {
-        double lambda = (double)val / (double)leftLimitSlider->maximum();
-        lambda *= (leftLimitSpinBox->maximum() - leftLimitSpinBox->minimum());
-        lambda += leftLimitSpinBox->minimum();
-        leftLimitSpinBox->setValue(lambda);
+        leftLimitSpinBox->setValue(lauSliderToUnits(leftLimitSlider, leftLimitSpinBox, val));
     }
 }
 
@@ -1537,10 +1574,7 @@ void LAUVelmexWidget::onRightLimitSlider_valueChanged(int val)
     if (val < position) {
         rightLimitSlider->setValue(position);
     } else {
-        double lambda = (double)val / (double)rightLimitSlider->maximum();
-        lambda *= (rightLimitSpinBox->maximum() - rightLimitSpinBox->minimum());
-        lambda += rightLimitSpinBox->minimum();
-        rightLimitSpinBox->setValue(lambda);
+        rightLimitSpinBox->setValue(lauSliderToUnits(rightLimitSlider, rightLimitSpinBox, val));
     }
 }
 
@@ -1557,10 +1591,7 @@ void LAUVelmexWidget::onPositionSlider_valueChanged(int val)
         if (val > rightLimit) {
             positionSlider->setValue(rightLimit);
         } else {
-            double lambda = (double)val / (double)positionSlider->maximum();
-            lambda *= (positionSpinBox->maximum() - positionSpinBox->minimum());
-            lambda += positionSpinBox->minimum();
-            positionSpinBox->setValue(lambda);
+            positionSpinBox->setValue(lauSliderToUnits(positionSlider, positionSpinBox, val));
         }
     }
 }
@@ -1570,8 +1601,7 @@ void LAUVelmexWidget::onPositionSlider_valueChanged(int val)
 /****************************************************************************************************************/
 void LAUVelmexWidget::onLeftLimitSpinBox_valueChanged(double val)
 {
-    double lambda = (val - leftLimitSpinBox->minimum()) / (leftLimitSpinBox->maximum() - leftLimitSpinBox->minimum());
-    leftLimitSlider->setValue(qRound(lambda * (leftLimitSlider->maximum() - leftLimitSlider->minimum())) + leftLimitSlider->minimum());
+    leftLimitSlider->setValue(lauUnitsToSlider(leftLimitSlider, leftLimitSpinBox, val));
 }
 
 /****************************************************************************************************************/
@@ -1579,8 +1609,7 @@ void LAUVelmexWidget::onLeftLimitSpinBox_valueChanged(double val)
 /****************************************************************************************************************/
 void LAUVelmexWidget::onRightLimitSpinBox_valueChanged(double val)
 {
-    double lambda = (val - rightLimitSpinBox->minimum()) / (rightLimitSpinBox->maximum() - rightLimitSpinBox->minimum());
-    rightLimitSlider->setValue(qRound(lambda * (rightLimitSlider->maximum() - rightLimitSlider->minimum())) + rightLimitSlider->minimum());
+    rightLimitSlider->setValue(lauUnitsToSlider(rightLimitSlider, rightLimitSpinBox, val));
 }
 
 /****************************************************************************************************************/
@@ -1596,8 +1625,7 @@ void LAUVelmexWidget::onPositionSpinBox_valueChanged(double val)
         positionSpinBox->setValue(valP);
     } else {
         // CALCULATE THE NEW VALUE
-        double lambda = (val - positionSpinBox->minimum()) / (positionSpinBox->maximum() - positionSpinBox->minimum());
-        int newSliderPosition = qRound(lambda * (positionSlider->maximum() - positionSlider->minimum())) + positionSlider->minimum();
+        int newSliderPosition = lauUnitsToSlider(positionSlider, positionSpinBox, val);
 
         // MAKE SURE NEW SLIDER POSITION IS WITHIN THE LIMITS THE LEFT AND RIGHT SLIDERS
         newSliderPosition= qMin(rightLimitSlider->value(), qMax(newSliderPosition, leftLimitSlider->value()));
@@ -1961,14 +1989,18 @@ void LAUVelmexWidget::onUpdateLimits(int min, int max, int dim)
 /* 1 micron (0.001 mm); the FMC4030 itself is commanded in native millimetres.                */
 /****************************************************************************************************************/
 #include <QThread>
+#include <QElapsedTimer>
 
 static const int    FMC_MODE_ABSOLUTE   = 2;
 static const int    FMC_STOP_DECEL      = 1;
 static const double FMC_COUNTS_PER_MM   = 1000.0;   // 1 count = 1 micron
 static const double FMC_DEFAULT_ACCEL   = 100.0;    // mm/s^2
 static const double FMC_DEFAULT_HOMESPD = 10.0;     // mm/s
+static const double FMC_MAX_SPEED_MMPS  = 70.0;     // hard ceiling on every commanded speed (jog, scan, home)
 static const double FMC_DEFAULT_HOMEBACK = 5.0;     // mm
-static const double FMC_MAXTRAVEL_MM     = 2000.0;  // safety bound for the "seek positive limit" move
+static const double FMC_MAXTRAVEL_MM     = 2000.0;  // "drive until the switch stops you" target
+static const int    FMC_SETTLE_POLL_MS   = 10;      // how often the calibrate path asks "stopped yet?"
+static const int    FMC_SETTLE_TIMEOUT_MS = 180000; // 180 s -- must exceed a full-length switch seek
 static const int    FMC_UNSET           = -2000000000;
 static const int    FMC_NO_LIB          = -100;       // fmcOpen() returns this when the DLL is unavailable
 
@@ -2098,11 +2130,13 @@ static int fmcClose(int id)
 static int fmcJog(int id, int axis, float p, float v, float a, float d, int m)
 {
     FmcLib &L = fmcLib();
+    v = qMin(v, (float)FMC_MAX_SPEED_MMPS);   // last line of defence: nothing reaches the rail faster
     return (L.loaded ? L.jog(id, axis, p, v, a, d, m) : FMC_NO_LIB);
 }
 static int fmcHome(int id, int axis, float hs, float had, float fall, int dir)
 {
     FmcLib &L = fmcLib();
+    hs = qMin(hs, (float)FMC_MAX_SPEED_MMPS);
     return (L.loaded ? L.home(id, axis, hs, had, fall, dir) : FMC_NO_LIB);
 }
 static int fmcStop(int id, int axis, int mode)
@@ -2124,6 +2158,7 @@ static int fmcGetPos(int id, int axis, float *pos)
 
 static inline double fmcCountToMM(int count) { return ((double)count / FMC_COUNTS_PER_MM); }
 static inline int    fmcMMToCount(double mm) { return ((int)qRound(mm * FMC_COUNTS_PER_MM)); }
+
 
 /****************************************************************************************************************/
 /* LAUVelmexSettingsDialog -- trimmed to FMC4030-relevant fields                             */
@@ -2168,7 +2203,7 @@ LAUVelmexSettingsDialog::LAUVelmexSettingsDialog(int dim, QWidget *parent) : QDi
 
     speedSpinBox = new QDoubleSpinBox();
     speedSpinBox->setFixedWidth(150);
-    speedSpinBox->setToolTip(QString("Rail speed for jogs, Center and Scan moves (1-200 mm/s).\n"
+    speedSpinBox->setToolTip(QString("Rail speed for jogs, Center and Scan moves (1-70 mm/s).\n"
                                      "Shown in the selected unit (mm/s or in/s)."));
     reinterpret_cast<QFormLayout *>(groupBox->layout())->addRow(QString("Speed:"), speedSpinBox);
 
@@ -2201,11 +2236,11 @@ void LAUVelmexSettingsDialog::applySpeedUnit(int idx)
     // 1..200 mm/s, displayed in the selected unit
     if (idx == 0) {   // inches
         speedSpinBox->setDecimals(3);
-        speedSpinBox->setRange(1.0 / 25.4, 200.0 / 25.4);
+        speedSpinBox->setRange(1.0 / 25.4, FMC_MAX_SPEED_MMPS / 25.4);
         speedSpinBox->setSuffix(QString(" in/s"));
     } else {          // millimetres
         speedSpinBox->setDecimals(0);
-        speedSpinBox->setRange(1.0, 200.0);
+        speedSpinBox->setRange(1.0, FMC_MAX_SPEED_MMPS);
         speedSpinBox->setSuffix(QString(" mm/s"));
     }
 }
@@ -2266,6 +2301,7 @@ void LAUVelmexController::initialize()
         nextPosition[a] = 0;
         lastCommanded[a] = FMC_UNSET;
         homeDir[a] = 2;
+        positionKnown[a] = false;
     }
 
     settings.beginReadArray(QString("LAUVelmexController"));
@@ -2275,6 +2311,14 @@ void LAUVelmexController::initialize()
         homeDir[channels.at(n)] = settings.value(QString("LAUVelmexController::homeDir"), homeDir[channels.at(n)]).toInt();
     }
     settings.endArray();
+
+    diagnosticsFlag = settings.value(QString("LAUVelmexController::diagnostics"), true).toBool();
+    homeSpeedMMPerSec = settings.value(QString("LAUVelmexController::homeSpeed"), FMC_DEFAULT_HOMESPD).toDouble();
+    if (homeSpeedMMPerSec < 1.0) {
+        homeSpeedMMPerSec = FMC_DEFAULT_HOMESPD;
+    } else if (homeSpeedMMPerSec > FMC_MAX_SPEED_MMPS) {
+        homeSpeedMMPerSec = FMC_MAX_SPEED_MMPS;
+    }
 }
 
 bool LAUVelmexController::testConnection(const QString &ip, quint16 port, QString *message)
@@ -2327,9 +2371,25 @@ void LAUVelmexController::onStart()
 
     connectedFlag = true;
     for (int n = 0; n < channels.count(); n++) {
-        updateMotorPosition(channels.at(n));
-        nextPosition[channels.at(n)] = currentCount[channels.at(n)];
-        lastCommanded[channels.at(n)] = FMC_UNSET;
+        const int ch = channels.at(n);
+
+        // Read where the axis ACTUALLY is before adopting it as the target.  The first read right
+        // after fmcOpen can fail while the device settles, so retry briefly; if it still fails,
+        // leave positionKnown false and let moveToPosition() refuse to command anything until a
+        // real reading arrives.  Adopting the initialised 0 here is what used to drive the carriage
+        // to coordinate 0 on every launch.
+        positionKnown[ch] = updateMotorPosition(ch);
+        for (int retry = 0; (positionKnown[ch] == false) && (retry < 20); retry++) {
+            QThread::msleep(50);
+            positionKnown[ch] = updateMotorPosition(ch);
+        }
+        if (positionKnown[ch] == false) {
+            qWarning().noquote() << QString("FMC4030 axis %1: could not read a starting position -- "
+                                            "holding all motion until one is available.").arg(ch);
+        }
+
+        nextPosition[ch] = currentCount[ch];
+        lastCommanded[ch] = FMC_UNSET;
     }
 
     // POLL THE CONTROLLER FROM OUR THREAD, LIKE THE VELMEX TIMER
@@ -2364,8 +2424,8 @@ bool LAUVelmexController::setVelocity(int dim, int velocity)
     }
     if (velocity < 1) {
         velocity = 1;
-    } else if (velocity > 200) {
-        velocity = 200;   // FMC4030 here is configured for <= 200 mm/s
+    } else if (velocity > (int)FMC_MAX_SPEED_MMPS) {
+        velocity = (int)FMC_MAX_SPEED_MMPS;
     }
     velocityMMPerSec[dim] = velocity;
     return (true);
@@ -2376,11 +2436,92 @@ void LAUVelmexController::onCalibrateSlide(int dim)
     if (channels.contains(dim) == false || connectedFlag == false) {
         return;
     }
-    // Discover BOTH ends from the limit switches, exactly like the Velmex controller:
-    // home onto the near switch (sets zero) then seek the far switch (sets the travel).
+    // Discover BOTH ends from the limit switches, exactly like the Velmex controller: home onto the
+    // near switch, then seek the far one.  Both legs use FMC4030_Home_Single_Axis, which is the
+    // SDK's only "run until the switch trips" primitive (see calibrateRight).
     calibrateLeft(dim);
     calibrateRight(dim);
+
+    // The two ends are just coordinates, and which is numerically smaller depends on the axis's
+    // direction wiring and on the home-direction setting -- with homeDir 2 the near end lands on a
+    // negative coordinate.  The widgets require min < max, so order them here instead of assuming
+    // the near switch is always the lower number.
+    if (rightMostCount[dim] < leftMostCount[dim]) {
+        qSwap(leftMostCount[dim], rightMostCount[dim]);
+    }
+
     emit emitCalibrationComplete(leftMostCount[dim], rightMostCount[dim], dim);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+bool LAUVelmexController::waitForAxisToStop(int dim, const char *what, qint64 *elapsedMS)
+{
+    QElapsedTimer clock;
+    clock.start();
+    // The calibrate path is synchronous (like the Velmex serial controller it replaces): block this
+    // controller thread until the axis settles.  The ceiling has to comfortably exceed a full-length
+    // seek -- at FMC_DEFAULT_HOMESPD a 600 mm rail needs 60 s, and the previous 60 s limit could cut
+    // such a seek off mid-travel, silently reporting wherever the carriage happened to be as the end
+    // of the rail.
+    const int iterations = FMC_SETTLE_TIMEOUT_MS / FMC_SETTLE_POLL_MS;
+    for (int i = 0; i < iterations; i++) {
+        if (fmcCheckStop(deviceID, dim) == 1) {
+            if (elapsedMS) {
+                *elapsedMS = clock.elapsed();
+            }
+            return (true);
+        }
+        QThread::msleep(FMC_SETTLE_POLL_MS);
+    }
+    if (elapsedMS) {
+        *elapsedMS = clock.elapsed();
+    }
+    qWarning().noquote() << QString("FMC4030 axis %1 never stopped within %2 s while %3 -- treat the "
+                                    "reported end of travel as bogus, it is not a limit switch.")
+                            .arg(dim).arg(FMC_SETTLE_TIMEOUT_MS / 1000).arg(QString::fromLatin1(what));
+    return (false);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+int LAUVelmexController::driveUntilBlocked(int dim, double targetMM, const char *what)
+{
+    // The FMC4030 ends a move after roughly 10 s whether or not it reached the target -- the same
+    // ceiling that cuts homing short.  At 20 mm/s a single command therefore covers only ~200 mm and
+    // cannot cross a 600 mm rail, which is why every "end of travel" this code used to report came
+    // out as speed x 10 s rather than as a switch position.
+    //
+    // So stop trying to beat the clock: re-issue the move until the carriage stops making progress.
+    // When it does it is genuinely against something -- the limit switch (what we want) or a soft
+    // travel limit.  Chunking also keeps the traverse speed slow and safe, instead of demanding a
+    // fast seek just to outrun the timeout.
+    const int PROGRESS_COUNTS = 200;    // 0.2 mm -- less progress than this means we have arrived
+    const int MAX_MOVES       = 40;     // ~40 x 200 mm of headroom; a backstop, not a normal limit
+
+    updateMotorPosition(dim);
+    int lastPos = currentCount[dim];
+    int moves = 0;
+
+    for (int attempt = 0; attempt < MAX_MOVES; attempt++) {
+        if (fmcJog(deviceID, dim, (float)targetMM, (float)velocityMMPerSec[dim],
+                   (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_ACCEL, FMC_MODE_ABSOLUTE) != 0) {
+            break;
+        }
+        moves++;
+        waitForAxisToStop(dim, what);
+        updateMotorPosition(dim);
+        if (qAbs(currentCount[dim] - lastPos) < PROGRESS_COUNTS) {
+            break;              // no further progress -> we are against whatever stops this axis
+        }
+        lastPos = currentCount[dim];
+    }
+
+    // The chunked moves leave the cached target stale; force the next real move to be re-issued.
+    lastCommanded[dim] = FMC_UNSET;
+    return (moves);
 }
 
 bool LAUVelmexController::calibrateLeft(int dim)
@@ -2390,25 +2531,56 @@ bool LAUVelmexController::calibrateLeft(int dim)
     }
 
     state = StateCalibrateLeft;
-    if (fmcHome(deviceID, dim, (float)FMC_DEFAULT_HOMESPD, (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_HOMEBACK, homeDir[dim]) != 0) {
+
+    // STEP 1 -- CLOSE THE DISTANCE WITH AN ORDINARY MOVE.
+    //
+    // FMC4030_Home_Single_Axis abandons its seek after the controller's own zero-return timeout,
+    // measured on this machine at ~10.0 s: at 10 mm/s it gives up after 100 mm, at 15 mm/s after
+    // 150 mm.  On a 600 mm rail it therefore never reaches the switch unless the carriage already
+    // happens to be nearby -- and a home that times out does NOT zero the axis.  It simply stops,
+    // silently leaving an arbitrary coordinate behind to be recorded as "the end of the rail".
+    // (It zeroes only on success, which is the tell: a near end of exactly 0.000 means the switch
+    // was found; any other value means the seek timed out.)
+    //
+    // An ordinary move has no such timeout and IS halted by the limit switch, so use one to park
+    // the carriage on the switch first.  Homing then only has to cover the fall-back distance and
+    // finishes comfortably inside the timeout, at a slow, accurate, safe speed.
+    const double homeTarget = (homeDir[dim] == 1) ? FMC_MAXTRAVEL_MM : -FMC_MAXTRAVEL_MM;
+    const int approachMoves = driveUntilBlocked(dim, homeTarget, "approaching the home switch");
+
+    // STEP 2 -- NOW HOME, so the controller zeroes the axis exactly at the switch.
+    if (fmcHome(deviceID, dim, (float)homeSpeedMMPerSec, (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_HOMEBACK, homeDir[dim]) != 0) {
         state = StateStopped;
         return (false);
     }
 
-    // THE CALIBRATE PATH IS SYNCHRONOUS (like Velmex): block this controller thread until home settles
-    for (int i = 0; i < 6000; i++) {
-        if (fmcCheckStop(deviceID, dim) == 1) {
-            break;
-        }
-        QThread::msleep(10);
-    }
+    qint64 elapsed = 0;
+    const bool settled = waitForAxisToStop(dim, "homing onto the near switch", &elapsed);
 
     updateMotorPosition(dim);
-    leftMostCount[dim] = currentCount[dim];   // the controller zeroed the axis at the switch
+    leftMostCount[dim] = currentCount[dim];   // wherever the near switch sits in the current frame
     nextPosition[dim] = currentCount[dim];
     lastCommanded[dim] = FMC_UNSET;
     state = StateStopped;
-    return (true);
+
+    if (diagnosticsFlag) {
+        // A successful home zeroes the axis, so anything other than ~0 here means the controller's
+        // zero-return timeout expired and this coordinate is NOT the switch.
+        const bool zeroed = (qAbs(leftMostCount[dim]) <= 100);   // within 0.1 mm of zero
+        qDebug().noquote() << QString("Calibrate axis %1: reached the home switch in %2 move(s), then homed\n"
+                                      "Calibrate axis %1: NEAR end = %3 mm (dir %4, %5 mm/s, took %6 s)%7%8")
+                              .arg(dim)
+                              .arg(approachMoves)
+                              .arg(fmcCountToMM(leftMostCount[dim]), 0, 'f', 3)
+                              .arg(homeDir[dim])
+                              .arg(homeSpeedMMPerSec, 0, 'f', 1)
+                              .arg((double)elapsed / 1000.0, 0, 'f', 2)
+                              .arg(settled ? QString() : QString("   [OUR TIMEOUT]"))
+                              .arg(zeroed ? QString("   [OK -- axis zeroed at the switch]")
+                                          : QString("   [BAD -- not zeroed, so the home seek TIMED OUT "
+                                                    "and this is not the switch]"));
+    }
+    return (settled);
 }
 
 bool LAUVelmexController::calibrateRight(int dim)
@@ -2419,27 +2591,46 @@ bool LAUVelmexController::calibrateRight(int dim)
 
     state = StateCalibrateRight;
 
-    // DRIVE TOWARD THE POSITIVE LIMIT SWITCH.  The FMC4030 halts the axis when the switch
-    // trips; FMC_MAXTRAVEL_MM is only a safety ceiling in case the switch is missing.
-    if (fmcJog(deviceID, dim, (float)FMC_MAXTRAVEL_MM, (float)velocityMMPerSec[dim], (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_ACCEL, FMC_MODE_ABSOLUTE) != 0) {
-        state = StateStopped;
-        return (false);
-    }
-
-    // BLOCK UNTIL THE AXIS STOPS (at the switch, or at the safety ceiling)
-    for (int i = 0; i < 6000; i++) {
-        if (fmcCheckStop(deviceID, dim) == 1) {
-            break;
-        }
-        QThread::msleep(10);
-    }
+    // DO NOT use FMC4030_Home_Single_Axis for this leg.  It looked like the obvious choice -- it is
+    // the SDK's only "run until the switch trips" primitive, and its direction argument selects the
+    // end -- but it ZEROES THE AXIS at the end of every seek, in BOTH directions.  Homing both ends
+    // therefore leaves the position at 0 twice over and reports a travel of exactly 0.000 mm.
+    //
+    // Instead, lean on what calibrateLeft just established: homing zeroed the axis AT the near
+    // switch, so coordinate 0 IS that switch.  A plain move outward then stops at the far switch,
+    // and the position it stops at is the travel, directly.  A normal move is also not subject to
+    // the controller's zero-return timeout, so unlike a home it can cross a long rail at a modest
+    // speed instead of needing a dangerously fast seek.
+    //
+    // Direction follows homeDir: with homeDir 2 the near switch is the negative end, so drive
+    // positive; with homeDir 1 it is the positive end, so drive negative.  Driving the wrong way
+    // would just push back into the switch we are already sitting on.
+    const double farTarget = (homeDir[dim] == 1) ? -FMC_MAXTRAVEL_MM : FMC_MAXTRAVEL_MM;
+    const int farMoves = driveUntilBlocked(dim, farTarget, "driving to the far switch");
+    const bool settled = (farMoves > 0);
 
     updateMotorPosition(dim);
-    rightMostCount[dim] = currentCount[dim];   // the far switch position == full travel
+    rightMostCount[dim] = currentCount[dim];   // wherever the far switch sits in the current frame
     nextPosition[dim] = currentCount[dim];
     lastCommanded[dim] = FMC_UNSET;
     state = StateStopped;
-    return (true);
+
+    if (diagnosticsFlag) {
+        // If this "far end" ever comes back at ~0 while the near end was a large number, the call
+        // DID zero the axis at the switch and the travel below is meaningless -- capture the
+        // position before the second home instead.
+        const double travelMM = fmcCountToMM(rightMostCount[dim] - leftMostCount[dim]);
+        qDebug().noquote() << QString("Calibrate axis %1: FAR end = %2 mm, reached in %3 chunked move(s)%4\n"
+                                      "Calibrate axis %1: MEASURED TRAVEL = %5 mm\n"
+                                      "  More than one move means the ~10 s per-move ceiling was hit and the traverse\n"
+                                      "  was resumed; the carriage is now against a switch or a soft travel limit.")
+                              .arg(dim)
+                              .arg(fmcCountToMM(rightMostCount[dim]), 0, 'f', 3)
+                              .arg(farMoves)
+                              .arg(settled ? QString() : QString("   [NO MOVE ISSUED -- command rejected]"))
+                              .arg(qAbs(travelMM), 0, 'f', 3);
+    }
+    return (settled);
 }
 
 bool LAUVelmexController::updateMotorPosition(int dim)
@@ -2451,7 +2642,7 @@ bool LAUVelmexController::updateMotorPosition(int dim)
     if (fmcGetPos(deviceID, dim, &mm) != 0) {
         return (false);
     }
-    currentCount[dim] = fmcMMToCount((double)mm);
+    currentCount[dim] = fmcMMToCount(axisSign(dim) * (double)mm);
     emit emitSliderPosition(currentCount[dim], dim);
     return (true);
 }
@@ -2465,6 +2656,20 @@ LAUVelmexController::Position LAUVelmexController::moveToPosition(int pos, int d
         return (PositionPortNotOpen);
     }
 
+    // NEVER COMMAND MOTION FROM A GUESS.  Until this axis has actually been read, currentCount is
+    // just its initialised 0; treating that as the target is how a launch used to yank the carriage
+    // to coordinate 0.  Once a real reading arrives, adopt the machine's own position as the target
+    // so that simply opening the app never moves anything.
+    if (positionKnown[dim] == false) {
+        if (updateMotorPosition(dim) == false) {
+            return (PositionNotReached);
+        }
+        positionKnown[dim] = true;
+        nextPosition[dim] = currentCount[dim];
+        lastCommanded[dim] = FMC_UNSET;
+        return (PositionReached);
+    }
+
     // REFRESH + BROADCAST THE LIVE POSITION
     updateMotorPosition(dim);
 
@@ -2476,8 +2681,21 @@ LAUVelmexController::Position LAUVelmexController::moveToPosition(int pos, int d
 
     // COMMAND THE MOVE ONCE PER TARGET CHANGE (the FMC4030 is non-blocking)
     if (lastCommanded[dim] != pos) {
-        double mm = fmcCountToMM(pos);
-        if (fmcJog(deviceID, dim, (float)mm, (float)velocityMMPerSec[dim], (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_ACCEL, FMC_MODE_ABSOLUTE) == 0) {
+        double mm = axisSign(dim) * fmcCountToMM(pos);
+        const int rc = fmcJog(deviceID, dim, (float)mm, (float)velocityMMPerSec[dim], (float)FMC_DEFAULT_ACCEL, (float)FMC_DEFAULT_ACCEL, FMC_MODE_ABSOLUTE);
+        if (diagnosticsFlag) {
+            // NOTE: rc == 0 only means the packet reached the controller.  The SDK defines no
+            // "axis refused / bad parameter" code, so a successful return here does NOT promise
+            // the motor will turn -- compare against the parameter dump above if it does not.
+            qDebug().noquote() << QString("FMC4030_Jog_Single_Axis(axis %1, %2 mm absolute, %3 mm/s) -> %4%5")
+                                  .arg(dim)
+                                  .arg(mm, 0, 'f', 3)
+                                  .arg(velocityMMPerSec[dim])
+                                  .arg(rc)
+                                  .arg(rc == 0 ? QString("  (packet delivered; not proof of motion)")
+                                               : QString("  (COMMUNICATION FAILURE -- see the SDK return-value table)"));
+        }
+        if (rc == 0) {
             lastCommanded[dim] = pos;
         } else {
             return (PositionNotReached);

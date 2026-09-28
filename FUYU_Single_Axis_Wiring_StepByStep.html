@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FUYU FMC4030 — Single-Axis Wiring, Step by Step</title>
+<style>
+  :root{
+    --fuyu-red:#c0202a;
+    --ink:#1d2024;
+    --muted:#5a626b;
+    --line:#d8dce1;
+    --bg:#f4f6f8;
+    --warn-bg:#fff7e6;
+    --warn-br:#e0a800;
+    --danger-bg:#fdecec;
+    --danger-br:#c0202a;
+    --ok-bg:#eafaf0;
+    --ok-br:#1e8e4e;
+    --code-bg:#f0f2f4;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+    line-height:1.55;
+  }
+  .wrap{max-width:960px;margin:0 auto;background:#fff;box-shadow:0 0 20px rgba(0,0,0,.06);}
+  header.cover{
+    background:linear-gradient(135deg,#1d2024 0%,#2c3138 60%,#3a1416 100%);
+    color:#fff;padding:54px 48px 40px;border-bottom:6px solid var(--fuyu-red);
+  }
+  header.cover .brand{font-weight:800;letter-spacing:3px;font-size:15px;color:#fff;opacity:.85;}
+  header.cover .brand span{color:var(--fuyu-red);}
+  header.cover h1{font-size:30px;margin:14px 0 6px;line-height:1.2;}
+  header.cover h2{font-size:17px;font-weight:400;margin:0;color:#c9ced4;}
+  header.cover .meta{margin-top:24px;font-size:13px;color:#aeb4bb;}
+  header.cover .meta b{color:#fff;font-weight:600;}
+
+  nav.toc{padding:26px 48px;background:#fafbfc;border-bottom:1px solid var(--line);}
+  nav.toc h3{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);}
+  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:36px;font-size:14px;}
+  nav.toc li{margin:4px 0;break-inside:avoid;}
+  nav.toc a{color:var(--ink);text-decoration:none;}
+  nav.toc a:hover{color:var(--fuyu-red);text-decoration:underline;}
+
+  main{padding:8px 48px 56px;}
+  section{padding-top:26px;margin-top:18px;border-top:1px solid var(--line);}
+  section:first-of-type{border-top:none;}
+  h2.sec{font-size:22px;color:var(--ink);margin:8px 0 6px;display:flex;align-items:baseline;gap:12px;}
+  h2.sec .num{color:var(--fuyu-red);font-weight:800;font-size:18px;}
+  .stagehead{background:#2c3138;color:#fff;margin:0 -48px;padding:20px 48px 18px;border-left:8px solid var(--fuyu-red);}
+  .stagehead h2{margin:0;font-size:23px;color:#fff;display:flex;align-items:baseline;gap:12px;}
+  .stagehead h2 .num{color:#ff7b84;font-weight:800;font-size:15px;letter-spacing:1.5px;text-transform:uppercase;}
+  .stagehead p{margin:6px 0 0;font-size:13.5px;color:#c9ced4;}
+  h3{font-size:16px;margin:22px 0 8px;color:#2c3138;}
+  h4{font-size:14px;margin:16px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0;padding-left:22px;}
+  li{margin:5px 0;}
+  code{background:var(--code-bg);padding:1px 6px;border-radius:4px;font-family:Consolas,"Courier New",monospace;font-size:13px;color:#9c1a22;}
+
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#2c3138;color:#fff;font-weight:600;}
+  tbody tr:nth-child(even){background:#fafbfc;}
+  td.center,th.center{text-align:center;}
+  .tablewrap{overflow-x:auto;}
+
+  .on{color:#1e8e4e;font-weight:700;}
+  .off{color:var(--muted);font-weight:700;}
+
+  .wire{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.25);vertical-align:-2px;margin-right:6px;}
+  .w-black{background:#1d2024;} .w-green{background:#1e8e4e;} .w-red{background:#c0202a;}
+  .w-blue{background:#1f6fd6;} .w-brown{background:#7a4a25;} .w-orange{background:#e08a1e;}
+  .w-yellow{background:#e6c200;}
+
+  .callout{border-left:5px solid;padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-size:14px;}
+  .callout b{display:block;margin-bottom:2px;}
+  .warn{background:var(--warn-bg);border-color:var(--warn-br);}
+  .danger{background:var(--danger-bg);border-color:var(--danger-br);}
+  .ok{background:var(--ok-bg);border-color:var(--ok-br);}
+  .note{background:#eef4fb;border-color:#1f6fd6;}
+
+  .ascii{background:#1d2024;color:#e6e9ec;padding:16px 18px;border-radius:8px;font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:1.45;overflow-x:auto;white-space:pre;}
+  .ascii .hl{color:#ff6b6b;} .ascii .g{color:#5fd38d;} .ascii .b{color:#6fb3ff;} .ascii .y{color:#ffd166;} .ascii .m{color:#c9a6ff;} .ascii .dim{color:#8b949e;}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:#fff;}
+  .card h4{margin-top:0;}
+
+  .step{border:1px solid var(--line);border-left:4px solid var(--fuyu-red);border-radius:0 6px 6px 0;padding:12px 18px;margin:14px 0;background:#fff;}
+  .step .tag{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--fuyu-red);text-transform:uppercase;display:block;margin-bottom:4px;}
+  .step p:first-of-type{margin-top:2px;}
+
+  .verify{background:var(--ok-bg);border:1px solid #bfe6cf;border-left:5px solid var(--ok-br);border-radius:0 6px 6px 0;padding:12px 16px;margin:16px 0;font-size:14px;}
+  .verify b{display:block;margin-bottom:4px;color:#166b3b;}
+  .verify ul{margin:6px 0 0;}
+
+  .chk{list-style:none;padding-left:0;}
+  .chk li{padding-left:28px;position:relative;margin:7px 0;}
+  .chk li:before{content:"";position:absolute;left:0;top:2px;width:16px;height:16px;border:2px solid var(--fuyu-red);border-radius:3px;}
+
+  .roadmap{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0;}
+  .roadmap .rm{border:1px solid var(--line);border-top:4px solid var(--fuyu-red);border-radius:0 0 6px 6px;padding:12px 14px;background:#fafbfc;}
+  .roadmap .rm b{display:block;font-size:12px;letter-spacing:1px;color:var(--fuyu-red);text-transform:uppercase;}
+  .roadmap .rm span{font-size:13.5px;font-weight:600;}
+  .roadmap .rm em{display:block;font-size:12.5px;color:var(--muted);font-style:normal;margin-top:4px;}
+
+  footer{padding:24px 48px;background:#1d2024;color:#aeb4bb;font-size:12px;}
+  footer b{color:#fff;}
+
+  @media print{
+    body{background:#fff;}
+    .wrap{box-shadow:none;max-width:100%;}
+    section{break-inside:avoid-page;}
+    header.cover{background:#1d2024 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    th,.stagehead{background:#2c3138 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .wire,.callout,.ascii,.verify,.roadmap .rm{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
+  @media(max-width:680px){
+    main,header.cover,nav.toc,footer{padding-left:22px;padding-right:22px;}
+    .stagehead{margin:0 -22px;padding-left:22px;padding-right:22px;}
+    nav.toc ol{columns:1;} .grid2{grid-template-columns:1fr;} .roadmap{grid-template-columns:1fr 1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="cover">
+  <div class="brand">FU<span>Y</span>U TECHNOLOGY</div>
+  <h1>Wiring a Single Axis<br>Step by Step</h1>
+  <h2>One rail, one motor, one driver — from bare parts to a jogging axis</h2>
+  <div class="meta">
+    <b>Scope:</b> A complete <b>single-axis</b> build: 24 V supply → FMC4030 controller → FMDD50D40NOM driver → rail (motor + limit switches).<br>
+    <b>Wiring order:</b> <b>1</b> Power supply · <b>2</b> Controller · <b>3</b> Driver · <b>4</b> Rail. Each stage ends with a verification step before you move on.<br>
+    <b>Axis used:</b> Controller <b>axis 1</b> — terminals <code>5V</code> / <code>PU1</code> / <code>DR1</code>, limits <code>LP1</code> / <code>LN1</code>. (In the SDK this is axis index <code>0</code>.)<br>
+    <b>Everything stays de-energized</b> until §8. You wire the whole axis with the AC plug out.<br>
+    <b>Companion document:</b> the full <i>Dual-X Gantry Assembly &amp; Wiring Manual</i> — this guide is the learning subset of it.
+  </div>
+</header>
+
+<nav class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#big">How the four boxes connect</a></li>
+    <li><a href="#parts">Parts &amp; tools for one axis</a></li>
+    <li><a href="#safety">Safety rules</a></li>
+    <li><a href="#stage1">Stage 1 — Power supply</a></li>
+    <li><a href="#stage2">Stage 2 — Controller</a></li>
+    <li><a href="#stage3">Stage 3 — Driver</a></li>
+    <li><a href="#stage4">Stage 4 — The rail</a></li>
+    <li><a href="#checklist">Pre-power checklist</a></li>
+    <li><a href="#poweron">First power-on &amp; first jog</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#terminals">Terminal cheat-sheet</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 1 -->
+<section id="big">
+  <h2 class="sec"><span class="num">1</span>How the four boxes connect</h2>
+  <p>Before touching a screwdriver, get the shape of the system in your head. There are only four boxes, and each one
+  has exactly one job:</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:18%">Box</th><th style="width:30%">Its one job</th><th>What goes in</th><th>What comes out</th></tr></thead>
+    <tbody>
+      <tr><td><b>24 V supply</b></td><td>Turn wall AC into a 24 V DC bus</td><td>100–220 VAC (L / N / earth)</td><td>24 V+ and 24 V− that everything else drinks from</td></tr>
+      <tr><td><b>FMC4030 controller</b></td><td>Think. Decide where the axis should be</td><td>24 V power, limit-switch signals, Ethernet commands from your PC</td><td>A stream of 5 V <b>pulse</b> + <b>direction</b> signals</td></tr>
+      <tr><td><b>FMDD50D40NOM driver</b></td><td>Turn tiny 5 V pulses into real motor current</td><td>24 V power (muscle) + 5 V pulse/direction (instructions)</td><td>Two coil currents, A and B, to the motor</td></tr>
+      <tr><td><b>The rail</b></td><td>Turn rotation into linear travel, and report its ends</td><td>Motor coil currents; 24 V for the switches</td><td>Motion, plus limit/home signals back to the controller</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="ascii">                     <span class="dim">┌──────────── everything drinks from this bus ────────────┐</span>
+                     <span class="dim">│</span>                                                       <span class="dim">│</span>
+  AC 100–220 V ──► <span class="y">[ 24 VDC SUPPLY ]</span> ══ <span class="hl">24V+ / 24V−</span> ═══╦═══════════╦════════════╗
+       L  N  ⏚                                        <span class="dim">║</span>           <span class="dim">║</span>            <span class="dim">║</span>
+                                                      ▼           ▼            ▼
+                                              <span class="b">[ CONTROLLER ]</span>  <span class="g">[ DRIVER ]</span>   <span class="m">[ LIMIT SW ]</span>
+                                                 <span class="b">FMC4030</span>       <span class="g">FMDD50</span>       <span class="m">FSK40 ×2</span>
+                                                      <span class="dim">│</span>           <span class="dim">│</span>            <span class="dim">│</span>
+                                   <span class="hl">5V / PU1 / DR1</span> <span class="dim">└──────────►</span><span class="dim">┤</span>            <span class="dim">│</span>
+                                     <span class="dim">(pulse + direction, 5 V)</span>    <span class="dim">│</span>            <span class="dim">│</span>
+                                                                  <span class="dim">│</span> <span class="g">A+ A− B+ B−</span> <span class="dim">│</span>
+                                                                  <span class="dim">└──────►</span> <span class="y">[ MOTOR ]</span>
+                                                                          <span class="dim">on the</span> <span class="y">RAIL</span>
+                                   <span class="hl">LP1 / LN1</span> <span class="dim">◄─────── black signal wires ─────────┘</span>
+                                     <span class="dim">(the rail tells the controller where its ends are)</span></div>
+
+  <div class="callout note"><b>The one idea that makes all of this click</b>
+  Two completely separate things travel between the controller and the driver: <b>instructions</b> and <b>muscle</b>.
+  The controller only ever sends instructions — a 5 V pulse train that carries almost no current (~15 mA). The muscle
+  comes from the 24 V bus straight into the driver, and the driver decides how to push it through the motor coils.
+  That is why the motor's power never flows through the controller, and why a mistake on the signal side makes the
+  motor <i>silent</i> while a mistake on the power side makes it <i>hot</i>.</div>
+
+  <h3>Why we wire in this order</h3>
+  <div class="roadmap">
+    <div class="rm"><b>Stage 1</b><span>Power supply</span><em>Build the 24 V bus and prove it is +24 V and correctly polarised, with nothing attached to damage.</em></div>
+    <div class="rm"><b>Stage 2</b><span>Controller</span><em>Give the brain power and earth, and a network cable. Nothing moves yet, so mistakes are cheap.</em></div>
+    <div class="rm"><b>Stage 3</b><span>Driver</span><em>Set its DIP switches, feed it 24 V, then run the three signal wires from the controller.</em></div>
+    <div class="rm"><b>Stage 4</b><span>The rail</span><em>Motor coils into the driver, limit switches back to the controller. The moving parts go last.</em></div>
+  </div>
+  <p>Each stage is <b>verifiable on its own</b>. That is the whole point of the order: if something is wrong, you know
+  it belongs to the stage you just finished, not to a haystack of forty wires.</p>
+</section>
+
+<!-- 2 -->
+<section id="parts">
+  <h2 class="sec"><span class="num">2</span>Parts &amp; tools for one axis</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th class="center" style="width:8%">Qty</th><th style="width:26%">Item</th><th style="width:36%">Model / spec</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="center">1</td><td>DC power supply</td><td><b>24 VDC</b>, ≥ 4 A for a single axis</td><td>AC 100–220 V input. One motor draws 2.0 A; 4–5 A gives comfortable headroom.</td></tr>
+      <tr><td class="center">1</td><td>Motion controller</td><td>FMC4030 (3-axis)</td><td>You will use only axis 1. Axes 2 and 3 stay empty.</td></tr>
+      <tr><td class="center">1</td><td>Stepper driver</td><td>FMDD50D40NOM (DC 20–50 V, 1.0–4.0 A/phase)</td><td>24 V is well inside its input range.</td></tr>
+      <tr><td class="center">1</td><td>Stepper motor</td><td>57HS056TF075A-03 (NEMA 23, 2-phase, 1.8°, 2.0 A/phase, ≥ 80 N·cm)</td><td>Already mounted on the rail with its coupling tightened.</td></tr>
+      <tr><td class="center">2</td><td>Limit / home switch</td><td>FSK40 photoelectric, <b>NPN normally-open</b>, 5–24 V</td><td>One at each end of travel. One switch works, two is better.</td></tr>
+      <tr><td class="center">1</td><td>Ethernet cable</td><td>Standard RJ45</td><td>Controller <code>CN3</code> to your PC.</td></tr>
+      <tr><td class="center">—</td><td>Wiring</td><td>Hook-up wire, ferrules, PE (earth) wire, fuse or breaker on the AC side</td><td>Ferrules on every stranded end that enters a screw terminal.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Tools</h4>
+  <p>Small flat and Phillips screwdrivers, hex keys, wire stripper/crimper, ferrules, a <b>multimeter</b> (you will use
+  continuity and DC volts constantly), label tape or a marker, and a PC with an Ethernet port.</p>
+
+  <div class="callout note"><b>Label both ends of every wire as you make it.</b>
+  Two minutes with tape now saves an hour of tracing later. A single axis is 13 connections; write what each one is.</div>
+</section>
+
+<!-- 3 -->
+<section id="safety">
+  <h2 class="sec"><span class="num">3</span>Safety rules</h2>
+  <div class="callout danger"><b>⚠ The supply's input side carries 100–220 VAC.</b>
+  Do all wiring with the system fully de-energized and the <b>AC plug physically removed</b> — not just switched off.
+  Mains termination should be done by someone qualified to do it. Never work on live terminals, and never leave
+  AC terminals uncovered.</div>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>Do</h4>
+      <ul>
+        <li>Wire everything with power off, plug out.</li>
+        <li>Bond the controller's <code>PE</code> terminal and the machine frame to protective earth.</li>
+        <li>Check 24 V polarity with a meter <i>before</i> anything is connected to the bus.</li>
+        <li>Use ferrules on stranded wire entering screw terminals, and tug-test every wire.</li>
+        <li>Keep motor and 24 V power wiring physically away from signal and Ethernet runs.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Don't</h4>
+      <ul>
+        <li><b>Never plug or unplug the motor while the driver is powered</b> — it can destroy the driver's output stage.</li>
+        <li>Don't exceed <b>DC 50 V</b> into the driver's <code>V+</code>/<code>V−</code>.</li>
+        <li>Don't split a motor coil pair across A and B (see §7).</li>
+        <li>Don't feed 24 V into the driver's <code>PU</code>/<code>DR</code> inputs — those are the 5 V side.</li>
+        <li>Don't make your first jog a long one. Millimetres first.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- STAGE 1 -->
+<section id="stage1">
+  <div class="stagehead">
+    <h2><span class="num">Stage 1</span>The power supply</h2>
+    <p>Goal: a 24 V DC bus you have measured and trust, with nothing else connected to it yet.</p>
+  </div>
+
+  <p>Everything downstream assumes this bus is correct. If the polarity is backwards here, you will find out by
+  destroying a controller — so this stage is short, and it ends with a meter reading.</p>
+
+  <div class="ascii">  <span class="dim">AC side (dangerous)</span>              <span class="dim">DC side (safe to handle when AC is out)</span>
+  ───────────────────              ───────────────────────────────────────
+
+    L  ──►  <span class="hl">L</span>   ┌─────────────────┐   <span class="hl">V+</span>  ──►  <span class="hl">24V+ bus</span>  ══► controller, driver, switches
+    N  ──►  <span class="hl">N</span>   │  24 VDC SUPPLY  │   <span class="hl">V−</span>  ──►  <span class="hl">24V− bus</span>  ══► controller, driver, switches
+    ⏚  ──►  <span class="y">⏚</span>   └─────────────────┘
+                                   <span class="dim">(some supplies label these +V / −V or DC OK)</span></div>
+
+  <div class="step"><span class="tag">Step 1.1 — Mount the supply and confirm its input voltage selector</span>
+  <p>Fix the supply in the cabinet where its terminals are reachable and its vents are not blocked. If it has a
+  <b>115 V / 230 V selector switch</b>, set it to match your mains <i>now</i> — this is the single most expensive
+  thing to get wrong on this page.</p></div>
+
+  <div class="step"><span class="tag">Step 1.2 — Land the AC input</span>
+  <p>With the plug out, connect mains to the supply's input terminals: <b>L</b> (live), <b>N</b> (neutral), and
+  <b>⏚</b> (earth). Put a fuse or breaker upstream. Fit the terminal cover and strain relief before you go any further.</p></div>
+
+  <div class="step"><span class="tag">Step 1.3 — Build the 24 V bus</span>
+  <p>You have one supply feeding three consumers (controller, driver, two switches), so make a small distribution
+  point rather than stacking four wires under one screw:</p>
+  <ul>
+    <li>Run one wire from the supply's <b>V+</b> to a <b>24 V+ distribution point</b> — a small terminal block, a bus bar, or two ferrules doubled into one screw if that is all you have.</li>
+    <li>Do the same from <b>V−</b> to a <b>24 V− distribution point</b>.</li>
+    <li>Pick a colour convention and keep it for the whole build: this guide uses <span class="wire w-orange"></span><b>orange for 24 V+</b> and <span class="wire w-blue"></span><b>blue for 24 V−</b>.</li>
+  </ul>
+  <p>Leave both distribution points otherwise empty for now. Nothing else connects in this stage.</p></div>
+
+  <div class="step"><span class="tag">Step 1.4 — Prove the bus, then kill it again</span>
+  <p>Plug in the AC and switch on, with <b>nothing</b> connected downstream of the bus. Set your meter to DC volts and
+  measure from <b>24 V+</b> to <b>24 V−</b>.</p>
+  <ul>
+    <li>You want roughly <b>+24 V</b> (anything ≈ 23.5–25 V is fine; many supplies have a trim pot).</li>
+    <li>A <i>negative</i> reading means your meter leads are swapped, not the supply — swap the leads and confirm which terminal is genuinely positive. Label them.</li>
+    <li>Also check <b>24 V− to earth</b> and <b>24 V+ to earth</b>: neither should read a dead short.</li>
+  </ul>
+  <p>Then <b>switch off and pull the AC plug.</b> The rest of the build happens dead.</p></div>
+
+  <div class="verify"><b>✔ Verify before Stage 2</b>
+  <ul>
+    <li>Meter reads ≈ +24 V from the 24 V+ point to the 24 V− point.</li>
+    <li>Both bus points are clearly labelled <b>+</b> and <b>−</b>, and you are certain which is which.</li>
+    <li>AC terminals are covered; the plug is out; the supply is now dead.</li>
+  </ul></div>
+</section>
+
+<!-- STAGE 2 -->
+<section id="stage2">
+  <div class="stagehead">
+    <h2><span class="num">Stage 2</span>The controller</h2>
+    <p>Goal: the FMC4030 powered, earthed, and reachable over Ethernet. Three power wires and one network cable.</p>
+  </div>
+
+  <p>The controller is the cheapest stage to wire and the easiest to damage, so it gets its own step. It takes
+  <b>24 V</b> on <code>VN+</code>/<code>VN−</code> — the same bus the driver uses — plus an earth bond on <code>PE</code>.</p>
+
+  <div class="ascii">  <span class="hl">24V+ bus</span> ──<span class="wire w-orange" style="vertical-align:0"></span>──► <span class="b">VN+</span>   <span class="dim">┐</span>
+  <span class="hl">24V− bus</span> ──<span class="wire w-blue" style="vertical-align:0"></span>──► <span class="b">VN−</span>   <span class="dim">├─ FMC4030 power/limit edge</span>
+  earth ⏚ ──<span class="wire w-yellow" style="vertical-align:0"></span>──► <span class="b">PE</span>    <span class="dim">┘</span>
+
+  PC ──── RJ45 ────► <span class="b">CN3</span>   <span class="dim">(default  192.168.0.30 : 8088)</span></div>
+
+  <div class="step"><span class="tag">Step 2.1 — Find the two terminal banks</span>
+  <p>The FMC4030 has terminals along <b>two opposite edges</b>. Orient yourself before wiring — terminals that happen
+  to sit across from each other are <i>not</i> related:</p>
+  <ul>
+    <li>One edge is the <b>signal / output edge</b>: the per-axis <code>5V</code>, <code>PU</code>, <code>DR</code> groups plus the <code>OP</code> outputs.</li>
+    <li>The other is the <b>power / limit / input edge</b>: <code>VN+</code>, <code>VN−</code>, <code>PE</code>, then the <code>LP</code>/<code>LN</code>/<code>GND</code> limit groups, then <code>IN0–IN3</code>.</li>
+  </ul>
+  <p>In this stage you only touch the first three terminals of the power edge. The full map is in §11.</p></div>
+
+  <div class="step"><span class="tag">Step 2.2 — Wire controller power</span>
+  <p>With the supply dead:</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:34%">From</th><th style="width:26%">To controller</th><th>Wire</th></tr></thead>
+    <tbody>
+      <tr><td>24 V+ bus</td><td><code>VN+</code></td><td><span class="wire w-orange"></span>24 V+</td></tr>
+      <tr><td>24 V− bus</td><td><code>VN−</code></td><td><span class="wire w-blue"></span>24 V−</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Double-check these two against your labels before moving on. Reversed polarity on <code>VN+</code>/<code>VN−</code>
+  is the classic way to kill a controller on its first power-up.</p></div>
+
+  <div class="step"><span class="tag">Step 2.3 — Bond PE to earth</span>
+  <p>Run a wire from the controller's <code>PE</code> terminal to the machine frame, and from the frame to protective
+  earth. <code>PE</code> is chassis ground — it is a safety and noise path, not a signal return, so do not use it in
+  place of <code>VN−</code> or a limit <code>GND</code>.</p></div>
+
+  <div class="step"><span class="tag">Step 2.4 — Plug in Ethernet and set up the PC</span>
+  <p>Run an RJ45 cable from <code>CN3</code> to your PC (directly, or through a switch/router). The controller ships on
+  a fixed address:</p>
+  <ul>
+    <li>Controller: IP <code>192.168.0.30</code>, port <code>8088</code>.</li>
+    <li>Set your PC's adapter to the same subnet — e.g. IP <code>192.168.0.35</code>, mask <code>255.255.255.0</code>, gateway <code>192.168.0.1</code>.</li>
+  </ul>
+  <p>You will test the link in §9. <code>CN1</code> (RS-232 DB9) and <code>CN2</code> (RS-232/485 on RJ45) exist but are
+  not needed for bring-up — leave them alone.</p></div>
+
+  <div class="callout warn"><b>Resist the urge to power up and look at the lights.</b>
+  There is nothing to learn from it yet, and every power-up with half-finished wiring is a chance to short something.
+  The single power-on happens in §9, after the checklist.</div>
+
+  <div class="verify"><b>✔ Verify before Stage 3</b>
+  <ul>
+    <li><code>VN+</code> traces back to 24 V+, <code>VN−</code> to 24 V− — confirmed by continuity, not by memory.</li>
+    <li><code>PE</code> is bonded to the frame and to earth.</li>
+    <li>Ethernet is seated in <code>CN3</code>; the PC adapter is on <code>192.168.0.x</code>.</li>
+    <li>Still de-energized.</li>
+  </ul></div>
+</section>
+
+<!-- STAGE 3 -->
+<section id="stage3">
+  <div class="stagehead">
+    <h2><span class="num">Stage 3</span>The driver</h2>
+    <p>Goal: DIP switches set correctly, 24 V in, and the three signal wires from controller axis 1. Motor still unplugged.</p>
+  </div>
+
+  <p>The driver is where most first-time mistakes live, so it splits into three parts: <b>switches first</b> (they are
+  awkward to reach once wired), then <b>power</b>, then <b>signals</b>. Like the controller, the driver has terminals on
+  two ends — a <b>control-signal end</b> (<code>PU±</code>, <code>DR±</code>, <code>MF±</code>, <code>COM24V</code>) and a
+  <b>power/motor end</b> (<code>V+</code>, <code>V−</code>, <code>A+</code>, <code>A−</code>, <code>B+</code>, <code>B−</code>).</p>
+
+  <h3>3a — Set the DIP switches (do this first)</h3>
+  <p>There are eight switches. <b>SW1–SW3</b> set the output current, <b>SW4</b> sets the mode, and <b>SW5–SW8</b> set
+  microstepping.</p>
+
+  <div class="callout danger"><b>SW4 must be OFF.</b>
+  <code>SW4 = OFF</code> selects <b>pulse / subdivision mode</b>, which is what the FMC4030's <code>PU</code>/<code>DR</code>
+  signals require. With <code>SW4 = ON</code> the driver is in I/O mode and will ignore your pulses completely — the
+  motor simply sits there holding, and you will spend an afternoon checking wiring that was fine all along.</div>
+
+  <div class="step"><span class="tag">Step 3.1 — Set the current to match the motor (2.0 A)</span>
+  <p>The 57HS motor is rated <b>2.0 A per phase</b>. Set the driver to that and no more — too low is weak and skips
+  steps, too high runs hot. Peak current is the operating figure × 1.4.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Operating A</th><th class="center">1.0</th><th class="center">1.2</th><th class="center">1.5</th><th class="center" style="background:#9c1a22">2.0 ★</th><th class="center">2.5</th><th class="center">3.0</th><th class="center">3.5</th><th class="center">4.0</th></tr></thead>
+    <tbody>
+      <tr><td>Peak A</td><td class="center">1.4</td><td class="center">1.7</td><td class="center">2.1</td><td class="center">2.8</td><td class="center">3.5</td><td class="center">4.2</td><td class="center">4.9</td><td class="center">5.6</td></tr>
+      <tr><td>SW1</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td></tr>
+      <tr><td>SW2</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW3</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout ok"><b>★ For the 57HS motor (2.0 A):</b> SW1 = <span class="off">OFF</span> · SW2 = <span class="off">OFF</span> · SW3 = <span class="on">ON</span></div></div>
+
+  <div class="step"><span class="tag">Step 3.2 — Choose microstepping</span>
+  <p>Microstepping divides each 1.8° full step into smaller ones: smoother and quieter, but more pulses per revolution,
+  so a high setting caps your top speed. <b>1600 steps/rev</b> is a good general-purpose starting point.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Steps/rev</th><th class="center">200</th><th class="center">400</th><th class="center">800</th><th class="center" style="background:#9c1a22">1600 ★</th><th class="center">3200</th><th class="center">6400</th><th class="center">12800</th><th class="center">25600</th></tr></thead>
+    <tbody>
+      <tr><td>SW5</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center off">OFF</td></tr>
+      <tr><td>SW6</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW7</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td><td class="center off">OFF</td></tr>
+      <tr><td>SW8</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td><td class="center on">ON</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout ok"><b>★ Suggested start (1600 steps/rev):</b> SW5 = <span class="off">OFF</span> · SW6 = <span class="off">OFF</span> · SW7 = <span class="on">ON</span> · SW8 = <span class="on">ON</span> &nbsp;·&nbsp; and <b>SW4 = <span class="off">OFF</span></b></div>
+  <p style="font-size:13px;color:var(--muted)">A second bank of values (1000–40000 steps/rev) lives behind <code>SW8 = OFF</code>; see the driver datasheet if you ever need it.</p>
+  <div class="callout note"><b>Write the number down.</b> Steps/rev is how the software converts millimetres into pulses. If you change this switch later without telling the software, every distance you command will be wrong by that ratio.</div></div>
+
+  <h3>3b — Driver power (the muscle)</h3>
+
+  <div class="step"><span class="tag">Step 3.3 — Feed the driver 24 V</span>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:34%">From</th><th style="width:26%">To driver</th><th>Wire</th></tr></thead>
+    <tbody>
+      <tr><td>24 V+ bus</td><td><code>V+</code></td><td><span class="wire w-orange"></span>24 V+</td></tr>
+      <tr><td>24 V− bus</td><td><code>V−</code></td><td><span class="wire w-blue"></span>24 V−</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>This is the only power the motor ever sees — all motor current is manufactured here, from this pair of wires.
+  Use conductors sized for a couple of amps and keep them short. The driver accepts <b>DC 20–50 V</b>; 24 V sits
+  comfortably in range.</p></div>
+
+  <h3>3c — Signal wiring (the instructions)</h3>
+  <p>Three wires carry everything the controller has to say. They are wired <b>common-anode</b>: the controller's
+  <b>5 V</b> feeds the driver's two opto-isolator anodes (<code>PU+</code> and <code>DR+</code>, tied together), and the
+  controller's <code>PU1</code> and <code>DR1</code> pins <i>sink</i> the other side of those optos.</p>
+
+  <div class="ascii">  <span class="b">FMC4030 — axis 1</span>                    <span class="g">FMDD50D40NOM driver</span>
+  ────────────────                    ───────────────────
+  <span class="hl">5V</span>   ────────────────┬──────────────► <span class="g">PU+</span>   <span class="dim">(opto anode)</span>
+                        └──────────────► <span class="g">DR+</span>   <span class="dim">(opto anode)</span>
+  <span class="hl">PU1</span>  ───────────────────────────────► <span class="g">PU−</span>   <span class="dim">pulse / step  (falling-edge active)</span>
+  <span class="hl">DR1</span>  ───────────────────────────────► <span class="g">DR−</span>   <span class="dim">direction</span>
+
+                                        <span class="g">MF+</span> <span class="g">MF−</span>  <span class="dim">── leave OPEN</span>
+                                        <span class="g">COM24V</span>   <span class="dim">── leave OPEN (24 V-signal mode only)</span></div>
+
+  <div class="step"><span class="tag">Step 3.4 — Run the three signal wires</span>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:26%">Controller (axis 1)</th><th style="width:26%">Driver</th><th>What it carries</th></tr></thead>
+    <tbody>
+      <tr><td><code>5V</code></td><td><code>PU+</code> <b>and</b> <code>DR+</code> (bridge them)</td><td>5 V supply for both opto-isolator LEDs. Carries ~15–17 mA per input and no motor current at all.</td></tr>
+      <tr><td><code>PU1</code></td><td><code>PU−</code></td><td>The pulse train. One pulse = one microstep.</td></tr>
+      <tr><td><code>DR1</code></td><td><code>DR−</code></td><td>Direction: which way the next pulses go.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Note that <code>5V</code> goes to <b>two</b> terminals — take one wire from the controller to the driver and bridge
+  <code>PU+</code> to <code>DR+</code> at the driver end, or land two wires on the controller's <code>5V</code>. Either is fine.</p></div>
+
+  <div class="callout danger"><b>Use the controller's 5 V here — never 24 V.</b>
+  The <code>PU</code>/<code>DR</code> inputs in this common-anode wiring expect 5 V. Feeding 24 V into them damages the
+  opto inputs. The driver's <code>COM24V</code> terminal exists for a different (24 V-signal) wiring scheme that we are
+  not using — leave it open.</div>
+
+  <div class="callout note"><b><code>MF+</code> / <code>MF−</code> stay disconnected.</b>
+  MF is "motor free" — energising it <i>releases</i> the motor so the shaft spins freely with no holding torque. You
+  almost always want holding torque, so leave these two terminals empty. An axis that mysteriously has no torque is
+  usually an MF wire someone added helpfully.</div>
+
+  <div class="callout note"><b>Keep signal and power apart.</b>
+  Run these three signal wires away from the 24 V and motor-coil runs, and keep them reasonably short. Stepper motor
+  wiring is electrically noisy; a pulse line taped alongside it can pick up phantom steps.</div>
+
+  <div class="verify"><b>✔ Verify before Stage 4</b>
+  <ul>
+    <li><b>SW4 = OFF.</b> Look at it again — it is the most common single-axis failure.</li>
+    <li>Current set to 2.0 A (SW1 OFF, SW2 OFF, SW3 ON); microstepping noted down (1600 suggested).</li>
+    <li><code>V+</code>/<code>V−</code> polarity correct, verified with continuity back to the labelled bus.</li>
+    <li>Controller <code>5V</code> reaches both <code>PU+</code> and <code>DR+</code>; <code>PU1</code>→<code>PU−</code>; <code>DR1</code>→<code>DR−</code>.</li>
+    <li><code>MF+</code>, <code>MF−</code>, <code>COM24V</code> all empty. Axis 2 and axis 3 terminals on the controller all empty.</li>
+  </ul></div>
+</section>
+
+<!-- STAGE 4 -->
+<section id="stage4">
+  <div class="stagehead">
+    <h2><span class="num">Stage 4</span>The rail</h2>
+    <p>Goal: motor coils landed on the driver, and both limit switches reporting back to the controller. Then you are done wiring.</p>
+  </div>
+
+  <p>The rail contributes two things electrically: a <b>motor</b> that takes current from the driver, and <b>limit
+  switches</b> that send signals back to the controller. Note they connect to <i>different boxes</i> — a very common
+  point of confusion. The motor never touches the controller; the switches never touch the driver.</p>
+
+  <h3>4a — Motor → driver</h3>
+  <p>The 57HS motor has four leads on an XH-4 connector: two per coil. The colours map straight across:</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th class="center" style="width:12%">Pin</th><th style="width:22%">Motor colour</th><th style="width:22%">Coil</th><th>Driver terminal</th></tr></thead>
+    <tbody>
+      <tr><td class="center">1</td><td><span class="wire w-black"></span>Black</td><td>A (A+)</td><td><code>A+</code></td></tr>
+      <tr><td class="center">2</td><td><span class="wire w-green"></span>Green</td><td>Ā (A−)</td><td><code>A−</code></td></tr>
+      <tr><td class="center">3</td><td><span class="wire w-red"></span>Red</td><td>B (B+)</td><td><code>B+</code></td></tr>
+      <tr><td class="center">4</td><td><span class="wire w-blue"></span>Blue</td><td>B̄ (B−)</td><td><code>B−</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="step"><span class="tag">Step 4.1 — Confirm the coil pairs with a meter</span>
+  <p>Before landing anything, prove which wires belong together. With the motor unplugged from everything, measure
+  resistance between pairs:</p>
+  <ul>
+    <li><b>Black ↔ Green</b> should read about <b>0.75 Ω</b> — they are one coil (A).</li>
+    <li><b>Red ↔ Blue</b> should read about <b>0.75 Ω</b> — they are the other coil (B).</li>
+    <li><b>Any A wire ↔ any B wire</b> should read <b>open</b>. The two coils are electrically separate inside the motor.</li>
+  </ul>
+  <p>If your motor's colours differ from the table, trust the meter and the coil pairs, not the colour chart.</p></div>
+
+  <div class="step"><span class="tag">Step 4.2 — Land the four coil wires</span>
+  <p>With power off, connect Black→<code>A+</code>, Green→<code>A−</code>, Red→<code>B+</code>, Blue→<code>B−</code>.</p>
+  <div class="callout warn"><b>Pairing matters more than polarity.</b>
+  Getting <code>A+</code> and <code>A−</code> backwards just reverses the axis direction — annoying, harmless, and fixable.
+  <b>Splitting a pair</b> (say Black and Red on A) means neither coil gets a complete circuit, and the motor will buzz,
+  vibrate in place, or refuse to turn. If the motor misbehaves on first jog, this is the first thing to re-check.</div>
+  <div class="callout danger"><b>Never connect or disconnect the motor while the driver is powered.</b>
+  Interrupting coil current in a live driver produces a voltage spike that can take out the output stage. Motor in
+  place now, while everything is dead — and power down before you ever touch it again.</div></div>
+
+  <h3>4b — Limit / home switches → controller</h3>
+  <p>Each FSK40 is a photoelectric switch with a slot: a flag on the moving carriage passes through the slot and trips
+  it. On the FMC4030 these switches do <b>double duty</b> — end-of-travel protection <i>and</i> the home/origin
+  reference the zero-return routine drives to.</p>
+
+  <div class="callout warn"><b>The switches must be NPN, normally-open (NO).</b>
+  The FMC4030's limit inputs are <b>low-level active</b> — the switch works by pulling the signal line <i>down</i>.
+  A PNP switch will never read correctly no matter how you wire it. Verify against the label on your own switch.</div>
+
+  <div class="ascii">  <span class="m">FSK40 switch</span>                      <span class="b">FMC4030 — axis 1 limit group</span>
+  ────────────                      ────────────────────────────
+  <span class="wire w-brown" style="vertical-align:0"></span>Brown  ──────► <span class="hl">24V+ bus</span>          <span class="b">LP1</span>  ◄── black wire of the <b>positive-end</b> switch
+  <span class="wire w-blue"  style="vertical-align:0"></span>Blue   ──────► <span class="hl">24V− bus</span>          <span class="b">LN1</span>  ◄── black wire of the <b>negative-end</b> switch (home)
+  <span class="wire w-black" style="vertical-align:0"></span>Black  ──────► <span class="hl">LP1 or LN1</span>        <span class="b">GND</span>  ◄── axis-1 limit ground (sits right after LN1)</div>
+
+  <div class="step"><span class="tag">Step 4.3 — Mount the sensors and the flag</span>
+  <p>If this is not already done mechanically: fix each sensor body to the rail so the moving flag passes through the
+  optical gap <b>without touching anything</b>, and fix the flag to the carriage.</p>
+  <ul>
+    <li>Put the <b>negative-end</b> sensor at the home/zero end of travel, and the <b>positive-end</b> sensor at the far end.</li>
+    <li>Leave a few millimetres of margin before the hard mechanical stop, so the switch trips before the carriage bottoms out.</li>
+    <li>Slide the carriage by hand through both sensors and watch each sensor's indicator LED change state. Fix any mechanical interference now.</li>
+  </ul></div>
+
+  <div class="step"><span class="tag">Step 4.4 — Wire both switches</span>
+  <p>Both switches share the 24 V bus; only their black signal wires differ.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:24%">Switch wire</th><th style="width:30%">Negative-end switch (home)</th><th>Positive-end switch</th></tr></thead>
+    <tbody>
+      <tr><td><span class="wire w-brown"></span>Brown (+24 V)</td><td>24 V+ bus</td><td>24 V+ bus</td></tr>
+      <tr><td><span class="wire w-blue"></span>Blue (0 V)</td><td>24 V− bus</td><td>24 V− bus</td></tr>
+      <tr><td><span class="wire w-black"></span>Black (signal)</td><td>Controller <code>LN1</code></td><td>Controller <code>LP1</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Use the <code>GND</code> terminal that sits in the <b>axis-1 limit group</b>, immediately after <code>LN1</code>, as
+  this pair's limit ground / return. All three limit <code>GND</code> terminals on the controller are internally common,
+  so electrically any of them works — but keeping each pair in its own group keeps the harness readable.</p>
+  <div class="callout note"><b>Only fitting one switch?</b> Put it at the home end on <code>LN1</code>. You get homing and
+  protection where the carriage returns, and you then rely on software soft-limits at the far end. Leave <code>LP1</code> empty.</div>
+  <div class="callout note"><b>Wrong end trips?</b> If the software later shows "+" tripping when you move toward the
+  negative end, the two black wires are simply swapped. Power off and exchange them at <code>LP1</code>/<code>LN1</code>.</div></div>
+
+  <div class="verify"><b>✔ Verify — wiring complete</b>
+  <ul>
+    <li>Coil pairs metered: Black+Green ≈ 0.75 Ω, Red+Blue ≈ 0.75 Ω, A↔B open.</li>
+    <li>Motor landed on <code>A+</code>/<code>A−</code>/<code>B+</code>/<code>B−</code> with pairs intact, done with power off.</li>
+    <li>Both switches: brown→24 V+, blue→24 V−, black→<code>LP1</code> (far end) / <code>LN1</code> (home end).</li>
+    <li>Axis-1 <code>GND</code> used as the limit return. <code>LP2</code>/<code>LN2</code>/<code>LP3</code>/<code>LN3</code> empty.</li>
+    <li>Flag passes cleanly through both sensor slots by hand, LEDs changing state.</li>
+  </ul></div>
+</section>
+
+<!-- 8 -->
+<section id="checklist">
+  <h2 class="sec"><span class="num">8</span>Pre-power checklist</h2>
+  <p>Thirteen connections, still de-energized, meter in hand. Walk the list before the plug goes in.</p>
+  <ul class="chk">
+    <li>AC landed correctly on the supply's L / N / ⏚; voltage selector correct; terminals covered; fuse or breaker upstream.</li>
+    <li>24 V bus polarity verified and labelled; no short from either rail to earth.</li>
+    <li>Controller <code>VN+</code> → 24 V+, <code>VN−</code> → 24 V−. Confirmed, not assumed.</li>
+    <li>Controller <code>PE</code> bonded to frame and protective earth.</li>
+    <li>Driver <code>V+</code> → 24 V+, <code>V−</code> → 24 V−.</li>
+    <li>Driver <code>SW4 = OFF</code> (pulse mode). Current 2.0 A: SW1 <span class="off">OFF</span>, SW2 <span class="off">OFF</span>, SW3 <span class="on">ON</span>. Microstepping set and written down.</li>
+    <li>Signals: <code>5V</code> → <code>PU+</code> &amp; <code>DR+</code>; <code>PU1</code> → <code>PU−</code>; <code>DR1</code> → <code>DR−</code>.</li>
+    <li><code>MF+</code>, <code>MF−</code>, <code>COM24V</code> left open.</li>
+    <li>Motor coil pairs verified by continuity; four coil wires on <code>A+</code>/<code>A−</code>/<code>B+</code>/<code>B−</code>; connector seated while unpowered.</li>
+    <li>Limit switches are NPN-NO; brown/blue on the 24 V bus; black wires on the correct <code>LP1</code>/<code>LN1</code>.</li>
+    <li>Nothing landed on axis 2 or axis 3 terminals.</li>
+    <li>Ethernet in <code>CN3</code>; PC adapter on <code>192.168.0.x</code> / <code>255.255.255.0</code>.</li>
+    <li>No stray strands, no terminal touching its neighbour, every screw tight, every wire tug-tested.</li>
+    <li>Carriage sitting mid-travel (not against a hard stop), and the path is clear of hands and tools.</li>
+  </ul>
+</section>
+
+<!-- 9 -->
+<section id="poweron">
+  <h2 class="sec"><span class="num">9</span>First power-on &amp; first jog</h2>
+  <ol>
+    <li><b>Energize.</b> Plug in and switch on. The supply LED should light, the controller and driver power LEDs should
+    come on, and the driver's red <b>ALM</b> fault light should stay <i>off</i>. If ALM is lit, power down immediately and
+    go to §10.</li>
+
+    <li><b>Listen and feel.</b> The motor should be silently holding — try turning the shaft or coupling by hand; it
+    should resist noticeably. No resistance means either no 24 V at the driver or an accidentally-energised MF.</li>
+
+    <li><b>Test the network.</b> From the PC: <code>ping 192.168.0.30 -t</code>. You want steady replies. No replies means
+    the PC is not on the controller's subnet, or the cable is not in <code>CN3</code>.</li>
+
+    <li><b>Connect the software.</b> Launch the controller software and connect to <code>192.168.0.30 : 8088</code>. If the
+    connection drops after about a minute of inactivity, that is the controller's idle timeout by design — just reconnect.</li>
+
+    <li><b>Check the limit switches before commanding any motion.</b> In the status panel, slide the carriage by hand and
+    trip each switch. Confirm the home-end switch registers as <code>LN1</code> (negative) and the far-end switch as
+    <code>LP1</code> (positive). If they are reversed, power down and swap the two black wires. <b>Fix this now</b> —
+    a limit wired to the wrong end cannot stop an overrun.</li>
+
+    <li><b>First jog: a few millimetres, low speed.</b> Command the smallest move your software allows on axis 1. Watch for:
+      <ul>
+        <li><b>Smooth rotation and travel</b> → coils are paired correctly.</li>
+        <li><b>Buzzing, vibration in place, or no rotation</b> → power down and re-check the coil pairing (§4a).</li>
+        <li><b>Nothing at all, motor still holding</b> → almost certainly <code>SW4</code> is ON, or <code>PU</code>/<code>DR</code> is mis-wired.</li>
+      </ul>
+    </li>
+
+    <li><b>Check the direction convention.</b> Jog positive and confirm the carriage moves toward the <i>positive-end</i>
+    switch. If it goes the wrong way, either invert the direction in software, or power down and swap the motor's
+    <code>A+</code> ↔ <code>A−</code>. For a single axis, software is the easier fix.</li>
+
+    <li><b>Confirm the limits actually stop motion.</b> At low speed, jog toward each end and confirm the axis stops when
+    the switch trips. Stay ready to cut power.</li>
+
+    <li><b>Home the axis.</b> Run the zero-return / homing routine to <code>LN1</code> and set that position as zero.
+    Your axis now has a repeatable origin, which is what makes every coordinate you command afterwards meaningful.</li>
+  </ol>
+
+  <div class="callout note"><b>Moving on to software.</b> In the SDK this axis is index <code>0</code> (the terminals
+  labelled <code>PU1</code>/<code>DR1</code>). The controller counts axes from zero while the silkscreen counts from one —
+  an off-by-one worth remembering. The software also needs the <b>steps/rev</b> you set in Step 3.2 to convert
+  millimetres into pulses.</div>
+
+  <div class="callout ok"><b>Single axis complete.</b> Smooth jogging in both directions, both limits verified, and a
+  repeatable home position means your electrical build is sound. Adding a second axis is the same four stages again on
+  <code>5V</code>/<code>PU3</code>/<code>DR3</code> with limits on <code>LP3</code>/<code>LN3</code> — the bus and the
+  controller are already there.</div>
+</section>
+
+<!-- 10 -->
+<section id="trouble">
+  <h2 class="sec"><span class="num">10</span>Troubleshooting</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:30%">Symptom</th><th style="width:32%">Most likely cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td>Motor holds but does nothing on jog</td><td><code>SW4</code> is ON (I/O mode instead of pulse mode)</td><td>Set <code>SW4 = OFF</code>. Then verify <code>5V</code>→<code>PU+</code>/<code>DR+</code>, <code>PU1</code>→<code>PU−</code>, <code>DR1</code>→<code>DR−</code></td></tr>
+      <tr><td>Motor buzzes / vibrates but won't rotate</td><td>A coil pair is split across A and B</td><td>Re-verify by continuity: A = Black+Green, B = Red+Blue (≈0.75 Ω each, open between them)</td></tr>
+      <tr><td>No holding torque, shaft spins freely</td><td>No 24 V at the driver, or <code>MF</code> is energised</td><td>Meter <code>V+</code>/<code>V−</code> at the driver; disconnect anything on <code>MF+</code>/<code>MF−</code></td></tr>
+      <tr><td>Axis runs the wrong direction</td><td>Direction convention</td><td>Invert direction in software, or power off and swap the motor's <code>A+</code> ↔ <code>A−</code></td></tr>
+      <tr><td>Driver red <b>ALM</b> light on</td><td>Over-temperature (&gt;80 °C), over-current/short, or a motor wiring fault</td><td>Power down, inspect motor wiring for shorts, let it cool, improve spacing/airflow, then power-cycle</td></tr>
+      <tr><td>Motor weak, skips steps under load</td><td>Current set too low</td><td>Set 2.0 A: SW1 <span class="off">OFF</span>, SW2 <span class="off">OFF</span>, SW3 <span class="on">ON</span>. Also lower acceleration</td></tr>
+      <tr><td>Motor runs very hot</td><td>Current set above the motor's 2.0 A rating</td><td>Drop to the 2.0 A setting; note some warmth is normal for steppers</td></tr>
+      <tr><td>Limit never triggers</td><td>Wrong switch type (PNP), or black wire on the wrong terminal</td><td>Must be <b>NPN normally-open</b>; verify brown=24 V+, blue=0 V, black=signal on <code>LP1</code>/<code>LN1</code></td></tr>
+      <tr><td>Limit always shows triggered</td><td>Signal line pulled low permanently, or the flag is sitting in the slot</td><td>Move the carriage clear; check the black wire isn't shorted to 0 V; confirm the sensor LED changes state</td></tr>
+      <tr><td>"Positive" trips when moving negative</td><td><code>LP1</code> and <code>LN1</code> swapped</td><td>Power off and exchange the two black signal wires</td></tr>
+      <tr><td>Random extra steps / positions drift</td><td>Pulse wire picking up noise from motor/power runs</td><td>Re-route signal wires away from 24 V and motor cabling; shorten them; confirm <code>PE</code> is bonded</td></tr>
+      <tr><td>No ping reply from the controller</td><td>PC not on the controller's subnet</td><td>Set the PC adapter to <code>192.168.0.x</code> / <code>255.255.255.0</code>; confirm the cable is in <code>CN3</code></td></tr>
+      <tr><td>Connection drops after about a minute</td><td>Controller idle timeout — by design</td><td>Keep interacting, or simply reconnect</td></tr>
+      <tr><td>Nothing powers up at all</td><td>AC not landed, wrong voltage selector, or blown fuse</td><td>Power down, pull the plug, and re-check Stage 1 end to end</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- 11 -->
+<section id="terminals">
+  <h2 class="sec"><span class="num">11</span>Terminal cheat-sheet</h2>
+  <p>Every terminal this single-axis build touches, and every one it deliberately leaves alone.</p>
+
+  <h3>11.1 FMC4030 controller</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:16%">Terminal</th><th style="width:22%">Edge</th><th style="width:30%">Used here?</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><code>VN+</code></td><td>Power / limit / input</td><td><b>Yes</b> → 24 V+ bus</td><td>24 V controller power, positive</td></tr>
+      <tr><td><code>VN−</code></td><td>Power / limit / input</td><td><b>Yes</b> → 24 V− bus</td><td>24 V controller power, negative</td></tr>
+      <tr><td><code>PE</code></td><td>Power / limit / input</td><td><b>Yes</b> → frame + earth</td><td>Protective earth / chassis ground</td></tr>
+      <tr><td><code>LP1</code></td><td>Power / limit / input</td><td><b>Yes</b> → far-end switch black</td><td>Axis 1 positive limit</td></tr>
+      <tr><td><code>LN1</code></td><td>Power / limit / input</td><td><b>Yes</b> → home-end switch black</td><td>Axis 1 negative limit / home</td></tr>
+      <tr><td><code>GND</code> (axis-1 group)</td><td>Power / limit / input</td><td><b>Yes</b> → limit return</td><td>Axis 1 limit ground (all limit GNDs are internally common)</td></tr>
+      <tr><td><code>5V</code> (axis 1)</td><td>Signal / output</td><td><b>Yes</b> → driver <code>PU+</code> &amp; <code>DR+</code></td><td>5 V out for the driver's opto anodes</td></tr>
+      <tr><td><code>PU1</code></td><td>Signal / output</td><td><b>Yes</b> → driver <code>PU−</code></td><td>Pulse / step output, falling-edge active</td></tr>
+      <tr><td><code>DR1</code></td><td>Signal / output</td><td><b>Yes</b> → driver <code>DR−</code></td><td>Direction output</td></tr>
+      <tr><td><code>5V</code>/<code>PU2</code>/<code>DR2</code>, <code>LP2</code>/<code>LN2</code>/<code>GND</code></td><td>Both</td><td style="color:#8a9099">No — leave empty</td><td>Axis 2. Unused in a single-axis build</td></tr>
+      <tr><td><code>5V</code>/<code>PU3</code>/<code>DR3</code>, <code>LP3</code>/<code>LN3</code>/<code>GND</code></td><td>Both</td><td style="color:#8a9099">No — leave empty</td><td>Axis 3. This is where a second axis would go</td></tr>
+      <tr><td><code>OP1</code>–<code>OP4</code> + <code>GND</code></td><td>Signal / output</td><td style="color:#8a9099">No</td><td>Four 24 V open-drain outputs, sink ≤ 300 mA (relays, valves, indicators)</td></tr>
+      <tr><td><code>IN0</code>–<code>IN3</code> + <code>GND</code></td><td>Power / limit / input</td><td style="color:#8a9099">No</td><td>Four 24 V digital inputs, active low (buttons, sensors, e-stop sense)</td></tr>
+      <tr><td><code>CN3</code></td><td>—</td><td><b>Yes</b> → PC</td><td>Ethernet. Default <code>192.168.0.30 : 8088</code></td></tr>
+      <tr><td><code>CN1</code> / <code>CN2</code></td><td>—</td><td style="color:#8a9099">No</td><td>RS-232 DB9 / RS-232+485 on RJ45. Not needed for bring-up</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>11.2 FMDD50D40NOM driver</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:16%">Terminal</th><th style="width:22%">End</th><th style="width:30%">Used here?</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><code>V+</code></td><td>Power / motor</td><td><b>Yes</b> → 24 V+ bus</td><td>DC power in, 20–50 V</td></tr>
+      <tr><td><code>V−</code></td><td>Power / motor</td><td><b>Yes</b> → 24 V− bus</td><td>DC power in, 0 V</td></tr>
+      <tr><td><code>A+</code></td><td>Power / motor</td><td><b>Yes</b></td><td><span class="wire w-black"></span>Motor coil A+ — Black</td></tr>
+      <tr><td><code>A−</code></td><td>Power / motor</td><td><b>Yes</b></td><td><span class="wire w-green"></span>Motor coil A− — Green</td></tr>
+      <tr><td><code>B+</code></td><td>Power / motor</td><td><b>Yes</b></td><td><span class="wire w-red"></span>Motor coil B+ — Red</td></tr>
+      <tr><td><code>B−</code></td><td>Power / motor</td><td><b>Yes</b></td><td><span class="wire w-blue"></span>Motor coil B− — Blue</td></tr>
+      <tr><td><code>PU+</code></td><td>Control signal</td><td><b>Yes</b> → controller <code>5V</code></td><td>Pulse opto anode</td></tr>
+      <tr><td><code>PU−</code></td><td>Control signal</td><td><b>Yes</b> → controller <code>PU1</code></td><td>Pulse / step input, falling-edge active</td></tr>
+      <tr><td><code>DR+</code></td><td>Control signal</td><td><b>Yes</b> → controller <code>5V</code></td><td>Direction opto anode</td></tr>
+      <tr><td><code>DR−</code></td><td>Control signal</td><td><b>Yes</b> → controller <code>DR1</code></td><td>Direction input</td></tr>
+      <tr><td><code>MF+</code> / <code>MF−</code></td><td>Control signal</td><td style="color:#8a9099">No — leave open</td><td>Motor-free / enable. When energised the driver releases the motor (no holding torque)</td></tr>
+      <tr><td><code>COM24V</code> (HSC)</td><td>Control signal</td><td style="color:#8a9099">No — leave open</td><td>24 V signal common, for 24 V-signal mode only. Not used in 5 V common-anode wiring</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>11.3 The whole axis on one line</h3>
+  <div class="ascii">  <span class="y">SUPPLY</span>   V+ ──► <span class="hl">24V+</span> ──┬──► <span class="b">CTRL</span> VN+     ┌──► <span class="g">DRV</span> V+        ┌──► <span class="m">SW</span> brown  <span class="dim">(both switches)</span>
+           V− ──► <span class="hl">24V−</span> ──┼──► <span class="b">CTRL</span> VN−     │    <span class="g">DRV</span> V−  ◄───┤    <span class="m">SW</span> blue
+           ⏚  ────────────────► <span class="b">CTRL</span> PE  ────┘                └──────────────────
+
+  <span class="b">CTRL</span> 5V  ──► <span class="g">DRV</span> PU+ &amp; DR+          <span class="g">DRV</span> A+ ──► <span class="wire w-black" style="vertical-align:0"></span>Black ┐
+  <span class="b">CTRL</span> PU1 ──► <span class="g">DRV</span> PU−                <span class="g">DRV</span> A− ──► <span class="wire w-green" style="vertical-align:0"></span>Green ├─ <span class="y">MOTOR</span> on the rail
+  <span class="b">CTRL</span> DR1 ──► <span class="g">DRV</span> DR−                <span class="g">DRV</span> B+ ──► <span class="wire w-red" style="vertical-align:0"></span>Red   │
+                                         <span class="g">DRV</span> B− ──► <span class="wire w-blue" style="vertical-align:0"></span>Blue  ┘
+
+  <span class="b">CTRL</span> LP1 ◄── <span class="wire w-black" style="vertical-align:0"></span>black, far-end switch        <span class="dim">13 connections total:</span>
+  <span class="b">CTRL</span> LN1 ◄── <span class="wire w-black" style="vertical-align:0"></span>black, home-end switch       <span class="dim">3 controller power · 2 driver power</span>
+  <span class="b">CTRL</span> GND ◄── limit return                  <span class="dim">3 signal · 4 motor coil · 2 limit signal</span>
+                                                       <span class="dim">(+ the shared 24 V taps and Ethernet)</span></div>
+</section>
+
+</main>
+
+<footer>
+  <b>FUYU FMC4030 — Single-Axis Wiring, Step by Step.</b>
+  Learning guide for one axis on <b>controller axis 1</b> (<code>5V</code>/<code>PU1</code>/<code>DR1</code>, <code>LP1</code>/<code>LN1</code>) —
+  SDK axis index <code>0</code>. Values compiled from the FUYU OEM documentation and the full
+  <i>Dual-X Gantry Assembly &amp; Wiring Manual</i>; verify against the labels on your own hardware before connecting.
+  Revision 1.0.
+</footer>
+
+</div>
+</body>
+</html>

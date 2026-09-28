@@ -204,6 +204,14 @@ public:
         return ((dim >= 0 && dim < VELMEXMAXDIMENSIONS) ? homeDir[dim] : 2);
     }
 
+    // Widget counts always grow AWAY from the home switch.  Homing to the positive-end switch
+    // (homeDir 1) zeroes the axis there and leaves the travel at negative controller mm, so flip
+    // the sign at the SDK boundary to keep the sliders running 0 .. +travel either way.
+    double axisSign(int dim) const
+    {
+        return ((dim >= 0 && dim < VELMEXMAXDIMENSIONS && homeDir[dim] == 1) ? -1.0 : 1.0);
+    }
+
     static bool velmexControllerIsWaitingWhileBusy;
     static bool velmexRailHasReachedLimitSwitch;
 
@@ -259,6 +267,27 @@ private:
     quint16 portNumber;
     bool connectedFlag;
 
+    // HARDWARE DIAGNOSTICS.  FMC4030_Jog_Single_Axis only reports *communication* errors
+    // (-1..-8), so a return of 0 means "the packet arrived" -- NOT "the axis will move".  The
+    // controller can accept a move and emit no pulses at all if its own axis parameters (lead,
+    // subdivision, soft limits) are wrong, so log every motion command we issue.  Disable with
+    // the QSettings key LAUVelmexController::diagnostics = false.
+    //
+    // FMC4030_Get_Device_Para / FMC4030_Get_Machine_Status would report those axis parameters
+    // and the limit-input state directly, but do NOT call them from here: against the current
+    // FMC4030-Dll (X64, 20240920) both return -5 ("failed to send data") and then crash the
+    // process, so their real signatures differ from the 2021 SDK document.  Read those values
+    // with FUYU's own controller software instead (User Manual V2001, Figure 16).
+    bool diagnosticsFlag;
+
+    // Speed used for the two switch-seeking legs of Calibrate, in mm/s.  Tunable at run time via
+    // the QSettings key LAUVelmexController::homeSpeed because it interacts with a limit we cannot
+    // see: the FMC4030 abandons a zero-return after its own "reset timeout" (User Manual V2001,
+    // p.17), so seek_speed x timeout is the furthest a seek can ever reach.  Too slow and the
+    // switch is never found on a long rail; too fast and the carriage overshoots the switch, since
+    // stopping distance grows as speed^2 / (2 x accel).
+    double homeSpeedMMPerSec;
+
     int velocityMMPerSec[VELMEXMAXDIMENSIONS];
     int leftMostCount[VELMEXMAXDIMENSIONS];
     int rightMostCount[VELMEXMAXDIMENSIONS];
@@ -267,12 +296,28 @@ private:
     int lastCommanded[VELMEXMAXDIMENSIONS];
     int homeDir[VELMEXMAXDIMENSIONS];
 
+    // Has this axis's position ever been READ from the controller?  Until it has, currentCount is
+    // only an initialised 0 -- and because onStart() adopts currentCount as the move target, that
+    // guess would be commanded as a real move, yanking the carriage to coordinate 0 on launch.
+    // Never command motion from an unread axis.
+    bool positionKnown[VELMEXMAXDIMENSIONS];
+
     QList<QWidget *> widgets;
 
     void initialize();
     bool calibrateLeft(int dim = 0);
     bool calibrateRight(int dim = 0);
     bool updateMotorPosition(int dim = 0);
+
+    // Block the controller thread until the axis reports stopped.  Returns false on timeout, which
+    // means the reported position is wherever the carriage got to rather than a limit switch.
+    // elapsedMS receives how long the move actually took -- a seek that always ends after the same
+    // DURATION regardless of speed is being cut off by the controller's reset timeout, not by a switch.
+    bool waitForAxisToStop(int dim, const char *what, qint64 *elapsedMS = nullptr);
+
+    // Drive toward targetMM, re-issuing the move until the carriage stops making progress (i.e. it
+    // is against a limit switch or a soft travel limit).  Returns how many moves that took.
+    int driveUntilBlocked(int dim, double targetMM, const char *what);
 
     Position moveToPosition(int pos, int dim = 0);
 
