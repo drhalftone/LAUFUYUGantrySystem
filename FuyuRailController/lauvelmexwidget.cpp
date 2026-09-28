@@ -658,7 +658,7 @@ void LAUMultiVelmexWidget::onUpdateSliderPosition(float val)
 
                 // RESET THE SCAN VELOCITY
                 for (int c = 0; c < widgets.count(); c++){
-                    emit emitSetVelocity(c);
+                    emit emitSetVelocity(widgets.at(c)->dim(), widgets.at(c)->scanSpeed());
                 }
 
                 // DISABLE THIS WIDGET SO THE USER CAN'T MESS UP THE SLIDERS DURING SCANNING
@@ -1493,6 +1493,10 @@ void LAUVelmexWidget::onConnected(bool state)
 #ifndef SIMULATESLIDER
     setEnabled(isConnectedFlag);
 #endif
+    // THE CONTROLLER STARTS EVERY AXIS AT ITS OWN DEFAULT SPEED, SO PUSH THE SAVED SPEED AS SOON AS IT CONNECTS
+    if (isConnectedFlag) {
+        emit emitSetVelocity(dimension, velmexScannerSpeed);
+    }
 }
 
 /****************************************************************************************************************/
@@ -1804,7 +1808,7 @@ void LAUVelmexWidget::onTriggerScanner(float pos, int n, int N)
             if (movingScanModeFlag) {
                 velmexScannerNumberOfScanSteps = QSettings().value(QString("%1::velmexScannerNumberOfScanSteps").arg(railString), velmexScannerNumberOfScanSteps).toInt();
             }
-            emit emitSetVelocity(dimension);
+            emit emitSetVelocity(dimension, velmexScannerSpeed);
 
             // USER HAS CANCELLED SCANNING
             scanState = ScanStateNoState;
@@ -1888,7 +1892,7 @@ void LAUVelmexWidget::onUpdatePositon(int val, int dim)
                 positionSlider->setValue(nextPosition);
             } else {
                 // RELOAD THE NUMBER OF SCAN STEPS IF IN MOVING SCAN MODE
-                emit emitSetVelocity(dimension);
+                emit emitSetVelocity(dimension, velmexScannerSpeed);
                 if (movingScanModeFlag) {
                     velmexScannerNumberOfScanSteps = QSettings().value(QString("%1::velmexScannerNumberOfScanSteps").arg(railString), velmexScannerNumberOfScanSteps).toInt();
                 }

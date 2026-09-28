@@ -25,7 +25,7 @@ int main(int argc, char *argv[])
     //   FMC4030 SDK axis 0 = X gantry (both rails share one controller axis)
     //   FMC4030 SDK axis 2 = Y cross-beam
     QList<int> axes;
-    axes << 0;//s << 2;
+    axes << 0 << 2;
 
     LAUMultiVelmexWidget widget(axes);
 #ifdef FUYU_SIMULATE
