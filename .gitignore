@@ -14,3 +14,7 @@
 .qtcreator/
 _bc/
 _bc.log
+
+# Fit-check assemblies embed the TraceParts FSK40 model — regenerate with cad/fsk40_with_plate.py
+cad/fsk40_with_plate.stl
+cad/fsk40_with_plate.glb
