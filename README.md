@@ -7,7 +7,7 @@ cross-beam riding between them, controlled from a PC over Ethernet.
 ![Isometric diagram of the dual-X gantry](docs/gantry_iso.png)
 
 <sub>Isometric view of the system: the two X rails (driven in lockstep), the Y cross-beam
-and carriage, the three motors, the FSK40 limit switches, the X-axis cable carrier (drag
+and carriage, the three motors, the photoelectric limit switches, the X-axis cable carrier (drag
 chain), and the control cabinet (FMC4030 controller, three drivers, and 24 V supply).
 Rendered from [`gantry_iso.svg`](gantry_iso.svg).</sub>
 
@@ -69,8 +69,9 @@ positive/negative pair on **Y**.
 |---|---|---|---|
 | 1 | Motion controller | **FMC4030** (3-axis) | Pulse/dir generation, limit reading, host comms |
 | 3 | Stepper driver | **FMDD50D40NOM** (DC 20–50 V, 1.0–4.0 A/phase) | One each: X-Left, X-Right, Y |
+| 3 | Linear module (rail) | **FUYU FSK40** ball-screw module | X-Left, X-Right, and Y beam; carriage-top adapter plate in [`cad/`](cad/) |
 | 3 | Stepper motor | **57HS056TF075A-03** (NEMA 23, 2-phase, 1.8°, 2.0 A, ≥ 80 N·cm) | X-Left rail, X-Right rail, Y beam |
-| 4 | Limit / home switch | **FSK40** photoelectric, **NPN normally-open (NO)**, 5–24 V | +/− pair on X-Left, +/− pair on Y (X-Right has none) |
+| 4 | Limit / home switch | Slot-type photoelectric, **NPN normally-open (NO)**, 5–24 V | +/− pair on X-Left, +/− pair on Y (X-Right has none) |
 | 1 | DC power supply | **24 VDC**, sized ≥ 3 × motor current + margin (24 V / 10 A is a safe start) | System power; AC 100–220 V input |
 | 1 | Ethernet cable | Standard RJ45 | Host communication (CN3) |
 | — | Wiring | Hook-up wire, ferrules, PE ground, AC fuse/breaker | Interconnect |
@@ -85,7 +86,7 @@ positive/negative pair on **Y**.
 (8 current steps), up to 40000 microsteps/rev, max pulse rate 200 Kpps, **falling-edge
 active**, auto idle-current halving after pulses stop > 1.5 s, 118 × 24.3 × 75.5 mm.
 
-**Limit / home switch — FSK40**: photoelectric, 5–24 V, **NPN normally-open, low-level
+**Limit / home switch**: slot-type photoelectric, 5–24 V, **NPN normally-open, low-level
 active** (required by the FMC4030). Doubles as the **home/origin reference** for each axis.
 
 **Controller — FMC4030**: 24 VDC power (VN+/VN−); 3 × 5 V pulse + direction outputs; 6
@@ -112,7 +113,7 @@ Full, terminal-by-terminal wiring (with diagrams and the complete terminal refer
 the **HTML manual**, §7–§12. Summary:
 
 **Power (§7):** build a 24 V bus from the supply; feed the controller (VN+/VN−), all three
-drivers (V+/V−), and the FSK40 switches from it. Mains (100–220 VAC) goes only to the
+drivers (V+/V−), and the limit switches from it. Mains (100–220 VAC) goes only to the
 supply's L / N / earth.
 
 **Motor → driver (§8)** — 57HS XH-4 colours map straight to coils. Coil pairing is what
@@ -136,7 +137,7 @@ Y direction can be inverted in wiring *or* software.
 (`5V`, `PU3`, `DR3`). Leave `MF+/MF−` open (holding torque on). Use the **5 V** rail for
 `PU+/DR+`, never 24 V.
 
-**Limit switches (§10)** — each FSK40: **Brown → 24 V+, Blue → 0 V, Black → signal**.
+**Limit switches (§10)** — each switch: **Brown → 24 V+, Blue → 0 V, Black → signal**.
 Positive-end switch black wire → `LP`, negative-end → `LN`. X gantry pair → `LP1 / LN1`
 (axis 1); Y pair → `LP3 / LN3`. Switches **must be NPN normally-open** (inputs are
 low-level active).
