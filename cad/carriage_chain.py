@@ -15,7 +15,8 @@ motor end of the carriage; Y across the carriage, 0 at its centre, hinge side +Y
 Z up, 0 on the carriage top. Links are drawn flat with their top pin at Y = 0.
 
 Run:  python carriage_chain.py
-  -> carriage_hinge_plate.stl/.step, chain_link.stl/.step  (print flat)
+  -> carriage_hinge_plate.stl/.step, chain_link_long.stl/.step,
+     chain_link.stl/.step          (print flat)
   -> carriage_chain.step            plate + hanging chain + pins
   -> fsk40_with_chain.glb           same, sitting on the FSK40 (fit check, not committed)
 """
@@ -33,7 +34,7 @@ CLEAR_D, CBORE_D, CBORE_DEPTH = 4.5, 8.0, 5.0   # M4 x 12 SHCS into the carriage
 
 # --- hinge (same as hinged_plates.py) ---
 END_KNUCKLE = 16.0    # each end knuckle of the upper piece; the lower piece's fills the middle
-KNUCKLE_GAP = 2.0     # axial space between knuckles (1 mm each face)
+KNUCKLE_GAP = 2.0     # axial space between neighbouring knuckles (each stops 1 mm short of the split)
 SWING_GAP = 1.0       # clearance between a turning knuckle's corners and the other piece
 PIN_D = 4.4           # pin hole in the upper piece (clamped)
 PIVOT_D = 5.0         # pin hole in the lower piece (turns freely)
@@ -43,7 +44,11 @@ PIN_LEN = 55.0        # M4 x 55 SHCS: counterbore floor (x = 7) through the nut 
 
 # --- chain ---
 LINK_PITCH = 85.0     # pin-to-pin length of each link
-N_LINKS = 3           # links hanging below the carriage plate
+FIRST_LINK_PITCH = 2 * LINK_PITCH   # first link off the carriage: long enough to reach the table at an angle
+LINK_CLEAR = 0.2        # each link's middle knuckle stops this short of the knuckles above it (no side play)
+LINK_WALL = 10.0        # every link's leaf is a frame: a window cut through the middle leaves this much all round
+WINDOW_FILLET = 6.0     # window corner radius
+N_LINKS = 3           # links hanging below the carriage plate (the first one long)
 PIN_ABOVE_TABLE = 155.4   # carriage-plate pin height in the H-gantry (cross-beam carriage top is 150.4 up)
 
 r = T / 2
@@ -62,17 +67,20 @@ def on_axis(axis_y, x0, length, sketch):
     return sketch(cq.Workplane("YZ").workplane(offset=x0).center(axis_y, r)).extrude(length)
 
 
-def hinge_half(body, axis_y, side, role):
+def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
     """Add one piece's half of a hinge whose pin runs along X at (axis_y, T/2).
 
     side: +1 if this piece's leaf lies at +Y of the pin, -1 if at -Y.
     role: "upper" (end knuckles, clamps the pin) or "lower" (middle knuckle, turns on it).
+    face_clear: axial space between each face of the middle knuckle and the end knuckles
+    ("lower" only; the end knuckles always stop KNUCKLE_GAP / 2 short of their split).
     The caller's leaf must already stop at axis_y + side * SWING_CLEAR.
     """
+    g = KNUCKLE_GAP / 2 if role == "upper" else face_clear - KNUCKLE_GAP / 2
     for x0, x1, who in SPANS:
         if who == role:
-            g0 = KNUCKLE_GAP / 2 if x0 > 0 else 0
-            g1 = KNUCKLE_GAP / 2 if x1 < L else 0
+            g0 = g if x0 > 0 else 0
+            g1 = g if x1 < L else 0
             body = body.union(block(x0 + g0, x1 - g1, axis_y + side * SWING_CLEAR, axis_y - side * r))
     hole = PIN_D if role == "upper" else PIVOT_D
     body = body.cut(on_axis(axis_y, -1, L + 2, lambda w: w.circle(hole / 2)))
@@ -97,10 +105,27 @@ carriage_plate = (block(0, L, -PLATE_W / 2, PLATE_W / 2)
                   .pushPoints(pattern).cboreHole(CLEAR_D, CBORE_D, CBORE_DEPTH))
 carriage_plate = hinge_half(carriage_plate, AXIS_Y, -1, "upper")
 
-# Chain link (flat): top pin at Y = 0 (lower half of that hinge), bottom pin at Y = LINK_PITCH (upper half)
-chain_link = block(0, L, SWING_CLEAR, LINK_PITCH - SWING_CLEAR)
-chain_link = hinge_half(chain_link, 0, +1, "lower")
-chain_link = hinge_half(chain_link, LINK_PITCH, -1, "upper")
+def make_link(pitch, top_clear=KNUCKLE_GAP, wall=None):
+    """Chain link (flat): top pin at Y = 0 (lower half of that hinge), bottom pin at Y = pitch (upper half).
+
+    wall: if given, cut a window through the leaf leaving this much material all round.
+    """
+    link = block(0, L, SWING_CLEAR, pitch - SWING_CLEAR)
+    if wall:
+        y0, y1 = SWING_CLEAR + wall, pitch - SWING_CLEAR - wall
+        window = (cq.Workplane("XY").box(L - 2 * wall, y1 - y0, T + 2, centered=False)
+                  .translate((wall, y0, -1)).edges("|Z").fillet(WINDOW_FILLET))
+        link = link.cut(window)
+    link = hinge_half(link, 0, +1, "lower", top_clear)
+    return hinge_half(link, pitch, -1, "upper")
+
+
+chain_link = make_link(LINK_PITCH, LINK_CLEAR, LINK_WALL)
+first_link = make_link(FIRST_LINK_PITCH, LINK_CLEAR, LINK_WALL)
+
+
+def link_pitches(n=N_LINKS):
+    return [FIRST_LINK_PITCH] + [LINK_PITCH] * (n - 1)
 
 
 def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
@@ -110,8 +135,8 @@ def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
     the underside corner at its lower end touches the table, and the rest lie (nearly) flat.
     """
     angles, h = [], pin_above_table          # h: height of the link's top pin above the table
-    reach = LINK_PITCH + r                   # top pin to the far end of the link
-    for _ in range(n):
+    for pitch in link_pitches(n):
+        reach = pitch + r                    # top pin to the far end of the link
         lowest = lambda a: h - reach * math.sin(a) - r * math.cos(a)   # lowest corner, tipped a below horizontal
         if lowest(math.pi / 2) >= 0:
             a = math.pi / 2
@@ -124,7 +149,7 @@ def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
                 lo, hi = (mid, hi) if lowest(mid) > 0 else (lo, mid)
             a = lo
         angles.append(math.degrees(a))
-        h -= LINK_PITCH * math.sin(a)
+        h -= pitch * math.sin(a)
     return angles
 
 
@@ -132,20 +157,21 @@ def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
     """Links (and their pins) draped from the carriage plate's pin down onto the table."""
     links, pins = [], [pin_at(AXIS_Y)]
     y, z = AXIS_Y, r                         # current top pin, carriage-plate frame
-    for i, a in enumerate(drape_angles(pin_above_table, n)):
+    for i, (a, pitch) in enumerate(zip(drape_angles(pin_above_table, n), link_pitches(n))):
         place = lambda w: (w.translate((0, 0, -r)).rotate((0, 0, 0), (1, 0, 0), -a)
                            .translate((0, y, z)))
-        links.append(place(chain_link))
+        links.append(place(first_link if i == 0 else chain_link))
         if i < n - 1:
-            pins.append(place(pin_at(LINK_PITCH)))
-        y += LINK_PITCH * math.cos(math.radians(a))
-        z -= LINK_PITCH * math.sin(math.radians(a))
+            pins.append(place(pin_at(pitch)))
+        y += pitch * math.cos(math.radians(a))
+        z -= pitch * math.sin(math.radians(a))
     return links, pins
 
 
 if __name__ == "__main__":
     here = Path(__file__).parent
-    for name, part in (("carriage_hinge_plate", carriage_plate), ("chain_link", chain_link)):
+    for name, part in (("carriage_hinge_plate", carriage_plate), ("chain_link_long", first_link),
+                       ("chain_link", chain_link)):
         cq.exporters.export(part, str(here / f"{name}.step"))
         cq.exporters.export(part, str(here / f"{name}.stl"), tolerance=0.01, angularTolerance=0.1)
 
