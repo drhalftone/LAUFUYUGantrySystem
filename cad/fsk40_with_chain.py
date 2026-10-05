@@ -20,11 +20,12 @@ def mesh(wp):
 
 
 def chain_pieces(pin_above_table):
-    """Hinge plate, draped links and pins as meshes in the model frame."""
-    links, pins = hanging_chain(pin_above_table)
+    """Hinge plate, draped links, screws and nuts as meshes in the model frame."""
+    links, screws, nuts = hanging_chain(pin_above_table)
     pieces = {"plate": mesh(carriage_plate)}
     pieces.update({f"link{i + 1}": mesh(l) for i, l in enumerate(links)})
-    pieces.update({f"pin{i + 1}": mesh(p) for i, p in enumerate(pins)})
+    pieces.update({f"screw{i + 1}": mesh(s) for i, s in enumerate(screws)})
+    pieces.update({f"nut{i + 1}": mesh(n) for i, n in enumerate(nuts)})
     return pieces
 
 
@@ -33,7 +34,8 @@ if __name__ == "__main__":
     pieces = chain_pieces(51.51 + 5.0 + 18.69)   # rail base on the table: pin is 75.2 mm up
     rail.visual.face_colors = [170, 175, 185, 255]
     scene = trimesh.Scene({"fsk40": rail})
-    colors = {"plate": [230, 120, 30, 255], "link": [60, 120, 200, 255], "pin": [90, 90, 95, 255]}
+    colors = {"plate": [230, 120, 30, 255], "link": [60, 120, 200, 255],
+              "screw": [40, 40, 45, 255], "nut": [205, 205, 210, 255]}
     for name, m in pieces.items():
         m.visual.face_colors = colors[name.rstrip("0123456789")]
         scene.add_geometry(m, node_name=name)

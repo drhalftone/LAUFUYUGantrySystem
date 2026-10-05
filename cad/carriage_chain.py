@@ -17,7 +17,7 @@ Z up, 0 on the carriage top. Links are drawn flat with their top pin at Y = 0.
 Run:  python carriage_chain.py
   -> carriage_hinge_plate.stl/.step, chain_link_long.stl/.step,
      chain_link.stl/.step          (print flat)
-  -> carriage_chain.step            plate + hanging chain + pins
+  -> carriage_chain.step            plate + hanging chain + M4 screws and nuts
   -> fsk40_with_chain.glb           same, sitting on the FSK40 (fit check, not committed)
 """
 import math
@@ -67,13 +67,14 @@ def on_axis(axis_y, x0, length, sketch):
     return sketch(cq.Workplane("YZ").workplane(offset=x0).center(axis_y, r)).extrude(length)
 
 
-def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
+def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP, pivot_d=PIVOT_D):
     """Add one piece's half of a hinge whose pin runs along X at (axis_y, T/2).
 
     side: +1 if this piece's leaf lies at +Y of the pin, -1 if at -Y.
     role: "upper" (end knuckles, clamps the pin) or "lower" (middle knuckle, turns on it).
     face_clear: axial space between each face of the middle knuckle and the end knuckles
     ("lower" only; the end knuckles always stop KNUCKLE_GAP / 2 short of their split).
+    pivot_d: hole through the middle knuckle ("lower" only).
     The caller's leaf must already stop at axis_y + side * SWING_CLEAR.
     """
     g = KNUCKLE_GAP / 2 if role == "upper" else face_clear - KNUCKLE_GAP / 2
@@ -82,7 +83,7 @@ def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
             g0 = g if x0 > 0 else 0
             g1 = g if x1 < L else 0
             body = body.union(block(x0 + g0, x1 - g1, axis_y + side * SWING_CLEAR, axis_y - side * r))
-    hole = PIN_D if role == "upper" else PIVOT_D
+    hole = PIN_D if role == "upper" else pivot_d
     body = body.cut(on_axis(axis_y, -1, L + 2, lambda w: w.circle(hole / 2)))
     if role == "upper":
         body = body.cut(on_axis(axis_y, -1, HEAD_DEPTH + 1, lambda w: w.circle(HEAD_D / 2)))
@@ -91,11 +92,20 @@ def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
     return body
 
 
-def pin_at(axis_y):
+def hex_(af):
+    return lambda w: w.polygon(6, af / math.cos(math.pi / 6))
+
+
+def screw_at(axis_y):
+    """M4 x PIN_LEN socket head cap screw, head seated on the counterbore floor."""
     head = on_axis(axis_y, HEAD_DEPTH - 4, 4, lambda w: w.circle(3.5))
-    shank = on_axis(axis_y, HEAD_DEPTH, PIN_LEN, lambda w: w.circle(2.0))
-    nut = on_axis(axis_y, L - NUT_DEPTH, 4.7, lambda w: w.polygon(6, 7.0 / math.cos(math.pi / 6)))
-    return head.union(shank).union(nut)
+    head = head.cut(on_axis(axis_y, HEAD_DEPTH - 5, 3.5, hex_(3.0)))     # 3 mm hex socket, 2.5 deep
+    return head.union(on_axis(axis_y, HEAD_DEPTH, PIN_LEN, lambda w: w.circle(2.0)))
+
+
+def nut_at(axis_y):
+    """M4 nylock nut, seated at the bottom of its pocket."""
+    return on_axis(axis_y, L - NUT_DEPTH, 4.7, hex_(7.0)).cut(on_axis(axis_y, L - NUT_DEPTH - 1, 7, lambda w: w.circle(2.0)))
 
 
 # Carriage plate: leaf is the whole 65 x 48 plate, hinge knuckles stick out past its +Y edge
@@ -154,18 +164,19 @@ def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
 
 
 def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
-    """Links (and their pins) draped from the carriage plate's pin down onto the table."""
-    links, pins = [], [pin_at(AXIS_Y)]
+    """Links, and the screws and nuts joining them, draped from the carriage plate's pin down onto the table."""
+    links, screws, nuts = [], [screw_at(AXIS_Y)], [nut_at(AXIS_Y)]
     y, z = AXIS_Y, r                         # current top pin, carriage-plate frame
     for i, (a, pitch) in enumerate(zip(drape_angles(pin_above_table, n), link_pitches(n))):
         place = lambda w: (w.translate((0, 0, -r)).rotate((0, 0, 0), (1, 0, 0), -a)
                            .translate((0, y, z)))
         links.append(place(first_link if i == 0 else chain_link))
         if i < n - 1:
-            pins.append(place(pin_at(pitch)))
+            screws.append(place(screw_at(pitch)))
+            nuts.append(place(nut_at(pitch)))
         y += pitch * math.cos(math.radians(a))
         z -= pitch * math.sin(math.radians(a))
-    return links, pins
+    return links, screws, nuts
 
 
 if __name__ == "__main__":
@@ -175,13 +186,14 @@ if __name__ == "__main__":
         cq.exporters.export(part, str(here / f"{name}.step"))
         cq.exporters.export(part, str(here / f"{name}.stl"), tolerance=0.01, angularTolerance=0.1)
 
-    links, pins = hanging_chain()
+    links, screws, nuts = hanging_chain()
     assy = cq.Assembly().add(carriage_plate, name="carriage_plate", color=cq.Color(0.9, 0.47, 0.12))
     for i, link in enumerate(links):
         c = cq.Color(0.24, 0.47, 0.78) if i % 2 == 0 else cq.Color(0.3, 0.7, 0.45)
         assy.add(link, name=f"link{i + 1}", color=c)
-    for i, p in enumerate(pins):
-        assy.add(p, name=f"pin{i + 1}", color=cq.Color(0.35, 0.35, 0.37))
+    for i, (s, n) in enumerate(zip(screws, nuts)):
+        assy.add(s, name=f"screw{i + 1}", color=cq.Color(0.15, 0.15, 0.17))
+        assy.add(n, name=f"nut{i + 1}", color=cq.Color(0.8, 0.8, 0.82))
     assy.save(str(here / "carriage_chain.step"))
     assy.save(str(here / "carriage_chain.glb"))
     print(f"hinge pin {AXIS_Y:.2f} mm from carriage centre; link angles below horizontal: "

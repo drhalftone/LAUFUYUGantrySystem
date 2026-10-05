@@ -10,6 +10,7 @@ Y up, Z across (table top is the underside of the leg bases, Y = -18.69).
 
 Writes gantry_h.glb (not committed: embeds the TraceParts FSK40 model).
 Set Y_TRAVEL to slide the cross-beam carriage along the beam, e.g. python gantry_h.py 400
+Add --xray to make the chain plate and links see-through, showing the screws and nuts inside the knuckles.
 """
 import sys
 import numpy as np
@@ -17,7 +18,9 @@ import trimesh
 from trimesh.transformations import rotation_matrix, translation_matrix
 
 FSK40 = r"C:\Users\dllau\Downloads\192475275-21-fsk40-e1250-10c7-bc-b57\fsk40-e1250-10c7-bc-b57.stl"
-Y_TRAVEL = float(sys.argv[1]) if len(sys.argv) > 1 else 0.0   # cross-beam carriage offset from mid (mm)
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+Y_TRAVEL = float(ARGS[0]) if ARGS else 0.0               # cross-beam carriage offset from mid (mm)
+XRAY = "--xray" in sys.argv
 
 # FSK40 model landmarks (TraceParts frame: X travel, Y up, Z across)
 BASE_BOTTOM = -18.69                     # underside of the rail base = table
@@ -62,24 +65,34 @@ SLIDE = translation_matrix([Y_TRAVEL, 0, 0])             # along the beam, in th
 
 import fsk40_with_chain as fc                            # chain pieces on a carriage, in the model frame
 
+
+def paint(m, rgba):
+    """Flat glTF material (vertex colours can't carry transparency in a viewer)."""
+    mat = trimesh.visual.material.PBRMaterial(baseColorFactor=rgba, metallicFactor=0.1, roughnessFactor=0.7,
+                                              alphaMode="BLEND" if rgba[3] < 255 else "OPAQUE", doubleSided=True)
+    m.visual = trimesh.visual.TextureVisuals(material=mat)
+
+
 scene = {}
-grey, dark, orange, blue, pin = [170, 175, 185, 255], [120, 125, 135, 255], [230, 120, 30, 255], [60, 120, 200, 255], [90, 90, 95, 255]
+grey, dark, screw, nut = [170, 175, 185, 255], [120, 125, 135, 255], [40, 40, 45, 255], [205, 205, 210, 255]
+orange, blue = [230, 120, 30, 255], [60, 120, 200, 255]
+see = lambda c: c[:3] + [90] if XRAY else c             # chain plate and links only
 for name, m, M, c in [
     ("left_leg", rail_fixed, np.eye(4), grey), ("left_carriage", rail_carriage, np.eye(4), dark),
     ("right_leg", rail_fixed, RIGHT, grey), ("right_carriage", rail_carriage, RIGHT, dark),
     ("left_plate", plain_plate(), np.eye(4), orange), ("right_plate", plain_plate(), RIGHT, orange),
     ("beam", rail_fixed, BEAM, grey), ("beam_carriage", rail_carriage, BEAM @ SLIDE, dark),
-] + [("chain_" + n, p, BEAM @ SLIDE, orange if n == "plate" else blue if n.startswith("link") else pin)
+] + [("chain_" + n, p, BEAM @ SLIDE, see(orange) if n == "plate" else see(blue) if n.startswith("link") else screw if n.startswith("screw") else nut)
      for n, p in fc.chain_pieces(beam_on_legs + CARRIAGE_TOP + PLATE_T / 2 - BASE_BOTTOM).items()]:
     mm = m.copy().apply_transform(M)
-    mm.visual.face_colors = c
+    paint(mm, c)
     scene[name] = mm
 
 lo = np.min([m.bounds[0] for m in scene.values()], axis=0)
 hi = np.max([m.bounds[1] for m in scene.values()], axis=0)
 table = trimesh.creation.box(extents=[hi[0] - lo[0] + 100, 12, hi[2] - lo[2] + 100])
 table.apply_translation([(lo[0] + hi[0]) / 2, BASE_BOTTOM - 6, (lo[2] + hi[2]) / 2])
-table.visual.face_colors = [205, 185, 150, 255]
+paint(table, [205, 185, 150, 255])
 
 if __name__ == "__main__":
     s = trimesh.Scene(scene)
