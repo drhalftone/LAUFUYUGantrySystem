@@ -6,7 +6,7 @@ hinge along one long edge, so a chain of identical links can hang over the side
 of the carriage down to the table.
 
 Every hinge is the one from hinged_plates.py: the upper piece owns two end
-knuckles (M4 SHCS head recessed in one, nylock nut captive in the other, 4.4 mm
+knuckles (M4 pan head recessed in one, nylock nut captive in the other, 4.4 mm
 pin hole) and the lower piece owns the middle knuckle (5.0 mm hole, turns freely
 on the screw). Each piece stops SWING_CLEAR short of the other's knuckles.
 
@@ -38,9 +38,13 @@ KNUCKLE_GAP = 2.0     # axial space between neighbouring knuckles (each stops 1 
 SWING_GAP = 1.0       # clearance between a turning knuckle's corners and the other piece
 PIN_D = 4.4           # pin hole in the upper piece (clamped)
 PIVOT_D = 5.0         # pin hole in the lower piece (turns freely)
-HEAD_D, HEAD_DEPTH = 7.5, 7.0     # M4 SHCS head counterbore, head 3 mm below the end face
-NUT_AF, NUT_DEPTH = 7.3, 8.0      # captive M4 nylock nut pocket
-PIN_LEN = 55.0        # M4 x 55 SHCS: counterbore floor (x = 7) through the nut (57..61.7)
+# Pin: M4 x 60 Phillips pan head (ISO 7045: head 8.0 dia x 3.1) + M4 nylock (7.0 AF x 5.0).
+# Head in a counterbore at one end, nut captive at the other; nothing sticks out past the ends.
+HEAD_D, HEAD_H = 8.0, 3.1
+HEAD_CBORE_D, HEAD_DEPTH = 8.4, 4.0   # head top 0.9 below the end face
+NUT_AF, NUT_H = 7.3, 5.0          # pocket across flats (the 7.0 nut fits it well); nut thickness
+NUT_DEPTH = 7.0                   # nut pushed to the pocket floor: x = 58..63
+PIN_LEN = 60.0        # counterbore floor (x = 4) to x = 64: 1 mm past the nut, 1 mm inside the end face
 
 # --- chain ---
 LINK_PITCH = 85.0     # pin-to-pin length of each link
@@ -67,13 +71,14 @@ def on_axis(axis_y, x0, length, sketch):
     return sketch(cq.Workplane("YZ").workplane(offset=x0).center(axis_y, r)).extrude(length)
 
 
-def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
+def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP, pivot_d=PIVOT_D):
     """Add one piece's half of a hinge whose pin runs along X at (axis_y, T/2).
 
     side: +1 if this piece's leaf lies at +Y of the pin, -1 if at -Y.
     role: "upper" (end knuckles, clamps the pin) or "lower" (middle knuckle, turns on it).
     face_clear: axial space between each face of the middle knuckle and the end knuckles
     ("lower" only; the end knuckles always stop KNUCKLE_GAP / 2 short of their split).
+    pivot_d: pin hole in the middle knuckle ("lower" only).
     The caller's leaf must already stop at axis_y + side * SWING_CLEAR.
     """
     g = KNUCKLE_GAP / 2 if role == "upper" else face_clear - KNUCKLE_GAP / 2
@@ -82,19 +87,19 @@ def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP):
             g0 = g if x0 > 0 else 0
             g1 = g if x1 < L else 0
             body = body.union(block(x0 + g0, x1 - g1, axis_y + side * SWING_CLEAR, axis_y - side * r))
-    hole = PIN_D if role == "upper" else PIVOT_D
+    hole = PIN_D if role == "upper" else pivot_d
     body = body.cut(on_axis(axis_y, -1, L + 2, lambda w: w.circle(hole / 2)))
     if role == "upper":
-        body = body.cut(on_axis(axis_y, -1, HEAD_DEPTH + 1, lambda w: w.circle(HEAD_D / 2)))
+        body = body.cut(on_axis(axis_y, -1, HEAD_DEPTH + 1, lambda w: w.circle(HEAD_CBORE_D / 2)))
         body = body.cut(on_axis(axis_y, L - NUT_DEPTH, NUT_DEPTH + 1,
                                 lambda w: w.polygon(6, NUT_AF / math.cos(math.pi / 6))))
     return body
 
 
 def pin_at(axis_y):
-    head = on_axis(axis_y, HEAD_DEPTH - 4, 4, lambda w: w.circle(3.5))
+    head = on_axis(axis_y, HEAD_DEPTH - HEAD_H, HEAD_H, lambda w: w.circle(HEAD_D / 2))
     shank = on_axis(axis_y, HEAD_DEPTH, PIN_LEN, lambda w: w.circle(2.0))
-    nut = on_axis(axis_y, L - NUT_DEPTH, 4.7, lambda w: w.polygon(6, 7.0 / math.cos(math.pi / 6)))
+    nut = on_axis(axis_y, L - NUT_DEPTH, NUT_H, lambda w: w.polygon(6, 7.0 / math.cos(math.pi / 6)))
     return head.union(shank).union(nut)
 
 
