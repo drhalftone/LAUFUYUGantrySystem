@@ -1,9 +1,9 @@
 """Print-test coupon for the chain hinge: the chain's own knuckles on short leaves.
 
-The outer piece has the chain's end knuckles exactly (4.4 mm pin hole, 8.4 mm pan-head
+The outer piece has the chain's end knuckles exactly (PIN_D pin hole, 8.4 mm pan-head
 counterbore, nylock pocket; M4 x 60 Phillips pan head + nylock). The inner pieces have
-the chain's middle knuckle (LINK_CLEAR axial clearance) with its pivot hole reduced from
-PIVOT_D (5.0) by 0.5 and 1.0 mm, to find how tight it can be and still turn on the screw.
+the chain's middle knuckle (LINK_CLEAR axial clearance) with 4.5 and 4.0 mm pivot holes,
+to find how tight it can be and still turn on the screw. Result: 4.0, now the chain's PIVOT_D.
 Each inner piece has its hole size engraved on top.
 
 Frame: hinge axis along X at Y = 0, Z = T/2; outer piece at -Y, inner pieces at +Y.
@@ -14,10 +14,10 @@ Run:  python knuckle_test.py
 """
 from pathlib import Path
 import cadquery as cq
-from carriage_chain import L, T, SWING_CLEAR, LINK_CLEAR, PIVOT_D, block, hinge_half
+from carriage_chain import L, T, SWING_CLEAR, LINK_CLEAR, block, hinge_half
 
 LEAF = 15.0               # leaf width past the swing clearance
-REDUCTIONS = (0.5, 1.0)   # taken off PIVOT_D for the inner pieces
+PIVOT_TESTS = (4.5, 4.0)  # inner-piece pivot holes
 LABEL_DEPTH = 0.6
 PLATE_GAP = 5.0           # between pieces on the combined print plate
 
@@ -34,7 +34,7 @@ def inner(pivot_d):
 if __name__ == "__main__":
     here = Path(__file__).parent
     parts = {"knuckle_test_outer": outer}
-    parts.update({f"knuckle_test_inner_{PIVOT_D - d:.1f}": inner(PIVOT_D - d) for d in REDUCTIONS})
+    parts.update({f"knuckle_test_inner_{d:.1f}": inner(d) for d in PIVOT_TESTS})
     for name, part in parts.items():
         cq.exporters.export(part, str(here / f"{name}.stl"), tolerance=0.01, angularTolerance=0.1)
         b = part.val().BoundingBox()

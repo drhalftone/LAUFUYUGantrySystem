@@ -7,7 +7,7 @@ a triangular open frame whose arms ramp up to a 60 x 23 mm pocket at the wide en
 frame; this script adds:
 
 - a solid bar across the wide end (the pocket's end wall is only 1.3 mm), and
-- the "lower" half of the chain hinge (middle knuckle, 5.0 mm pivot hole, LINK_CLEAR
+- the "lower" half of the chain hinge (middle knuckle, PIVOT_D pivot hole, LINK_CLEAR
   axial clearance like the links) on that bar, so the plate pins to the bottom end of
   the last chain link like another link.
 
@@ -20,17 +20,19 @@ hinge (0..L), pin axis at Y = 0, Z = T/2, plate at +Y, underside at Z = 0.
 Run:  python xrite_i1_plate.py
   -> xrite_i1_plate.stl/.step       (print flat, underside down)
   -> carriage_chain_xrite.step/.glb carriage plate + chain + screws, nuts + i1 plate on the table
+  -> chain_print_plate.stl          carriage hinge plate, long first link and i1 plate, flat side by side
 """
 import math
 from pathlib import Path
 import cadquery as cq
 import trimesh
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
-from carriage_chain import (L, r, SWING_CLEAR, LINK_CLEAR, PIN_ABOVE_TABLE, N_LINKS, hinge_half, screw_at,
+from carriage_chain import (L, r, first_link, SWING_CLEAR, LINK_CLEAR, PIN_ABOVE_TABLE, N_LINKS, hinge_half, screw_at,
                             nut_at, carriage_plate, link_pitches, drape_angles, hanging_chain, chain_end)
 
 SOURCE = Path(__file__).parent / "xRitei1.stl"
 BAR = 5.0             # solid bar between the hinge leaf line and the cradle's wide end
+PLATE_GAP = 8.0       # between parts on the combined print plate
 
 
 def mesh_solid(path):
@@ -90,6 +92,17 @@ if __name__ == "__main__":
     b = xrite_plate.val().BoundingBox()
     print(f"i1 plate {b.xlen:.1f} x {b.ylen:.1f} x {b.zlen:.2f} mm, aperture at "
           f"({APERTURE[0]:.2f}, {APERTURE[1]:.2f}) from the hinge end / pin axis")
+
+    # One print: the three parts flat (underside on Z = 0), side by side along X
+    tray, x = [], 0.0
+    for part in (carriage_plate, first_link, xrite_plate):
+        pb = part.val().BoundingBox()
+        tray.append(part.translate((x - pb.xmin, -pb.ymin, -pb.zmin)).val())
+        x += pb.xlen + PLATE_GAP
+    tray = cq.Workplane("XY").add(cq.Compound.makeCompound(tray))
+    cq.exporters.export(tray, str(here / "chain_print_plate.stl"), tolerance=0.01, angularTolerance=0.1)
+    tb = tray.val().BoundingBox()
+    print(f"chain_print_plate.stl  {tb.xlen:.1f} x {tb.ylen:.1f} x {tb.zlen:.2f} mm")
 
     links, screws, nuts, plate = chain_with_plate()
     assy = cq.Assembly().add(carriage_plate, name="carriage_plate", color=cq.Color(0.9, 0.47, 0.12))

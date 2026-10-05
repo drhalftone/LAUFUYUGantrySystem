@@ -2,21 +2,21 @@
 
 The carriage plate is the fsk40_carriage_plate (65 x 48 x 10, counterbored M4 x 12
 on the carriage's 25 x 25 pattern, flush with the carriage) with a square-knuckle
-hinge along one long edge, so a chain of identical links can hang over the side
-of the carriage down to the table.
+hinge along one long edge, so a chain of links can hang over the side of the
+carriage down to the table. In use the chain is a single long link ending in the
+X-Rite i1 plate (xrite_i1_plate.py); standard links are only modelled for N_LINKS > 1.
 
 Every hinge is the one from hinged_plates.py: the upper piece owns two end
-knuckles (M4 pan head recessed in one, nylock nut captive in the other, 4.4 mm
-pin hole) and the lower piece owns the middle knuckle (5.0 mm hole, turns freely
-on the screw). Each piece stops SWING_CLEAR short of the other's knuckles.
+knuckles (M4 pan head recessed in one, nylock nut captive in the other) and the
+lower piece owns the middle knuckle, which turns on the screw. Both have a 4.0 mm
+hole (the knuckle_test.py coupon: 4.0 still turns on an M4 as printed). Each piece stops SWING_CLEAR short of the other's knuckles.
 
 Frame (flat, as printed): X along the hinge / carriage travel, X = 0 at the
 motor end of the carriage; Y across the carriage, 0 at its centre, hinge side +Y;
 Z up, 0 on the carriage top. Links are drawn flat with their top pin at Y = 0.
 
 Run:  python carriage_chain.py
-  -> carriage_hinge_plate.stl/.step, chain_link_long.stl/.step,
-     chain_link.stl/.step          (print flat)
+  -> carriage_hinge_plate.stl/.step, chain_link_long.stl/.step  (print flat)
   -> carriage_chain.step            plate + hanging chain + M4 screws and nuts
   -> fsk40_with_chain.glb           same, sitting on the FSK40 (fit check, not committed)
 """
@@ -36,8 +36,8 @@ CLEAR_D, CBORE_D, CBORE_DEPTH = 4.5, 8.0, 5.0   # M4 x 12 SHCS into the carriage
 END_KNUCKLE = 16.0    # each end knuckle of the upper piece; the lower piece's fills the middle
 KNUCKLE_GAP = 2.0     # axial space between neighbouring knuckles (each stops 1 mm short of the split)
 SWING_GAP = 1.0       # clearance between a turning knuckle's corners and the other piece
-PIN_D = 4.4           # pin hole in the upper piece (clamped)
-PIVOT_D = 5.0         # pin hole in the lower piece (turns freely)
+PIN_D = 4.0           # pin hole in the upper piece (clamped)
+PIVOT_D = 4.0         # pin hole in the lower piece (turns on the screw; 4.0 won the knuckle test over 4.5)
 # Pin: M4 x 60 Phillips pan head (ISO 7045: head 8.0 dia x 3.1) + M4 nylock (7.0 AF x 5.0).
 # Head in a counterbore at one end, nut captive at the other; nothing sticks out past the ends.
 HEAD_D, HEAD_H = 8.0, 3.1
@@ -52,7 +52,7 @@ FIRST_LINK_PITCH = 2 * LINK_PITCH   # first link off the carriage: long enough t
 LINK_CLEAR = 0.2        # each link's middle knuckle stops this short of the knuckles above it (no side play)
 LINK_WALL = 10.0        # every link's leaf is a frame: a window cut through the middle leaves this much all round
 WINDOW_FILLET = 6.0     # window corner radius
-N_LINKS = 2           # links hanging below the carriage plate: the long one, then one standard
+N_LINKS = 1           # links hanging below the carriage plate: just the long one
 PIN_ABOVE_TABLE = 155.4   # carriage-plate pin height in the H-gantry (cross-beam carriage top is 150.4 up)
 
 r = T / 2
@@ -141,7 +141,7 @@ first_link = make_link(FIRST_LINK_PITCH, LINK_CLEAR, LINK_WALL)
 
 
 def link_pitches(n=N_LINKS):
-    return [FIRST_LINK_PITCH] + [LINK_PITCH] * (n - 1)
+    return ([FIRST_LINK_PITCH] + [LINK_PITCH] * (n - 1))[:n]
 
 
 def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
@@ -196,8 +196,7 @@ def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS, angles=None):
 
 if __name__ == "__main__":
     here = Path(__file__).parent
-    for name, part in (("carriage_hinge_plate", carriage_plate), ("chain_link_long", first_link),
-                       ("chain_link", chain_link)):
+    for name, part in (("carriage_hinge_plate", carriage_plate), ("chain_link_long", first_link)):
         cq.exporters.export(part, str(here / f"{name}.step"))
         cq.exporters.export(part, str(here / f"{name}.stl"), tolerance=0.01, angularTolerance=0.1)
 
