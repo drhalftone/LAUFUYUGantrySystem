@@ -11,11 +11,13 @@ frame; this script adds:
   axial clearance like the links) on that bar, so the plate pins to the bottom end of
   the last chain link like another link.
 
-With the knuckle axis T/2 above the plate's underside, the plate lies flat on the
-table with the aperture floor on the chart.
+The knuckle axis is PIVOT_Z above the plate's underside (not T/2 as on the links), so the
+plate lies flat on the table with the aperture floor on the chart while the last link's
+square end knuckles, whose corners swing r * sqrt(2) from the pin, stay SWING_GAP clear
+of the table at any link angle. The knuckle is filled down to the underside (prints flat).
 
 Frame (flat, as printed): same as a chain link in carriage_chain.py, X along the
-hinge (0..L), pin axis at Y = 0, Z = T/2, plate at +Y, underside at Z = 0.
+hinge (0..L), pin axis at Y = 0, Z = PIVOT_Z, plate at +Y, underside at Z = 0.
 
 Run:  python xrite_i1_plate.py
   -> xrite_i1_plate.stl/.step       (print flat, underside down)
@@ -28,11 +30,12 @@ import cadquery as cq
 import trimesh
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
 from carriage_chain import (L, r, first_link, SWING_CLEAR, LINK_CLEAR, PIN_ABOVE_TABLE, N_LINKS, hinge_half, screw_at,
-                            nut_at, carriage_plate, link_pitches, drape_angles, hanging_chain, chain_end)
+                            nut_at, carriage_plate, link_pitches, drape_angles, hanging_chain, chain_end, SPANS, KNUCKLE_GAP)
 
 SOURCE = Path(__file__).parent / "xRitei1.stl"
-BAR = 5.0             # solid bar between the hinge leaf line and the cradle's wide end
+BAR = 15.0            # solid bar between the hinge leaf line and the cradle's wide end (keeps the link off the i1)
 PLATE_GAP = 8.0       # between parts on the combined print plate
+PIVOT_Z = SWING_CLEAR  # pin above the underside: link knuckle corner reach r * sqrt(2) + SWING_GAP
 
 
 def mesh_solid(path):
@@ -61,18 +64,27 @@ cb = cradle.val().BoundingBox()
 
 bar = (cq.Workplane("XY").box(cb.xlen, BAR + 0.01, CRADLE_H, centered=False)
        .translate((cb.xmin, SWING_CLEAR, 0)))
-xrite_plate = hinge_half(cradle.union(bar), 0, +1, "lower", LINK_CLEAR).clean()
+# Standard middle knuckle (pin at T/2) on the plate dropped by LIFT, raised back, then filled
+# down to the underside under the knuckle (same X span as hinge_half's, LINK_CLEAR from the ends)
+LIFT = PIVOT_Z - r
+(kx0, kx1), = [(x0, x1) for x0, x1, who in SPANS if who == "lower"]
+g = LINK_CLEAR - KNUCKLE_GAP / 2
+xrite_plate = (hinge_half(cradle.union(bar).translate((0, 0, -LIFT)), 0, +1, "lower", LINK_CLEAR)
+               .translate((0, 0, LIFT)))
+filler = (cq.Workplane("XY").box(kx1 - kx0 - 2 * g, SWING_CLEAR + r + 0.01, LIFT + 0.01, centered=False)
+          .translate((kx0 + g, -r, 0)))
+xrite_plate = xrite_plate.union(filler).clean()
 
 # Aperture centre in the plate frame (source ring centre 35.85, 51.29)
 APERTURE = (L / 2 + (bb.xmin + bb.xmax) / 2 - 35.85, SWING_CLEAR + BAR + bb.ymax - 51.29)
 
 
 def chain_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
-    """Link angles with the i1 plate flat on the table: the last link's lower pin sits T/2 up."""
+    """Link angles with the i1 plate flat on the table: the last link's lower pin sits PIVOT_Z up."""
     angles = drape_angles(pin_above_table, n - 1)
     h = pin_above_table - r + chain_end(angles)[1]          # last link's top pin above the table
     pitch = link_pitches(n)[-1]
-    angles.append(math.degrees(math.asin(min(1.0, max(0.0, (h - r) / pitch)))))
+    angles.append(math.degrees(math.asin(min(1.0, max(0.0, (h - PIVOT_Z) / pitch)))))
     return angles
 
 
@@ -81,8 +93,10 @@ def chain_with_plate(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
     angles = chain_angles(pin_above_table, n)
     links, screws, nuts = hanging_chain(pin_above_table, n, angles)
     y, z = chain_end(angles)
-    place = lambda w: w.translate((0, y, z - r))
-    return links, screws + [place(screw_at(0))], nuts + [place(nut_at(0))], place(xrite_plate)
+    place = lambda w: w.translate((0, y, z - PIVOT_Z))
+    # Screw head and nut sit in the last link's end knuckles: pin axis (drawn at T/2) on the plate's, tilted with the link
+    pin = lambda w: w.translate((0, 0, -r)).rotate((0, 0, 0), (1, 0, 0), -angles[-1]).translate((0, y, z))
+    return links, screws + [pin(screw_at(0))], nuts + [pin(nut_at(0))], place(xrite_plate)
 
 
 if __name__ == "__main__":
