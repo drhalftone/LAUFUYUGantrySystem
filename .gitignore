@@ -20,6 +20,13 @@ cad/fsk40_with_plate.stl
 cad/fsk40_with_plate.glb
 cad/fsk40_with_chain.glb
 cad/gantry_h.glb
+# Resized FSK40 rails / XY-H1 gantry — regenerate with cad/fsk40_resize.py
+cad/fsk40_s310.step
+cad/fsk40_s610.step
+cad/gantry_h1.step
+cad/gantry_on_plate.step
+# Cart model embeds 80/20 PARTcommunity CAD too — regenerate with cad/gantry_cart.py
+cad/gantry_cart.step
 
 # Python
 __pycache__/

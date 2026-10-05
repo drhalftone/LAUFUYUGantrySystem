@@ -6,7 +6,7 @@ hinge along one long edge, so a chain of identical links can hang over the side
 of the carriage down to the table.
 
 Every hinge is the one from hinged_plates.py: the upper piece owns two end
-knuckles (M4 SHCS head recessed in one, nylock nut captive in the other, 4.4 mm
+knuckles (M4 pan head recessed in one, nylock nut captive in the other, 4.4 mm
 pin hole) and the lower piece owns the middle knuckle (5.0 mm hole, turns freely
 on the screw). Each piece stops SWING_CLEAR short of the other's knuckles.
 
@@ -38,9 +38,13 @@ KNUCKLE_GAP = 2.0     # axial space between neighbouring knuckles (each stops 1 
 SWING_GAP = 1.0       # clearance between a turning knuckle's corners and the other piece
 PIN_D = 4.4           # pin hole in the upper piece (clamped)
 PIVOT_D = 5.0         # pin hole in the lower piece (turns freely)
-HEAD_D, HEAD_DEPTH = 7.5, 7.0     # M4 SHCS head counterbore, head 3 mm below the end face
-NUT_AF, NUT_DEPTH = 7.3, 8.0      # captive M4 nylock nut pocket
-PIN_LEN = 55.0        # M4 x 55 SHCS: counterbore floor (x = 7) through the nut (57..61.7)
+# Pin: M4 x 60 Phillips pan head (ISO 7045: head 8.0 dia x 3.1) + M4 nylock (7.0 AF x 5.0).
+# Head in a counterbore at one end, nut captive at the other; nothing sticks out past the ends.
+HEAD_D, HEAD_H = 8.0, 3.1
+HEAD_CBORE_D, HEAD_DEPTH = 8.4, 4.0   # head top 0.9 below the end face
+NUT_AF, NUT_H = 7.3, 5.0          # pocket across flats (the 7.0 nut fits it well); nut thickness
+NUT_DEPTH = 7.0                   # nut pushed to the pocket floor: x = 58..63
+PIN_LEN = 60.0        # counterbore floor (x = 4) to x = 64: 1 mm past the nut, 1 mm inside the end face
 
 # --- chain ---
 LINK_PITCH = 85.0     # pin-to-pin length of each link
@@ -48,7 +52,7 @@ FIRST_LINK_PITCH = 2 * LINK_PITCH   # first link off the carriage: long enough t
 LINK_CLEAR = 0.2        # each link's middle knuckle stops this short of the knuckles above it (no side play)
 LINK_WALL = 10.0        # every link's leaf is a frame: a window cut through the middle leaves this much all round
 WINDOW_FILLET = 6.0     # window corner radius
-N_LINKS = 3           # links hanging below the carriage plate (the first one long)
+N_LINKS = 2           # links hanging below the carriage plate: the long one, then one standard
 PIN_ABOVE_TABLE = 155.4   # carriage-plate pin height in the H-gantry (cross-beam carriage top is 150.4 up)
 
 r = T / 2
@@ -74,7 +78,7 @@ def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP, pivot_d=PIVOT_D
     role: "upper" (end knuckles, clamps the pin) or "lower" (middle knuckle, turns on it).
     face_clear: axial space between each face of the middle knuckle and the end knuckles
     ("lower" only; the end knuckles always stop KNUCKLE_GAP / 2 short of their split).
-    pivot_d: hole through the middle knuckle ("lower" only).
+    pivot_d: pin hole in the middle knuckle ("lower" only).
     The caller's leaf must already stop at axis_y + side * SWING_CLEAR.
     """
     g = KNUCKLE_GAP / 2 if role == "upper" else face_clear - KNUCKLE_GAP / 2
@@ -86,7 +90,7 @@ def hinge_half(body, axis_y, side, role, face_clear=KNUCKLE_GAP, pivot_d=PIVOT_D
     hole = PIN_D if role == "upper" else pivot_d
     body = body.cut(on_axis(axis_y, -1, L + 2, lambda w: w.circle(hole / 2)))
     if role == "upper":
-        body = body.cut(on_axis(axis_y, -1, HEAD_DEPTH + 1, lambda w: w.circle(HEAD_D / 2)))
+        body = body.cut(on_axis(axis_y, -1, HEAD_DEPTH + 1, lambda w: w.circle(HEAD_CBORE_D / 2)))
         body = body.cut(on_axis(axis_y, L - NUT_DEPTH, NUT_DEPTH + 1,
                                 lambda w: w.polygon(6, NUT_AF / math.cos(math.pi / 6))))
     return body
@@ -97,15 +101,17 @@ def hex_(af):
 
 
 def screw_at(axis_y):
-    """M4 x PIN_LEN socket head cap screw, head seated on the counterbore floor."""
-    head = on_axis(axis_y, HEAD_DEPTH - 4, 4, lambda w: w.circle(3.5))
-    head = head.cut(on_axis(axis_y, HEAD_DEPTH - 5, 3.5, hex_(3.0)))     # 3 mm hex socket, 2.5 deep
+    """M4 x PIN_LEN Phillips pan head screw, head seated on the counterbore floor."""
+    head = on_axis(axis_y, HEAD_DEPTH - HEAD_H, HEAD_H, lambda w: w.circle(HEAD_D / 2))
+    for wh in ((4.4, 1.0), (1.0, 4.4)):                                   # Phillips cross, 1.8 deep
+        head = head.cut(on_axis(axis_y, HEAD_DEPTH - HEAD_H - 1, 2.8, lambda w: w.rect(*wh)))
     return head.union(on_axis(axis_y, HEAD_DEPTH, PIN_LEN, lambda w: w.circle(2.0)))
 
 
 def nut_at(axis_y):
     """M4 nylock nut, seated at the bottom of its pocket."""
-    return on_axis(axis_y, L - NUT_DEPTH, 4.7, hex_(7.0)).cut(on_axis(axis_y, L - NUT_DEPTH - 1, 7, lambda w: w.circle(2.0)))
+    return (on_axis(axis_y, L - NUT_DEPTH, NUT_H, hex_(7.0))
+            .cut(on_axis(axis_y, L - NUT_DEPTH - 1, NUT_H + 2, lambda w: w.circle(2.0))))
 
 
 # Carriage plate: leaf is the whole 65 x 48 plate, hinge knuckles stick out past its +Y edge
@@ -163,15 +169,24 @@ def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
     return angles
 
 
-def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
+def chain_end(angles):
+    """(y, z) of the last link's lower pin, carriage-plate frame, for links at these angles."""
+    pitches = link_pitches(len(angles))
+    return (AXIS_Y + sum(p * math.cos(math.radians(a)) for a, p in zip(angles, pitches)),
+            r - sum(p * math.sin(math.radians(a)) for a, p in zip(angles, pitches)))
+
+
+def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS, angles=None):
     """Links, and the screws and nuts joining them, draped from the carriage plate's pin down onto the table."""
+    if angles is None:
+        angles = drape_angles(pin_above_table, n)
     links, screws, nuts = [], [screw_at(AXIS_Y)], [nut_at(AXIS_Y)]
     y, z = AXIS_Y, r                         # current top pin, carriage-plate frame
-    for i, (a, pitch) in enumerate(zip(drape_angles(pin_above_table, n), link_pitches(n))):
+    for i, (a, pitch) in enumerate(zip(angles, link_pitches(len(angles)))):
         place = lambda w: (w.translate((0, 0, -r)).rotate((0, 0, 0), (1, 0, 0), -a)
                            .translate((0, y, z)))
         links.append(place(first_link if i == 0 else chain_link))
-        if i < n - 1:
+        if i < len(angles) - 1:
             screws.append(place(screw_at(pitch)))
             nuts.append(place(nut_at(pitch)))
         y += pitch * math.cos(math.radians(a))

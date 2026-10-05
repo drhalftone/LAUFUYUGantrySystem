@@ -1,0 +1,23 @@
+Section,Part,Qty,Description,Unit $,Ext $
+Frame,1010,2,"Top front/back rail (cantilevers to laptop table), 38 in",17.1,34.2
+Frame,1010,3,"Top side + laptop end rail, 22 in",9.9,29.7
+Frame,1010,4,"Shelf rail, 20 in",9.0,36.0
+Frame,1010,1,"Camera mast, 45.71 in",20.57,20.57
+Frame,1010,1,"Camera boom, 13 in",5.85,5.85
+Frame,1010-cut,11,"1010 cut charge, per cut",3.0,33.0
+Frame,2020,4,"Leg, 21.78 in",24.61,98.45
+Frame,2020-cut,4,"2020 cut charge, per cut",3.18,12.72
+Joining,4132,28,10 series 2-hole gusseted inside corner bracket,7.11,199.08
+Joining,3393,56,"Bolt assembly: 1/4-20 BHSCS + economy T-nut, 2 per 4132 (use the .375 long version)",0.73,40.88
+Mobility,2323,4,"Flange mount swivel caster, 5 in, top brake, 300 lb",42.78,171.12
+Mobility,2419,4,10 series flange mount caster base plate,28.46,113.84
+Mobility,SHCS-5/16,16,"5/16-18 x 5/8 SHCS, caster flange to 2419 plate (est.)",0.35,5.6
+Mobility,leg-end,8,"Tap 2020 end hole 1/4-20 + 1/4-20 x 3/4 SHCS, 2419 to leg (est.) - 2 corner holes per leg",3.0,24.0
+Surfaces,2633,1,"Shelf panel (notch the 4 leg corners 2 x 2 in), 24 x 24 in, Lite ACM .236",49.88,49.88
+Surfaces,2633,1,"Laptop table panel, 14 x 24 in, Lite ACM .236",29.1,29.1
+Surfaces,2633-cut,2,"Panel cut-to-size charge, per panel",16.13,32.26
+Surfaces,3321,8,"Bolt assembly: 1/4-20 x .5 FBHSCS + economy T-nut, panel to rail (countersink the panel)",0.87,6.96
+Camera,ballhead,1,1/4-20 mini ball head for the camera (est.),15.0,15.0
+Camera,3393-cam,1,"1/4-20 stud + economy T-nut, ball head to boom (est. as 3393)",0.73,0.73
+Finish,2015-Plain,4,10 series 1 x 1 end cap (exposed 1010 ends),2.29,9.16
+,,,Total (before shipping/tax),,968.1
