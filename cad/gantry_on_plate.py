@@ -19,7 +19,8 @@ from pathlib import Path
 import cadquery as cq
 from fsk40_resize import (build_rails, h_gantry, base_length, LEG_STROKE, BEAM_STROKE, SRC_STROKE,
                           BASE_BOTTOM, BASE_X0, CENTRE_Z, CARRIAGE_TOP, PLATE_T)
-from carriage_chain import carriage_plate as hinge_plate, hanging_chain, T as HINGE_T
+from carriage_chain import carriage_plate as hinge_plate, T as HINGE_T
+from xrite_i1_plate import chain_with_plate
 
 BOARD_SRC = sys.argv[1] if len(sys.argv) > 1 else str(Path.home() / "Downloads" / "step_03679.step")
 BOARD = 609.6         # square
@@ -62,14 +63,15 @@ if __name__ == "__main__":
 
     leg, beam = build_rails()
 
-    # Hinge plate + hanging chain (carriage_chain.py) on the beam carriage. Chain frame -> rail frame
-    # as in fsk40_with_chain.py: X along travel from the carriage's motor-end face, chain Y -> rail -Z,
-    # chain Z -> rail Y (carriage top); the resized beam's carriage sits at mid-stroke.
+    # Hinge plate + hanging chain (carriage_chain.py), ending in the i1 plate flat on the board
+    # (xrite_i1_plate.py), on the beam carriage. Chain frame -> rail frame as in fsk40_with_chain.py:
+    # X along travel from the carriage's motor-end face, chain Y -> rail -Z, chain Z -> rail Y
+    # (carriage top); the resized beam's carriage sits at mid-stroke.
     beam_carriage_x = 579.18 - (SRC_STROKE - BEAM_STROKE) / 2
     on_carriage = cq.Location(cq.Vector(beam_carriage_x, CARRIAGE_TOP, CENTRE_Z), cq.Vector(1, 0, 0), -90)
     # beam carriage top above the board: beam base on the leg plates, plus the beam's own base-to-carriage height
     beam_top = (CARRIAGE_TOP + PLATE_T - BASE_BOTTOM) + (CARRIAGE_TOP - BASE_BOTTOM)
-    links, pins = hanging_chain(beam_top + HINGE_T / 2)
+    links, pins, i1_plate = chain_with_plate(beam_top + HINGE_T / 2)
     chain = cq.Assembly(name="hinge_chain")
     chain.add(hinge_plate, name="carriage_hinge_plate", color=cq.Color(0.9, 0.47, 0.12))
     for i, link in enumerate(links):
@@ -77,6 +79,7 @@ if __name__ == "__main__":
                   color=cq.Color(0.24, 0.47, 0.78) if i % 2 == 0 else cq.Color(0.3, 0.7, 0.45))
     for i, p in enumerate(pins):
         chain.add(p, name=f"pin{i + 1}", color=cq.Color(0.35, 0.35, 0.37))
+    chain.add(i1_plate, name="xrite_i1_plate", color=cq.Color(0.85, 0.85, 0.2))
     beam.add(chain, name="hinge_chain", loc=on_carriage)
 
     model = h_gantry(leg, beam, LEG_SPACING)

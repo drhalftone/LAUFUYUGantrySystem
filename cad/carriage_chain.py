@@ -153,15 +153,24 @@ def drape_angles(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
     return angles
 
 
-def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
+def chain_end(angles):
+    """(y, z) of the last link's lower pin, carriage-plate frame, for links at these angles."""
+    pitches = link_pitches(len(angles))
+    return (AXIS_Y + sum(p * math.cos(math.radians(a)) for a, p in zip(angles, pitches)),
+            r - sum(p * math.sin(math.radians(a)) for a, p in zip(angles, pitches)))
+
+
+def hanging_chain(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS, angles=None):
     """Links (and their pins) draped from the carriage plate's pin down onto the table."""
+    if angles is None:
+        angles = drape_angles(pin_above_table, n)
     links, pins = [], [pin_at(AXIS_Y)]
     y, z = AXIS_Y, r                         # current top pin, carriage-plate frame
-    for i, (a, pitch) in enumerate(zip(drape_angles(pin_above_table, n), link_pitches(n))):
+    for i, (a, pitch) in enumerate(zip(angles, link_pitches(len(angles)))):
         place = lambda w: (w.translate((0, 0, -r)).rotate((0, 0, 0), (1, 0, 0), -a)
                            .translate((0, y, z)))
         links.append(place(first_link if i == 0 else chain_link))
-        if i < n - 1:
+        if i < len(angles) - 1:
             pins.append(place(pin_at(pitch)))
         y += pitch * math.cos(math.radians(a))
         z -= pitch * math.sin(math.radians(a))
