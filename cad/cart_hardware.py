@@ -1,7 +1,7 @@
 """Connecting hardware for gantry_cart.py, modelled from 80/20's published dimensions.
 
   4132   10 series 2-hole gusseted inside corner bracket: 0.875 in flanges, 1.0 in wide, one
-         1/4 in hole per flange 0.5 in from the corner (thickness/web sized to its 0.041 lb)
+         1/4 in hole per flange on the centre line, with a gusset rib along each edge
   3393   bolt assembly: 1/4-20 x 0.5 BHSCS + slide-in economy T-nut (nut sits under the
          0.087 in slot lip; 10 series slot measured from the 1010 STEP)
   3321   bolt assembly: 1/4-20 x 0.5 FBHSCS + economy T-nut, panels to the rails
@@ -18,9 +18,10 @@ ZINC = cq.Color(0.62, 0.63, 0.66)
 ALU = cq.Color(0.78, 0.79, 0.81)
 BLACK = cq.Color(0.08, 0.08, 0.08)
 
-# 4132
-FL, W, T, WEB_T = 0.875, 1.0, 0.19, 0.25
+# 4132: two side ribs (gussets) along the edges, holes on the centre line between them
+FL, W, T, RIB_T = 0.875, 1.0, 0.125, 0.10
 HOLE_AT, HOLE_D = 0.5, 0.28
+SCREW_L = 0.375          # 1/4-20 x 3/8 BHSCS: a 1/2 in screw bottoms out in the 0.323 in deep slot
 # 10 series slot / economy T-nut
 LIP = 0.087
 NUT_L, NUT_W, NUT_T = 0.50, 0.45, 0.12
@@ -62,9 +63,9 @@ def gusset_4132():
     flange B on x in [0, T] extending +z, web in the middle."""
     a = _box(0, -W / 2, 0, FL, W, T)
     b = _box(0, -W / 2, 0, T, W, FL)
-    web = (cq.Workplane("XZ").polyline([(0, 0), (FL * IN, 0), (0, FL * IN)]).close()
-           .extrude(WEB_T / 2 * IN, both=True).val())
-    g = a.fuse(b).fuse(web)
+    rib = lambda y0: (cq.Workplane("XZ", origin=(0, y0 * IN, 0)).polyline([(0, 0), (FL * IN, 0), (0, FL * IN)]).close()
+                      .extrude(-RIB_T * IN).val())
+    g = a.fuse(b).fuse(rib(-W / 2)).fuse(rib(W / 2 - RIB_T))
     g = g.cut(cq.Solid.makeCylinder(HOLE_D / 2 * IN, 2 * IN, cq.Vector(HOLE_AT * IN, 0, -1 * IN)))
     g = g.cut(cq.Solid.makeCylinder(HOLE_D / 2 * IN, 2 * IN, cq.Vector(-1 * IN, 0, HOLE_AT * IN), cq.Vector(1, 0, 0)))
     return g
@@ -76,18 +77,21 @@ def _loc(corner, n1, n2):
     return cq.Location(pl)
 
 
-def bracket_joint(name, corner, n1, n2):
+def bracket_joint(name, corner, n1, n2, slot_b="n1"):
     """4132 in the inside corner between face 1 (normal n1) and face 2 (normal n2), with its two
-    3393 bolt assemblies. Flange A lies on face 1 and runs along n2; flange B on face 2 along n1."""
+    3393 bolt assemblies. Flange A lies on face 1 and runs along n2; flange B on face 2 along n1.
+    T-nuts lie along their slots: A's along n2; B's along n1 by default, or along the bracket's
+    width (n1 x n2) when member B's slot runs that way (slot_b="width", e.g. a vertical mast)."""
     loc = _loc(corner, n1, n2)
     out = [(f"{name}_4132", gusset_4132().moved(loc), ALU)]
     # bolt A: head on flange A, shank into face 1; T-nut in that member's slot (slot runs along n2 = local x)
-    bolt_a = bhcs(0.5).translate(cq.Vector(HOLE_AT * IN, 0, T * IN))
+    bolt_a = bhcs(SCREW_L).translate(cq.Vector(HOLE_AT * IN, 0, T * IN))
     nut_a = tnut().translate(cq.Vector(HOLE_AT * IN, 0, 0))
     # bolt B: same thing in a frame turned so local z -> n2 (rotate -90 about y: x -> z, z -> -x)
     rot = lambda s: s.rotate(cq.Vector(), cq.Vector(0, 1, 0), 90)
-    bolt_b = rot(bhcs(0.5).translate(cq.Vector(-HOLE_AT * IN, 0, T * IN)))
-    nut_b = rot(tnut().translate(cq.Vector(-HOLE_AT * IN, 0, 0)))
+    bolt_b = rot(bhcs(SCREW_L).translate(cq.Vector(-HOLE_AT * IN, 0, T * IN)))
+    nb = tnut() if slot_b == "n1" else tnut().rotate(cq.Vector(), cq.Vector(0, 0, 1), 90)
+    nut_b = rot(nb.translate(cq.Vector(-HOLE_AT * IN, 0, 0)))
     out += [(f"{name}_3393_screw_a", bolt_a.moved(loc), STEEL), (f"{name}_3393_tnut_a", nut_a.moved(loc), ZINC),
             (f"{name}_3393_screw_b", bolt_b.moved(loc), STEEL), (f"{name}_3393_tnut_b", nut_b.moved(loc), ZINC)]
     return out

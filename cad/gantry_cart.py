@@ -50,11 +50,25 @@ LEG_L = LEG_TOP - LEG_BOTTOM
 
 LAPTOP_DEPTH = 14.0                  # top rails cantilever this far past the legs at -X (leg-rail motor end)
 
+# Camera mast at +X (opposite the laptop table): 1010 upright on the outside of the frame, held to the
+# top and shelf right rails; a 1010 boom slides on it (4132s in the T-slots) and carries a USB camera
+# looking straight down at the board centre.
+CAMERA_HEIGHT = 36.0                 # lens above the board top (adjustable, ~7 in .. 36 in; sets the mast length)
+CAMERA_XY = (BOARD / 2, BOARD / 2)   # board centre, on the boom's bottom T-slot
+MAST_Y = BOARD / 2
+BALLHEAD_H, CAMERA_H = 1.5, 1.0      # ball head (boom underside -> camera top), camera body (lens at bottom)
+BOOM_BOTTOM = BOARD_TOP + CAMERA_HEIGHT + CAMERA_H + BALLHEAD_H
+BOOM_LEN = BOARD - (CAMERA_XY[0] - 1.0)                       # mast face (x = BOARD) to 1 in past the camera
+MAST_TOP = BOOM_BOTTOM + P10
+MAST_BOTTOM = None                   # set below: bottom of the shelf rails
+
 TALLEST = 75.5 / IN                  # driver on edge
 SHELF_CLEAR = 0.5
 PANEL_T = 0.236                      # 80/20 2633 Lite aluminium composite panel
 SHELF_PANEL_TOP = LEG_TOP - TALLEST - SHELF_CLEAR
 SHELF_RAIL_TOP = SHELF_PANEL_TOP - PANEL_T
+MAST_BOTTOM = SHELF_RAIL_TOP - P10
+MAST_L = MAST_TOP - MAST_BOTTOM
 
 
 def stock_profile(path):
@@ -124,9 +138,9 @@ def caster_assemblies(caster_solids, plate):
     """[(name, shape, colour)] 2419 plate + 2323 caster + screws under each leg.
 
     The 2419's four counterbored 1/4-20 holes are on a diamond 0.5 in from its centre, so on a
-    2020 end (holes at the centre and at +-0.5, +-0.5) the plate sits 0.5 in inboard of the leg
-    centre: three of its holes then land on the leg's centre hole and two corner holes (tap all
-    three 1/4-20). Counterbores face down; the caster flange covers them.
+    2020 end (0.205 in corner holes at +-0.5, +-0.5; the centre is a 1.78 in hollow) the plate sits
+    0.5 in inboard of the leg centre so two of its holes land on two corner holes (tap both 1/4-20).
+    That is only two screws per caster - see the BOM note. Counterbores face down under the flange.
     The caster flange is bolted square to the plate (long axes along X); only the fork + wheel
     are turned about the swivel axis to trail toward the cart centre.
     """
@@ -152,17 +166,44 @@ def caster_assemblies(caster_solids, plate):
             s = hw.bhcs(0.625, 0.3125, hw.SHCS_516).rotate(cq.Vector(), cq.Vector(1, 0, 0), 180)
             out.append((f"caster{i + 1}_shcs516_{j + 1}",
                         s.translate(cq.Vector((cx + dx) * IN, (cy + dy) * IN, (CASTER_H - 0.125) * IN)), hw.STEEL))
-        # 3 x 1/4-20 x 3/4 SHCS up through the plate counterbores into the tapped leg end
-        for j, (dx, dy) in enumerate(((0, 0), (0.5, 0.5 * u), (-0.5, 0.5 * u))):
+        # 2 x 1/4-20 x 3/4 SHCS up through the plate counterbores into the leg's tapped corner holes
+        for j, (dx, dy) in enumerate(((0.5, 0.5 * u), (-0.5, 0.5 * u))):
             s = hw.bhcs(0.75, 0.25, hw.SHCS_14).rotate(cq.Vector(), cq.Vector(1, 0, 0), 180)
             out.append((f"leg{i + 1}_shcs14_{j + 1}",
                         s.translate(cq.Vector((x + dx) * IN, (y + dy) * IN, (CASTER_H + hw.SHCS_14[1]) * IN)), hw.STEEL))
     return out
 
 
+def camera_mast(p1010):
+    """[(name, shape, colour)] mast, boom, ball head and a placeholder USB webcam."""
+    out = [("camera_mast_1010", member(p1010, MAST_L, (BOARD + P10 / 2, MAST_Y, MAST_BOTTOM), "z"), hw.ALU),
+           ("camera_boom_1010", member(p1010, BOOM_LEN, (BOARD - BOOM_LEN, MAST_Y, BOOM_BOTTOM + P10 / 2), "x"), hw.ALU)]
+    cx, cy = CAMERA_XY
+    stem = cq.Solid.makeCylinder(0.25 * IN, 0.75 * IN, cq.Vector(cx * IN, cy * IN, (BOOM_BOTTOM - 0.75) * IN))
+    ball = cq.Solid.makeSphere(0.5 * IN, cq.Vector(cx * IN, cy * IN, (BOOM_BOTTOM - 1.0) * IN))
+    out.append(("camera_ballhead", stem.fuse(ball), hw.BLACK))
+    # placeholder webcam ~ 3.7 x 1.1 x 1.0 in (C920-class), lens on the bottom face
+    z_cam = BOOM_BOTTOM - BALLHEAD_H - CAMERA_H
+    body = box(cx - 0.55, cy - 1.85, z_cam, 1.1, 3.7, CAMERA_H)
+    lens = cq.Solid.makeCylinder(0.35 * IN, 0.08 * IN, cq.Vector(cx * IN, cy * IN, (z_cam - 0.08) * IN))
+    out.append(("usb_camera_placeholder", body.fuse(lens), cq.Color(0.1, 0.1, 0.1)))
+    # 1/4-20 stud from the ball head up into an economy T-nut in the boom's bottom slot
+    stud = cq.Solid.makeCylinder(0.125 * IN, 0.6 * IN, cq.Vector(cx * IN, cy * IN, (BOOM_BOTTOM - 0.35) * IN))
+    nut = hw.tnut().rotate(cq.Vector(), cq.Vector(1, 0, 0), 180).translate(cq.Vector(cx * IN, cy * IN, BOOM_BOTTOM * IN))
+    out += [("camera_mount_stud", stud, hw.STEEL), ("camera_mount_tnut", nut, hw.ZINC)]
+    return out
+
+
 def joints():
     """Every 4132 bracket joint: (name, corner, n1, n2) - see cart_hardware.bracket_joint."""
     j = []
+    # camera mast to the +X faces of the top and shelf right rails, a bracket each side of the mast
+    for rail, zc in (("top", TOP_Z - P10 / 2), ("shelf", SHELF_RAIL_TOP - P10 / 2)):
+        for side, sy in (("a", -1), ("b", +1)):
+            j.append((f"mast_{rail}_{side}", (BOARD, MAST_Y + sy * P10 / 2, zc), (1, 0, 0), (0, sy, 0), "width"))
+    # boom to the mast's -X face: one bracket under the boom, one on top (loosen both to slide the boom)
+    j.append(("boom_under", (BOARD, MAST_Y, BOOM_BOTTOM), (0, 0, -1), (-1, 0, 0)))
+    j.append(("boom_over", (BOARD, MAST_Y, BOOM_BOTTOM + P10), (0, 0, 1), (-1, 0, 0)))
     zt = TOP_Z - P10 / 2                                       # top rail mid-height
     xs = {"left": (P10, +1), "right": (BOARD - P10, -1), "laptop_end": (-LAPTOP_DEPTH + P10, +1)}
     for rail, (x, sx) in xs.items():                           # Y top rails to the front/back X rails
@@ -220,9 +261,9 @@ if __name__ == "__main__":
     cart.add(laptop, name="laptop_panel", color=cq.Color(0.15, 0.15, 0.16))
     for name, solid in electronics():
         cart.add(solid, name=name, color=cq.Color(0.1, 0.1, 0.1) if name.startswith("driver") else cq.Color(0.55, 0.6, 0.65))
-    hardware = caster_assemblies(caster, plate) + panel_hardware()
-    for name, corner, n1, n2 in joints():
-        hardware += hw.bracket_joint(name, corner, n1, n2)
+    hardware = caster_assemblies(caster, plate) + panel_hardware() + camera_mast(p1010)
+    for name, corner, n1, n2, *slot_b in joints():
+        hardware += hw.bracket_joint(name, corner, n1, n2, *slot_b)
     for name, shape, col in hardware:
         cart.add(shape, name=name, color=col)
 
@@ -237,5 +278,7 @@ if __name__ == "__main__":
     print(f"cut list: 1010 2 @ {BOARD + LAPTOP_DEPTH:g}, 3 @ {BOARD - 2 * P10:g} (top + laptop end); "
           f"4 @ {BOARD - 2 * P20:g} (shelf); "
           f"2020 4 @ {LEG_L:.3f}")
+    print(f"camera mast 1010 {MAST_L:.2f} in ({MAST_BOTTOM:.2f}..{MAST_TOP:.2f}), boom 1010 {BOOM_LEN:g} in at "
+          f"{BOOM_BOTTOM:.2f} in; lens {CAMERA_HEIGHT:g} in above the board")
     print(f"hardware: {len(joints())} x 4132 + {2 * len(joints())} x 3393, "
-          f"{sum(len(v) for v in PANEL_SCREWS.values())} x 3321 panel screws, 16 x 5/16 SHCS, 12 x 1/4 SHCS, 4 x 2015")
+          f"{sum(len(v) for v in PANEL_SCREWS.values())} x 3321 panel screws, 16 x 5/16 SHCS, 8 x 1/4 SHCS, 4 x 2015")
