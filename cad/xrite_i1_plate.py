@@ -1,10 +1,10 @@
 """X-Rite i1 cradle plate, hinged onto the end of the carriage chain.
 
-The cradle is xRitei1.stl (SketchUp, from iCloud Drive/SketchUp): a 64 x 131.6 x 8.26
-plate with a 30.6 mm ring around a 9.8 mm measuring aperture (1 mm floor), a
-triangular open frame, and a 60 x 23 mm pocket at the wide end. The mesh is rebuilt
-exactly (it is four flat layers, so each layer's outline is extruded) and only
-moved into the chain frame; this script adds:
+The cradle is xRitei1.stl (SketchUp, from iCloud Drive/SketchUp): a 64 x 131.6 plate
+with a 30.6 mm ring around a 9.8 mm measuring aperture (1 mm floor, ring 6.76 tall),
+a triangular open frame whose arms ramp up to a 60 x 23 mm pocket at the wide end
+(10.76 tall). The mesh is sewn into a solid as-is and only moved into the chain
+frame; this script adds:
 
 - a solid bar across the wide end (the pocket's end wall is only 1.3 mm), and
 - the "lower" half of the chain hinge (middle knuckle, 5.0 mm pivot hole, LINK_CLEAR
@@ -25,6 +25,7 @@ import math
 from pathlib import Path
 import cadquery as cq
 import trimesh
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
 from carriage_chain import (L, r, SWING_CLEAR, LINK_CLEAR, PIN_ABOVE_TABLE, N_LINKS, hinge_half, pin_at,
                             carriage_plate, link_pitches, drape_angles, hanging_chain, chain_end)
 
@@ -32,26 +33,22 @@ SOURCE = Path(__file__).parent / "xRitei1.stl"
 BAR = 5.0             # solid bar between the hinge leaf line and the cradle's wide end
 
 
-def layered_solid(path):
-    """Rebuild the 2.5D mesh exactly: extrude its cross-section between each pair of Z levels."""
+def mesh_solid(path):
+    """Closed STL mesh -> OCC solid: sew the triangles into a shell, then merge coplanar faces."""
     m = trimesh.load(path)
-    zs = sorted(set(round(z, 4) for z in m.vertices[:, 2]))
-    solid = None
-    for z0, z1 in zip(zs, zs[1:]):
-        planar, to_3d = m.section([0, 0, 1], [0, 0, (z0 + z1) / 2]).to_2D()
-        for poly in planar.polygons_full:
-            def loop(coords):
-                pts = trimesh.transform_points([(x, y, 0) for x, y in list(coords)[:-1]], to_3d)
-                return cq.Wire.makePolygon([cq.Vector(x, y, z0) for x, y, _ in pts], close=True)
-            face = cq.Face.makeFromWires(loop(poly.exterior.coords), [loop(h.coords) for h in poly.interiors])
-            layer = cq.Solid.extrudeLinear(face, cq.Vector(0, 0, z1 - z0))
-            solid = layer if solid is None else solid.fuse(layer)
-    return solid.clean()
+    m.merge_vertices(digits_vertex=3)
+    sew = BRepBuilderAPI_Sewing(1e-3)
+    for tri in m.triangles[m.area_faces > 1e-6]:      # SketchUp leaves zero-area slivers at a corner
+        sew.Add(cq.Face.makeFromWires(cq.Wire.makePolygon([cq.Vector(*map(float, p)) for p in tri],
+                                                          close=True)).wrapped)
+    sew.Perform()
+    shell = cq.Shape.cast(sew.SewedShape())
+    return cq.Solid.makeSolid(shell if isinstance(shell, cq.Shell) else shell.Shells()[0]).clean().fix()
 
 
-src = layered_solid(SOURCE)
+src = mesh_solid(SOURCE)
 bb = src.BoundingBox()
-CRADLE_H = bb.zlen    # 8.26
+CRADLE_H = bb.zlen    # 10.76 at the raised pocket end
 
 # Rotate 180 deg about Z so the wide (pocket) end faces the hinge and the ring points away,
 # centre it on the hinge length, put its wide end BAR past the leaf line and its underside on Z = 0.
