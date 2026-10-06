@@ -27,6 +27,7 @@ cad/gantry_h1.step
 cad/gantry_on_plate.step
 # Cart model embeds 80/20 PARTcommunity CAD too — regenerate with cad/gantry_cart.py
 cad/gantry_cart.step
+cad/wheeled_cart.step
 
 # Python
 __pycache__/
