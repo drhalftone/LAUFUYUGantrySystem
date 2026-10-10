@@ -1,0 +1,17 @@
+# Qt / qmake build artifacts
+*.o
+*.obj
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+Makefile*
+*.pro.user*
+.qmake.stash
+debug/
+release/
+build*/
+_bc/
+*.exe
+*.dll
+*.app/

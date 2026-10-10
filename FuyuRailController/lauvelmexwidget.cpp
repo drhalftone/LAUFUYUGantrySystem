@@ -350,7 +350,7 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(int dims, QWidget *parent) : QWidget(
 /****************************************************************************************************************/
 /****************************************************************************************************************/
 /****************************************************************************************************************/
-LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent) : QWidget(parent), scanUserPathFlag(false), employSerpentineRasterFlag(false), controller(nullptr), progressDialog(nullptr)
+LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent, bool connectNow) : QWidget(parent), scanUserPathFlag(false), employSerpentineRasterFlag(false), controllerThread(nullptr), controller(nullptr), progressDialog(nullptr)
 {
     this->setLayout(new QVBoxLayout());
 #ifdef Q_OS_WIN
@@ -386,8 +386,9 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent)
         connect(controllerThread, SIGNAL(finished()), controller, SLOT(deleteLater()));
         connect(controller, SIGNAL(destroyed()), controllerThread, SLOT(deleteLater()));
         connect(controllerThread, SIGNAL(destroyed()), this, SLOT(onControllerDeleted()));
-        controller->moveToThread(controllerThread);
-        controllerThread->start();
+        if (connectNow) {
+            connectToController();
+        }
     }
     ((QVBoxLayout *)(this->layout()))->addStretch();
 
@@ -404,12 +405,32 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent)
 /****************************************************************************************************************/
 /****************************************************************************************************************/
 /****************************************************************************************************************/
+void LAUMultiVelmexWidget::connectToController()
+{
+    // STARTING THE THREAD RUNS LAUVelmexController::onStart(), WHICH OPENS THE FMC4030
+    if (controller && controllerThread && !controllerStartedFlag) {
+        controllerStartedFlag = true;
+        controller->moveToThread(controllerThread);
+        controllerThread->start();
+    }
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
 LAUMultiVelmexWidget::~LAUMultiVelmexWidget()
 {
-    if (controllerThread) {
+    if (controllerThread && controllerStartedFlag) {
         controllerThread->quit();
     } else if (controller) {
-        controller->deleteLater();
+        // NEVER CONNECTED: THE CONTROLLER AND ITS UNSTARTED THREAD STILL LIVE IN THIS THREAD, SO DELETE
+        // BOTH NOW RATHER THAN THROUGH deleteLater(), WHICH THE WAIT LOOP BELOW MIGHT NEVER PROCESS
+        disconnect(controller, SIGNAL(destroyed()), controllerThread, SLOT(deleteLater()));
+        delete controller;
+        controller = nullptr;
+        delete controllerThread;
+        controllerThread = nullptr;
+        controllerExistsFlag = false;
     }
 
     // WAIT UNTIL WE KNOW CONTROLLER AND CONTROLLER THREAD HAS BEEN DELETED BEFORE MOVING ON
@@ -2358,6 +2379,11 @@ bool LAUVelmexController::testConnection(const QString &ip, quint16 port, QStrin
 
 void LAUVelmexController::onStart()
 {
+    // RE-READ THE ADDRESS: THE CONNECT DIALOG MAY HAVE SAVED A NEW ONE SINCE THIS OBJECT WAS BUILT
+    QSettings settings;
+    ipAddress = settings.value(QString("LAUVelmexController::ipAddress"), ipAddress).toString();
+    portNumber = (quint16)settings.value(QString("LAUVelmexController::portNumber"), (int)portNumber).toInt();
+
     QByteArray ip = ipAddress.toLatin1();
     int rc = fmcOpen(deviceID, ip.constData(), (int)portNumber);
     if (rc != 0) {

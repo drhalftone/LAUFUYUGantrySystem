@@ -617,8 +617,16 @@ class LAUMultiVelmexWidget : public QWidget
 
 public:
     explicit LAUMultiVelmexWidget(int dims, QWidget *parent = nullptr);
-    explicit LAUMultiVelmexWidget(QList<int> channels, QWidget *parent = nullptr);
+    // connectNow = false BUILDS THE CONTROLS (DISABLED) WITHOUT TOUCHING THE NETWORK; CALL
+    // connectToController() LATER TO OPEN THE FMC4030 AT THE IP/PORT SAVED IN QSETTINGS
+    explicit LAUMultiVelmexWidget(QList<int> channels, QWidget *parent = nullptr, bool connectNow = true);
     ~LAUMultiVelmexWidget();
+
+    void connectToController();
+    bool isControllerStarted() const
+    {
+        return (controllerStartedFlag);
+    }
 
     bool isValid() const
     {
@@ -780,6 +788,7 @@ private:
     QList<QVector4D> scanUserPathPoints;
     QList<LAUVelmexWidget*> widgets;
     bool controllerExistsFlag = false;
+    bool controllerStartedFlag = false;
     QThread *controllerThread;
     LAUVelmexController *controller;
     QProgressDialog *progressDialog;

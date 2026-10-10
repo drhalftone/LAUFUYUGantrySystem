@@ -4,7 +4,10 @@ Breadboard (step_03679.step): 609.6 x 609.6 x 12.7 mm, 1/4-20 tapped holes on a 
 outer rows 12.7 mm in from the edges. Each leg's outer bottom T-slot (10 mm outboard of the
 rail centre line) sits over the breadboard's outermost hole row on its side, which fixes the
 leg spacing at 609.6 - 2 * (12.7 + 10) = 564.2 mm centre to centre. The beam is centred
-between the legs; the legs are centred on the board along their length.
+between the legs. Along their length the legs are slid toward the far (non-motor) end, +X, until the
+beam's widest part (its Y motor block, BEAM_OUTER from the beam centre line) is flush with the board's
++X edge at the +X end of the leg stroke: the camera mast stands just past that edge, so the beam must
+not overhang it. The legs' far ends then overhang the board slightly; the motor ends sit well inboard.
 
 Fasteners: the bottom T-slot is a 4.5 mm opening over an 8.2 x 4.0 mm cavity, which fits an
 M4 SHCS head (7.0 x 4.0) exactly, and an M4 shank passes through a 1/4-20 tapped hole
@@ -12,15 +15,16 @@ M4 SHCS head (7.0 x 4.0) exactly, and an M4 shank passes through a 1/4-20 tapped
 with a nut underneath.
 
 Run:  python gantry_on_plate.py [path\\to\\step_03679.step]
-  -> gantry_on_plate.step   (git-ignored: embeds the TraceParts FSK40 model)
+  -> gantry_on_plate.step/.glb   (git-ignored: embed the TraceParts FSK40 model)
 """
 import sys
 from pathlib import Path
 import cadquery as cq
 from fsk40_resize import (build_rails, h_gantry, base_length, LEG_STROKE, BEAM_STROKE, SRC_STROKE,
                           BASE_BOTTOM, BASE_X0, CENTRE_Z, CARRIAGE_TOP, PLATE_T)
-from carriage_chain import carriage_plate as hinge_plate, T as HINGE_T
+from carriage_chain import carriage_plate as hinge_plate, T as HINGE_T, mast_parts
 from xrite_i1_plate import chain_with_plate
+from camera_mount import camera_parts
 
 BOARD_SRC = sys.argv[1] if len(sys.argv) > 1 else str(Path.home() / "Downloads" / "step_03679.step")
 BOARD = 609.6         # square
@@ -30,7 +34,14 @@ EDGE = 12.7           # outer hole row from the board edge
 SLOT_OFFSET = 10.0    # bottom T-slots are +/- this from the rail centre line
 
 LEG_SPACING = BOARD - 2 * (EDGE + SLOT_OFFSET)
-SCREW_COLUMNS = (4, 12, 19)   # board hole columns (from the motor end) used on each leg
+SCREW_COLUMNS = (8, 16, 23)   # board hole columns (from the motor end) used on each leg
+BEAM_OUTER = 28.5             # beam's widest part (Y motor block) from its centre line, along X
+
+# Leg carriage (= beam centre line) at mid-stroke, in the TraceParts frame, as in fsk40_resize.h_gantry
+LEG_CARRIAGE_X = (579.18 + 644.18) / 2 - (SRC_STROKE - LEG_STROKE) / 2
+LEG_BASE_MID = BASE_X0 + base_length(LEG_STROKE) / 2
+# Gantry shift along X from centred on the board, putting the beam's +X edge on the board edge at +X stroke
+LEG_SHIFT = BOARD / 2 - LEG_STROKE / 2 - BEAM_OUTER - (LEG_CARRIAGE_X - LEG_BASE_MID)
 
 # M4 x 20 SHCS seated in the slot cavity (head bottom on the 1.5 mm lip), nut under the board
 LIP_TOP = BASE_BOTTOM + 1.5
@@ -56,9 +67,8 @@ if __name__ == "__main__":
 
     # Board frame: X 0..609.6, Z -609.6..0, top face Y = 12.7; first hole row at Z = -12.7.
     # Put its top on the table (rail base underside), its Z = -12.7 row under the left leg's
-    # outer slot, and centre the leg base extrusions along it.
-    leg_base_mid = BASE_X0 + base_length(LEG_STROKE) / 2
-    board_off = cq.Vector(leg_base_mid - BOARD / 2, BASE_BOTTOM - BOARD_T,
+    # outer slot, and the leg base extrusions LEG_SHIFT toward +X from centred along it.
+    board_off = cq.Vector(LEG_BASE_MID - BOARD / 2 - LEG_SHIFT, BASE_BOTTOM - BOARD_T,
                           (CENTRE_Z + SLOT_OFFSET) + EDGE)
 
     leg, beam = build_rails()
@@ -74,6 +84,8 @@ if __name__ == "__main__":
     links, screws, nuts, i1_plate = chain_with_plate(beam_top + HINGE_T / 2)
     chain = cq.Assembly(name="hinge_chain")
     chain.add(hinge_plate, name="carriage_hinge_plate", color=cq.Color(0.9, 0.47, 0.12))
+    for name, part, color in mast_parts(vendor=True) + camera_parts():   # 1010 mast in the plate's socket, Basler on top
+        chain.add(part, name=name, color=color)
     for i, link in enumerate(links):
         chain.add(link, name=f"link{i + 1}",
                   color=cq.Color(0.24, 0.47, 0.78) if i % 2 == 0 else cq.Color(0.3, 0.7, 0.45))
@@ -104,8 +116,12 @@ if __name__ == "__main__":
 
     out = here / "gantry_on_plate.step"
     flat.save(str(out))
+    flat.save(str(here / "gantry_on_plate.glb"))
     print(f"{out.name}: Z-up, breadboard X/Y 0..{BOARD}, top face Z = {BOARD_T}; "
           f"leg spacing {LEG_SPACING:.1f} mm centre to centre")
+    leg0 = BASE_X0 - board_off.x
+    print(f"  legs shifted {LEG_SHIFT:.1f} mm toward +X: bases X = {leg0:.1f}..{leg0 + base_length(LEG_STROKE):.1f}, "
+          f"beam centre X = {LEG_CARRIAGE_X - board_off.x:.1f} at mid-stroke")
     for side, z in slots.items():
         xs = ", ".join(f"{EDGE + k * PITCH:.1f}" for k in SCREW_COLUMNS)
         print(f"  {side} leg: M4 screws at Y = {board_off.z - z:.1f}, X = {xs}")
