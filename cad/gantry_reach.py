@@ -20,7 +20,7 @@ from fsk40_resize import LEG_STROKE, BEAM_STROKE
 
 BOARD, BOARD_TOP = 609.6, 12.7
 APERTURE_D = 9.8
-LEG_INNER = (42.7, 566.9)     # inside faces of the leg rail bases (Y), from gantry_on_plate.step
+LEG_INNER = (22.7, 586.9)     # inside faces of the leg rail bases (Y), from gantry_on_plate.step
 
 
 def find_plate(shape):
