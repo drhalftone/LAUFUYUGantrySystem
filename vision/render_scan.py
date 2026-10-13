@@ -53,15 +53,15 @@ def hole_xy(i, j):
 
 # ----------------------------------------------------------------------------------------- paper target
 class PaperTarget:
-    """A letter sheet (8.5 x 11 in) taped flat on the platen, printed with a 7 x 9 grid of 22 mm
-    patches (random grey levels: what a mono camera makes of a colour chart) and four black corner
-    marks. Pose: centre (board mm) and rotation (deg) of the sheet; its long side runs along Yb."""
+    """A letter sheet (8.5 x 11 in) taped flat on the platen, printed with a block of packed swatches
+    (random grey levels: what a mono camera makes of a colour chart), centred, no registration marks.
+    Default: 32 x 43 swatches of 6 mm, no gaps (192 x 258 mm, 11-12 mm margins).
+    Pose: centre (board mm) and rotation (deg) of the sheet; its long side runs along Yb."""
     W, L = 215.9, 279.4                       # sheet, along its own u (short) and v (long) axes
-    COLS, ROWS, PATCH, GAP = 7, 9, 22.0, 4.0
-    MARK, MARK_IN = 8.0, 8.0                  # corner marks: size, inset from the sheet corner
     PAPER, INK_MIN = 0.86, 0.04
 
-    def __init__(self, centre=(210.0, 305.0), angle=4.0, seed=3):
+    def __init__(self, centre=(162.0, 305.0), angle=1.5, seed=3, cols=32, rows=43, patch=6.0, gap=0.0):
+        self.COLS, self.ROWS, self.PATCH, self.GAP = cols, rows, patch, gap
         self.c = np.array(centre, float)
         a = np.deg2rad(angle)
         self.R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])   # sheet (u, v) -> board
@@ -87,10 +87,6 @@ class PaperTarget:
         inp = (on & (ci >= 0) & (ci < self.COLS) & (ri >= 0) & (ri < self.ROWS)
                & ((pu - ci) * (self.PATCH + self.GAP) < self.PATCH) & ((pv - ri) * (self.PATCH + self.GAP) < self.PATCH))
         out[inp] = self.levels[ri[inp], ci[inp]]
-        mu = self.W / 2 - self.MARK_IN - np.abs(u)
-        mv = self.L / 2 - self.MARK_IN - np.abs(v)
-        mark = on & (mu >= 0) & (mu < self.MARK) & (mv >= 0) & (mv < self.MARK)
-        out[mark] = self.INK_MIN
         return out
 
     def truth(self):
@@ -103,12 +99,14 @@ class PaperTarget:
                 v = self.v0 + r * (self.PATCH + self.GAP) + self.PATCH / 2
                 patches.append({"row": r, "col": c, "centre": to_b(u, v), "level": float(self.levels[r, c])})
         return {"size_mm": [self.W, self.L], "centre": self.c.tolist(), "angle_deg": self.angle,
-                "corners": corners, "patch_mm": self.PATCH, "patches": patches}
+                "corners": corners, "patch_mm": self.PATCH, "gap_mm": self.GAP, "cols": self.COLS, "rows": self.ROWS,
+                "patches": patches}
 
 
 # ----------------------------------------------------------------------------------------- scene
-def load_scene():
-    """Non-board triangles in glb coordinates, colours, and which carriage they ride on."""
+def load_scene(plate_grey=None):
+    """Non-board triangles in glb coordinates, colours, and which carriage they ride on.
+    plate_grey: paint the i1 plate this grey (e.g. 0.05 for black PLA) instead of its model colour."""
     s = trimesh.load(GLB)
     G = s.graph.to_networkx()
 
@@ -136,6 +134,8 @@ def load_scene():
         on_x = on_y or "beam" in anc or "plate_left" in anc or "plate_right" in anc or (leg and base in CARRIAGE)
         try:
             c = np.array(mesh.visual.material.baseColorFactor[:3]) / 255.0
+            if plate_grey is not None and base == "xrite_i1_plate":
+                c = np.full(3, plate_grey)
         except Exception:
             c = np.array([.7, .7, .7])
         t = trimesh.transform_points(mesh.vertices, T)[mesh.faces]
@@ -200,8 +200,77 @@ def brushed(px, pz):
 
 
 # ----------------------------------------------------------------------------------------- render
-def render(tris, cols, grp, front0, axis, dx, dy, undist_map, paper=None):
-    """One frame at carriage offset (dx, dy) mm. Returns 8-bit grey image, camera (R, t), z-buffer info."""
+class TriangleRaster:
+    """Which triangle covers each pixel of the pinhole canvas, drawn by VTK (OpenGL, offscreen): every
+    triangle is painted flat, unlit, in a colour that encodes its index. Depth and shading are then
+    worked out per pixel from that triangle, exactly as the CPU rasteriser does."""
+
+    def __init__(self, tris, grp, Wc, Hc, fp):
+        import vtk
+        from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
+        self.vtk, self.Wc, self.Hc = vtk, Wc, Hc
+        self.ren = vtk.vtkRenderer()
+        self.ren.SetBackground(0, 0, 0)
+        self.actors = []
+        for g in (0, 1, 2):                                       # static, X carriage, Y carriage
+            idx = np.nonzero(grp == g)[0]
+            pd = vtk.vtkPolyData()
+            pts = vtk.vtkPoints()
+            pts.SetData(numpy_to_vtk(np.ascontiguousarray(tris[idx].reshape(-1, 3), np.float64), deep=True))
+            pd.SetPoints(pts)
+            cells = np.c_[np.full(len(idx), 3), np.arange(3 * len(idx)).reshape(-1, 3)].astype(np.int64).ravel()
+            ca = vtk.vtkCellArray()
+            ca.SetCells(len(idx), numpy_to_vtkIdTypeArray(cells, deep=True))
+            pd.SetPolys(ca)
+            code = idx + 1                                        # 0 = no triangle
+            rgb = np.stack([code & 255, (code >> 8) & 255, (code >> 16) & 255], 1).astype(np.uint8)
+            sc = numpy_to_vtk(rgb, deep=True)
+            pd.GetCellData().SetScalars(sc)
+            m = vtk.vtkPolyDataMapper()
+            m.SetInputData(pd)
+            m.SetScalarModeToUseCellData()
+            m.SetColorModeToDirectScalars()
+            a = vtk.vtkActor()
+            a.SetMapper(m)
+            a.GetProperty().LightingOff()
+            a.GetProperty().SetInterpolationToFlat()
+            self.ren.AddActor(a)
+            self.actors.append(a)
+        self.win = vtk.vtkRenderWindow()
+        self.win.SetOffScreenRendering(1)
+        self.win.SetMultiSamples(0)
+        self.win.AddRenderer(self.ren)
+        self.win.SetSize(Wc, Hc)
+        cam = self.ren.GetActiveCamera()
+        cam.SetViewAngle(np.degrees(2 * np.arctan(Hc / 2 / fp)))
+
+    def ids(self, dx, dy, Cg, Rg):
+        """(Hc, Wc) triangle index per pixel, -1 where none."""
+        self.actors[1].SetPosition(dx, 0, 0)
+        self.actors[2].SetPosition(dx, 0, -dy)
+        cam = self.ren.GetActiveCamera()
+        cam.SetPosition(*Cg)
+        cam.SetFocalPoint(*(Cg + 100 * Rg[2]))
+        cam.SetViewUp(*(-Rg[1]))                                  # image y runs down
+        cam.SetClippingRange(5, 5000)
+        self.win.Render()
+        w2i = self.vtk.vtkWindowToImageFilter()
+        w2i.SetInput(self.win)
+        w2i.SetInputBufferTypeToRGB()
+        w2i.Update()
+        from vtk.util.numpy_support import vtk_to_numpy
+        a = vtk_to_numpy(w2i.GetOutput().GetPointData().GetScalars()).reshape(self.Hc, self.Wc, 3)[::-1]
+        a = a.astype(np.int32)
+        return a[..., 0] + (a[..., 1] << 8) + (a[..., 2] << 16) - 1
+
+
+def canvas():
+    return int(W * SS * (1 + 2 * MARGIN)), int(H * SS * (1 + 2 * MARGIN)), FX * SS
+
+
+def render(tris, cols, grp, front0, axis, dx, dy, undist_map, paper=None, raster=None):
+    """One frame at carriage offset (dx, dy) mm. Returns 8-bit grey image, camera (R, t), z-buffer info.
+    raster: a TriangleRaster for the gantry triangles (fast); None uses the CPU rasteriser."""
     shift = np.array([[0, 0, 0], [dx, 0, 0], [dx, 0, -dy]], float)
     Tw = tris + shift[grp][:, None, :]
     Cg = front0 + np.array([dx, 0, -dy])
@@ -212,21 +281,40 @@ def render(tris, cols, grp, front0, axis, dx, dy, undist_map, paper=None):
     cxc, cyc = Wc / 2, Hc / 2
 
     # --- triangles (everything but the board)
-    n = np.cross(Tw[:, 1] - Tw[:, 0], Tw[:, 2] - Tw[:, 0])
-    nl = np.linalg.norm(n, axis=1)
-    ok = nl > 1e-9
-    Tw, C, n = Tw[ok], cols[ok], n[ok] / nl[ok, None]
-    n[(n @ z) > 0] *= -1
-    P = (Tw - Cg) @ Rg.T
-    keep = (P[..., 2] > 5).all(1)
-    P, C, n = P[keep], C[keep], n[keep]
-    u = fp * P[..., 0] / P[..., 2] + cxc
-    v = fp * P[..., 1] / P[..., 2] + cyc
-    inb = ~((u.max(1) < 0) | (u.min(1) > Wc) | (v.max(1) < 0) | (v.min(1) > Hc))
-    u, v, P, C, n = u[inb], v[inb], P[inb], C[inb], n[inb]
-    zb = np.full((Hc, Wc), np.inf, np.float32)
-    tid = np.full((Hc, Wc), -1, np.int32)
-    for i in range(len(u)):
+    if raster is not None:                                        # GPU: which triangle covers each pixel
+        tid = raster.ids(dx, dy, Cg, Rg)
+        yy, xx = np.nonzero(tid >= 0)
+        used, inv = np.unique(tid[yy, xx], return_inverse=True)
+        Tu = Tw[used]
+        P = (Tu - Cg) @ Rg.T
+        nc = np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
+        dc = np.stack([(xx + 0.5 - cxc) / fp, (yy + 0.5 - cyc) / fp, np.ones(len(xx))], 1)
+        den = (nc[inv] * dc).sum(1)
+        num = (nc[inv] * P[inv, 0]).sum(1)
+        zb = np.full((Hc, Wc), np.inf, np.float32)
+        zb[yy, xx] = np.where(np.abs(den) > 1e-12, num / np.where(den == 0, 1, den), P[inv, 0, 2])
+        n = np.cross(Tu[:, 1] - Tu[:, 0], Tu[:, 2] - Tu[:, 0])
+        n /= np.maximum(np.linalg.norm(n, axis=1), 1e-12)[:, None]
+        n[(n @ z) > 0] *= -1
+        C = cols[used]
+        tid[yy, xx] = inv                                         # index into used / C / n
+        u = ()
+    else:
+        n = np.cross(Tw[:, 1] - Tw[:, 0], Tw[:, 2] - Tw[:, 0])
+        nl = np.linalg.norm(n, axis=1)
+        ok = nl > 1e-9
+        Tw, C, n = Tw[ok], cols[ok], n[ok] / nl[ok, None]
+        n[(n @ z) > 0] *= -1
+        P = (Tw - Cg) @ Rg.T
+        keep = (P[..., 2] > 5).all(1)
+        P, C, n = P[keep], C[keep], n[keep]
+        u = fp * P[..., 0] / P[..., 2] + cxc
+        v = fp * P[..., 1] / P[..., 2] + cyc
+        inb = ~((u.max(1) < 0) | (u.min(1) > Wc) | (v.max(1) < 0) | (v.min(1) > Hc))
+        u, v, P, C, n = u[inb], v[inb], P[inb], C[inb], n[inb]
+        zb = np.full((Hc, Wc), np.inf, np.float32)
+        tid = np.full((Hc, Wc), -1, np.int32)
+    for i in range(len(u)):                                       # CPU fallback: z-buffered rasteriser
         x0, x1 = int(max(np.floor(u[i].min()), 0)), int(min(np.ceil(u[i].max()), Wc - 1))
         y0, y1 = int(max(np.floor(v[i].min()), 0)), int(min(np.ceil(v[i].max()), Hc - 1))
         if x1 < x0 or y1 < y0:
@@ -367,15 +455,21 @@ if __name__ == "__main__":
     ap.add_argument("--xs", help="carriage X positions, mm, comma separated (overrides --step/--n)")
     ap.add_argument("--ys", help="carriage Y positions, mm, comma separated")
     ap.add_argument("--paper", action="store_true", help="tape the letter-size test target to the platen")
+    ap.add_argument("--blank-at", help="X,Y (board mm): a blank white letter sheet centred here instead of the target")
+    ap.add_argument("--black-plate", action="store_true", help="i1 plate in black PLA")
+    ap.add_argument("--cpu", action="store_true", help="draw the gantry on the CPU (slow) instead of with VTK")
     a = ap.parse_args()
     out = HERE / a.out
     out.mkdir(exist_ok=True)
-    tris, cols, grp, front0, axis = load_scene()
+    tris, cols, grp, front0, axis = load_scene(0.05 if a.black_plate else None)
     umap = undistort_map()
+    raster = None if a.cpu else TriangleRaster(tris, grp, *canvas())
     offs = (np.arange(a.n) - (a.n - 1) / 2) * a.step
     xs = [float(v) for v in a.xs.split(",")] if a.xs else offs
     ys = [float(v) for v in a.ys.split(",")] if a.ys else offs
     paper = PaperTarget() if a.paper else None
+    if a.blank_at:
+        paper = PaperTarget(tuple(float(v) for v in a.blank_at.split(",")), 0.0, cols=0, rows=0)
     R0, t0 = board_pose(camera_axes(axis), front0)
     header = {"image_size": [W, H], "pixel_mm": PIX, "focal_mm": F_MM,
               "true_K": K.tolist(), "true_dist": DIST.tolist(),
@@ -392,7 +486,7 @@ if __name__ == "__main__":
         if name in done and (out / name).exists():
             frames.append(done[name])
             continue
-        img, occ, Rg, Cg = render(tris, cols, grp, front0, axis, dx, dy, umap, paper)
+        img, occ, Rg, Cg = render(tris, cols, grp, front0, axis, dx, dy, umap, paper, raster)
         R, t = board_pose(Rg, Cg)
         cv2.imwrite(str(out / name), sensor(img, k))
         holes = true_holes(R, t, occ, paper)

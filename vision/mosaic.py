@@ -35,7 +35,8 @@ def load_calibration(folder):
 def ideal_sheet(paper, mm, n):
     """The sheet as it truly lies on the platen, ortho, same grid as the mosaic (NaN off the sheet)."""
     from render_scan import PaperTarget
-    p = PaperTarget(paper["centre"], paper["angle_deg"])
+    p = PaperTarget(paper["centre"], paper["angle_deg"], cols=paper.get("cols", 7), rows=paper.get("rows", 9),
+                    patch=paper["patch_mm"], gap=paper.get("gap_mm", 4.0))
     gy, gx = np.mgrid[0:n, 0:n].astype(np.float32)
     return p.albedo((gx + 0.5) * mm, (gy + 0.5) * mm)
 
