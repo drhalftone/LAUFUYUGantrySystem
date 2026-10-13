@@ -13,9 +13,8 @@ from matplotlib.patches import Rectangle, Polygon
 
 HERE = Path(__file__).parent
 LEG_STROKE, BEAM_STROKE = 310.0, 610.0
-X_MIN = -133.0                       # leg travel below this pushes the i1 plate off the platen's -X edge
-Y_LIM = (54.7 - 326.3, 554.9 - 326.3)  # beam travel where the plate clears the rail bases (cad/gantry_reach.py)
-RAIL_Y, RAIL_X = (2.7, 606.9), (100.6, 609.6)   # rail centre lines and motor-to-end-plate extent (gantry_on_plate.py)
+from aperture import RAIL_X, RAIL_Y
+RAILS_AT_Y, RAILS_X = (2.7, 606.9), (100.6, 609.6)   # rail centre lines and motor-to-end-plate extent (gantry_on_plate.py)
 
 ap_ = argparse.ArgumentParser()
 ap_.add_argument("scan", nargs="?", default="scan_paper15")
@@ -28,7 +27,7 @@ mos = cv2.imread(str(out / "platen_mosaic.png"), 0)
 sw = json.load(open(out / "swatches.json"))
 ap = json.load(open(HERE / a.aperture / "out" / "aperture.json")); A0 = np.array(ap["A0_mm"])
 ex, ey = np.array(ap["ex"])[:2], np.array(ap["ey"])[:2]
-XL, YL = (X_MIN, LEG_STROKE / 2), Y_LIM
+XL, YL = RAIL_X, RAIL_Y
 hx, hy = LEG_STROKE / 2, BEAM_STROKE / 2
 reach = np.array([A0 + x * ex + y * ey for x, y in ((XL[0], YL[0]), (XL[1], YL[0]), (XL[1], YL[1]), (XL[0], YL[1]))])
 full = np.array([A0 + x * ex + y * ey for x, y in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy))])
@@ -45,8 +44,8 @@ for k, c in enumerate(cs):
         p = (c.reshape(-1, 2) + 0.5) * MM
         ax.add_patch(Polygon(p, fill=False, ec="#33d0ff", lw=1.8, label="seen by the camera (15 frames)" if k == 0 else None))
 ax.add_patch(Rectangle((0, 0), 609.6, 609.6, fill=False, ec="w", lw=1.2, ls=":", label="platen edge"))
-for yc in RAIL_Y:
-    ax.add_patch(Rectangle((RAIL_X[0], yc - 20), RAIL_X[1] - RAIL_X[0], 40, fc="#8d8f94", ec="#55575c", alpha=0.6,
+for yc in RAILS_AT_Y:
+    ax.add_patch(Rectangle((RAILS_X[0], yc - 20), RAILS_X[1] - RAILS_X[0], 40, fc="#8d8f94", ec="#55575c", alpha=0.6,
                            label="X rails" if yc < 10 else None))
 ax.add_patch(Polygon(full, fill=False, ec="#ff9f1c", lw=1.5, ls="--", label="i1 aperture, full motor travel"))
 ax.add_patch(Polygon(reach, fill=False, ec="#ffd21f", lw=2.5, label="i1 aperture, usable (plate on platen, clear of rails)"))

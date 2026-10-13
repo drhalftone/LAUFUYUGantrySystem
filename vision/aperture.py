@@ -58,6 +58,14 @@ def cad_aperture():
     return c, r, h
 
 
+# Rail travel the i1 can use, in the scans' carriage coordinates (here mm from mid-stroke, as simulated):
+# below X -133 the plate leaves the platen's -X edge; outside Y the plate meets the rail bases
+# (cad/gantry_on_plate.py, cad/gantry_reach.py). On the real gantry, record carriage positions as the Qt
+# app's slider mm and set these to that app's soft limits.
+RAIL_X = (-133.0, 155.0)
+RAIL_Y = (54.7 - 326.3, 554.9 - 326.3)
+
+
 def rail_for(P, A0, ex, ey):
     """Rail position (x, y) mm from home that puts the aperture on platen point P (board mm)."""
     return np.linalg.solve(np.c_[ex[:2], ey[:2]], np.asarray(P, float) - A0)
