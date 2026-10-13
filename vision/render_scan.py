@@ -35,7 +35,7 @@ GLB = HERE.parent / "cad" / "gantry_on_plate.glb"
 W, H, PIX, F_MM = 1920, 1200, 3.45e-3, 6.0
 FX = F_MM / PIX
 K = np.array([[FX, 0, W / 2], [0, FX, H / 2], [0, 0, 1]])
-DIST = np.array([-0.08, 0.02, 0.0, 0.0, 0.0])        # k1 k2 p1 p2 k3: mild barrel, ~20 px at the corners
+DIST = np.array([-0.08, 0.02, 0.0, 0.0, 0.0])        # k1 k2 p1 p2 k3: mild barrel, ~37 px at the corners
 SS, MARGIN = 2, 0.06                                  # supersampling; extra pinhole canvas for the distortion
 
 BOARD, BOARD_T, PITCH, EDGE, NHOLE = 609.6, 12.7, 25.4, 12.7, 24
