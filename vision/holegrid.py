@@ -304,7 +304,9 @@ class IndexedHoles:
     symmetry: int
 
 
-def index_lattice(lat, cam, x, y):
+def index_lattice(lat, cam, x, y, clip=True):
+    """clip: drop holes the indexing puts off the board (False keeps them: for priors whose board origin
+    is not yet known, scan_map.bootstrap_prior)."""
     prior = cam.to_board(lat.uv, x, y)
     f = (prior - EDGE) / PITCH                                  # fractional board indices
     best = None
@@ -317,7 +319,7 @@ def index_lattice(lat, cam, x, y):
         if best is None or (agree, -resid) > (best[0], -best[1]):
             best = (agree, resid, s, IJ)
     agree, _, s, IJ = best
-    on_board = np.all((IJ >= 0) & (IJ < NHOLE), axis=1)
+    on_board = np.all((IJ >= 0) & (IJ < NHOLE), axis=1) if clip else np.ones(len(IJ), bool)
     off_mm = ((EDGE + PITCH * IJ) - prior).mean(0)
     return IndexedHoles(IJ[on_board].astype(int), lat.uv[on_board], float(agree), off_mm, s)
 

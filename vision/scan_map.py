@@ -1,8 +1,10 @@
 """Scan -> holes -> camera calibration -> board map, with the carriage position as the only pose input.
 
 For each frame (image + carriage (x, y) from the FUYU controller):
-  1. holegrid.find_board_holes: detect holes, fit the grid, label every hole with its absolute
-     board index (I, J) using a nominal camera model (from CAD: only has to be good to ~half a pitch).
+  1. holegrid: detect holes, fit the grid (detect_holes, grow_lattice), label every hole with its absolute
+     board index (I, J) using a nominal camera model (only has to be good to ~half a pitch). A synthetic
+     scan's nominal camera is its CAD pose, deliberately put off; a real scan's comes from the scan itself
+     (bootstrap_prior), since the printed bracket and the slider's zero are not known to half a pitch.
 Over the whole scan:
   2. Self-calibration: the board is a 24 x 24 grid of known points, so the labelled holes from every
      frame calibrate the camera (focal length, distortion) and give each frame's pose. All frames share
@@ -17,7 +19,13 @@ Over the whole scan:
      own carriage-fixed clutter (i1 cradle and chain, which sit at the same pixels in every frame) is
      masked out, and frames are blended favouring the closest (sharpest) view.
 
-Run:  python scan_map.py [scan] [--prior-error 1.0]
+Real scans (grab.py): carriage positions are the Qt app's slider mm. The board frame's X and Y are taken
+to increase with the slider's x and y (homed at the motor ends); if an axis was homed the other way, pass
+--axes -x,+y (etc.). Check on the live view (grab.py --live): jogging +x moves the camera away from where it
+looks, so the board slides up the image; jogging +y slides it left. Step the carriage by amounts that are not
+multiples of 12.7 mm (half a pitch): a wrong sign then shows as a scale error in step 3 rather than not at all.
+
+Run:  python scan_map.py [scan] [--prior-error 1.0] [--bootstrap] [--axes +x,+y] [--first-hole I,J]
   -> scan/out/: report.txt, holes.json, det_<frame>.png, mask.png, board_map.png, board_map_grid.png,
      and for later scans at the same positions (mosaic.py): calibration.json, mask.png, flat.npy
 """
@@ -27,9 +35,15 @@ import numpy as np, cv2
 from scipy.spatial import cKDTree
 import holegrid as hg
 from holegrid import PITCH, EDGE, NHOLE
+from camera import R_CAD, F_MM, nominal_K
 
 MAP_MM = 0.25
 BOARD = 609.6
+# hole diameters (px) detect_holes' defaults were tuned for, at the focal length (px) they were tuned at:
+# the 6 mm lens on 3.45 um pixels. Hole size scales with the focal length in pixels.
+HOLE_D_PX, HOLE_D_F = (10.0, 70.0), 6.0 / 3.45e-3
+CALIB_FLAGS = (cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_ASPECT_RATIO
+               | cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3)
 
 
 def rot(axis, deg):
@@ -48,6 +62,66 @@ def nominal_camera(d, err=1.0):
     R = rot([1, 0, 0], 0.8 * err) @ rot([0, 0, 1], 0.6 * err) @ R0
     C = C0 + err * np.array([3.0, -3.0, 4.0])
     return hg.CameraModel(K, np.zeros(5), R, -R @ C)
+
+
+def bootstrap_prior(frames, lats, K0, size, axes=(1, 1), first_hole=None):
+    """Nominal camera for a real scan, from the scan itself: no CAD pose is needed beyond which way the
+    camera faces (camera.R_CAD, to 45 deg).
+    1. The frame with the most holes calibrates the camera against its own lattice: K, dist and its pose
+       in lattice coordinates (indices relative to an arbitrary hole, in one of the lattice's 8 symmetries).
+    2. Of the symmetries that leave the camera above a right-handed board, the one whose camera
+       orientation is closest to the bracket's sets the board axes.
+    3. Every frame is indexed with that camera moved by the carriage (axes: signs of the slider's x, y
+       along board X, Y; the slider mm are taken at face value, so a frame indexes right if the move is
+       good to half a pitch).
+    4. The board origin: when the scan reaches the board's edges the holes seen span it, so the lowest
+       index is hole 0. Otherwise first_hole gives the board index of the lowest hole seen.
+    Returns the prior camera, the indexed holes per frame, and notes for the report."""
+    r = max(range(len(lats)), key=lambda k: len(lats[k].ij))
+    lat, (xr, yr) = lats[r], frames[r]["carriage_mm"]
+    obj = np.c_[PITCH * lat.ij, np.zeros(len(lat.ij))].astype(np.float32)
+    rms, K, dist, rv, tv = cv2.calibrateCamera([obj], [lat.uv.astype(np.float32)], size, K0.copy(), np.zeros(5),
+                                               flags=CALIB_FLAGS)
+    RL = cv2.Rodrigues(rv[0])[0]
+    CL = -RL.T @ tv[0].ravel()
+    ex, ey = np.array([axes[0], 0.0, 0.0]), np.array([0.0, axes[1], 0.0])
+    cands = []
+    for D in hg.SYMMETRIES:
+        det = round(np.linalg.det(D))
+        if det * CL[2] <= 0:
+            continue
+        A = np.eye(3)
+        A[:2, :2], A[2, 2] = D, det
+        Rb = RL @ A.T                                 # board point P = A p_lattice + (EDGE, EDGE, 0)
+        off_cad = np.rad2deg(np.linalg.norm(cv2.Rodrigues(Rb @ R_CAD.T)[0]))
+        cands.append((off_cad, Rb, A @ CL + [EDGE, EDGE, 0]))
+    off_cad, Rb, Cb = min(cands, key=lambda c: c[0])
+    C0 = Cb - xr * ex - yr * ey
+    cam = hg.CameraModel(K, dist, Rb, -Rb @ C0, ex, ey)
+    idxs = [hg.index_lattice(l, cam, *f["carriage_mm"], clip=False) for l, f in zip(lats, frames)]
+    allIJ = np.concatenate([i.IJ for i in idxs])
+    lo, hi = allIJ.min(0), allIJ.max(0)
+    span = hi - lo + 1
+    notes = [f"  reference frame {frames[r]['file']}: {len(lat.ij)} holes, lattice calibration RMS {rms:.2f} px, "
+             f"focal {K[0, 0]:.0f} px, k1 {dist[0]:+.3f} k2 {dist[1]:+.3f}",
+             f"  board orientation from the bracket: camera {off_cad:.1f} deg from the CAD orientation"
+             + ("  ** over 20 deg: is the camera rolled on its bracket? **" if off_cad > 20 else ""),
+             f"  holes seen span {span[0]} x {span[1]} of {NHOLE} x {NHOLE}"]
+    if first_hole is not None:
+        lo = lo - np.array(first_hole)
+    elif np.any(span < NHOLE):
+        notes.append("  ** the scan does not reach both board edges along "
+                     + " and ".join(n for n, s_ in zip("XY", span) if s_ < NHOLE)
+                     + ": the lowest hole seen is taken as hole 0 (override with --first-hole) **")
+    if np.any(span > NHOLE):
+        notes.append(f"  ** the holes span more than the board: frames are mis-indexed -- check the slider "
+                     f"positions and --axes **")
+    for i in idxs:
+        i.IJ = i.IJ - lo
+        keep = np.all((i.IJ >= 0) & (i.IJ < NHOLE), axis=1)
+        i.IJ, i.uv = i.IJ[keep], i.uv[keep]
+    C0 = C0 - np.r_[PITCH * lo, 0]
+    return hg.CameraModel(K, dist, Rb, -Rb @ C0, ex, ey), idxs, notes
 
 
 def score(frame, idx):
@@ -86,9 +160,7 @@ def draw_fiducials(g, det, idx, f):
 def calibrate(frames, holes, K0, size):
     obj = [np.c_[EDGE + PITCH * h.IJ, np.zeros(len(h.IJ))].astype(np.float32) for h in holes]
     img = [h.uv.astype(np.float32) for h in holes]
-    flags = (cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_ASPECT_RATIO
-             | cv2.CALIB_ZERO_TANGENT_DIST | cv2.CALIB_FIX_K3)
-    rms, K, dist, rv, tv = cv2.calibrateCamera(obj, img, size, K0.copy(), np.zeros(5), flags=flags)
+    rms, K, dist, rv, tv = cv2.calibrateCamera(obj, img, size, K0.copy(), np.zeros(5), flags=CALIB_FLAGS)
     Rs = [cv2.Rodrigues(r)[0] for r in rv]
     ts = [t.ravel() for t in tv]
     return rms, K, dist.ravel(), Rs, ts
@@ -190,26 +262,44 @@ def board_map(frames, grays, cam, mask, Rs, ts, prep=flat):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("scan", nargs="?", default="scan")
-    ap.add_argument("--prior-error", type=float, default=1.0, help="scale of the nominal camera's error")
+    ap.add_argument("--prior-error", type=float, default=1.0, help="scale of the nominal camera's error (synthetic scans)")
+    ap.add_argument("--bootstrap", action="store_true", help="prior from the scan itself, even for a synthetic scan")
+    ap.add_argument("--axes", default="+x,+y", help="signs of the slider's x, y along board X, Y (real scans)")
+    ap.add_argument("--first-hole", help="I,J: board index of the lowest hole seen, when the scan misses a board edge")
     a = ap.parse_args()
     folder = Path(__file__).parent / a.scan
     out = folder / "out"
     out.mkdir(exist_ok=True)
     d = json.load(open(folder / "scan.json"))
     W, H = d["image_size"]
-    frames = d["frames"]
-    prior = nominal_camera(d, a.prior_error)
+    K0 = nominal_K(d.get("focal_mm", F_MM), d["pixel_mm"], (W, H))
+    hole_px = {"min_d": HOLE_D_PX[0] * K0[0, 0] / HOLE_D_F, "max_d": HOLE_D_PX[1] * K0[0, 0] / HOLE_D_F}
     lines = []
     log = lambda s="": (print(s), lines.append(s))
 
     # 1. holes in every frame
-    grays, holes = [], []
-    log(f"1. Hole filter, nominal camera prior (error scale {a.prior_error:g})")
-    for f in frames:
+    grays, dets, lats, frames = [], [], [], []
+    for f in d["frames"]:
         g = cv2.imread(str(folder / f["file"]), 0)
-        det, lat, idx = hg.find_board_holes(g, prior, *f["carriage_mm"])
-        grays.append(g)
-        holes.append(idx)
+        det = hg.detect_holes(g, **hole_px)
+        lat = hg.grow_lattice(det.centers, image_size=g.shape[::-1], shapes=(det.axes, det.angles))
+        if lat is None:
+            log(f"  {f['file']}: no hole grid ({len(det.centers)} hole-like blobs), frame skipped")
+            continue
+        grays.append(g), dets.append(det), lats.append(lat), frames.append(f)
+    if "camera_at_home" in d and not a.bootstrap:
+        prior = nominal_camera(d, a.prior_error)
+        holes = [hg.index_lattice(l, prior, *f["carriage_mm"]) for l, f in zip(lats, frames)]
+        log(f"1. Hole filter, nominal camera prior (error scale {a.prior_error:g})")
+    else:
+        sx, sy = (-1 if v.strip().startswith("-") else 1 for v in a.axes.split(","))
+        first = [int(v) for v in a.first_hole.split(",")] if a.first_hole else None
+        prior, holes, notes = bootstrap_prior(frames, lats, K0, (W, H), (sx, sy), first)
+        log(f"1. Hole filter (hole diameters {hole_px['min_d']:.0f}..{hole_px['max_d']:.0f} px), "
+            f"prior from the scan itself")
+        for n in notes:
+            log(n)
+    for f, g, det, idx in zip(frames, grays, dets, holes):
         s = score(f, idx) if "true_holes" in f else None
         msg = (f"  {f['file']}  carriage ({f['carriage_mm'][0]:+5.0f},{f['carriage_mm'][1]:+5.0f}) mm: "
                f"{len(idx.IJ):3d} holes, prior agrees {idx.agree:.0%}, prior off by "
@@ -244,6 +334,11 @@ if __name__ == "__main__":
     log(f"  ex = ({ex[0]:+.4f}, {ex[1]:+.4f}, {ex[2]:+.4f})  scale {np.linalg.norm(ex):.4f}, {ang(ex, [1, 0, 0]):.3f} deg off board X")
     log(f"  ey = ({ey[0]:+.4f}, {ey[1]:+.4f}, {ey[2]:+.4f})  scale {np.linalg.norm(ey):.4f}, {ang(ey, [0, 1, 0]):.3f} deg off board Y")
     log(f"  X-Y squareness {90 - ang(ex, ey):+.3f} deg; centre fit residual RMS {np.sqrt((resid ** 2).sum(1).mean()):.3f} mm")
+    for n, e in (("X", ex), ("Y", ey)):
+        # an axis indexed with the wrong sign still fits, each move snapped to whole pitches: only its scale shows it
+        if abs(np.linalg.norm(e) - 1) > 0.005:
+            log(f"  ** {n} scale is {np.linalg.norm(e):.4f} board mm per slider mm: the slider's {n.lower()} runs the "
+                f"other way (--axes), or its mm are off (FuyuRailController/tools/fmc_set_scale.py) **")
     if "camera_at_home" in d:
         Rt, tt = np.array(d["camera_at_home"]["R"]), np.array(d["camera_at_home"]["t"])
         log(f"  truth: camera centre at home {(-Rt.T @ tt).round(2).tolist()}, fitted {C0.round(2).tolist()}")

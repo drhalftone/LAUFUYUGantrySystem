@@ -9,7 +9,7 @@ Scene: cad/gantry_on_plate.glb (Y-up; breadboard top at y = 12.7, board x 0..609
   r 3.19 mm at the top, 45 deg chamfer to r 2.55 mm, through the 12.7 mm board, on the 25.4 mm grid
   starting 12.7 mm from the edges (measured from the board mesh). Matte brushed-aluminium top.
 - Everything else (cradle, chain, rails, ...): z-buffered triangles from the GLB.
-- Camera: 6 mm lens on an a2A1920 (1920 x 1200, 3.45 um), with barrel distortion, vignetting, defocus,
+- Camera: 6 mm lens on the acA1920-150um (camera.py: 1920 x 1200, 5.86 um), with barrel distortion, vignetting, defocus,
   and shot/read noise, saved as 8-bit grey PNGs.
 
 Board frame (used for everything downstream): origin at the board's corner on its top face,
@@ -28,15 +28,19 @@ Run:  python render_scan.py [--step 120] [--n 3] [--out scan]
 import argparse, json, re
 from pathlib import Path
 import numpy as np, trimesh, cv2
+from camera import W, H, PIX, F_MM, nominal_K
 
 HERE = Path(__file__).parent
 GLB = HERE.parent / "cad" / "gantry_on_plate.glb"
 
-W, H, PIX, F_MM = 1920, 1200, 3.45e-3, 6.0
-FX = F_MM / PIX
-K = np.array([[FX, 0, W / 2], [0, FX, H / 2], [0, 0, 1]])
-DIST = np.array([-0.08, 0.02, 0.0, 0.0, 0.0])        # k1 k2 p1 p2 k3: mild barrel, ~37 px at the corners
-SS, MARGIN = 2, 0.06                                  # supersampling; extra pinhole canvas for the distortion
+K = nominal_K()
+FX = K[0, 0]
+DIST = np.array([-0.08, 0.02, 0.0, 0.0, 0.0])        # k1 k2 p1 p2 k3: barrel, ~90 px at the corners
+SS = 2                                                # supersampling
+# extra pinhole canvas around the image: barrel distortion pulls in what lies outside the pinhole frame
+_corner = cv2.undistortPointsIter(np.array([[[0.0, 0.0]]]), K, DIST, None, None,
+                                  (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, 1e-10)).ravel() * FX
+MARGIN = float(max(-_corner[0] / (W / 2), -_corner[1] / (H / 2)) - 1 + 0.01)
 
 BOARD, BOARD_T, PITCH, EDGE, NHOLE = 609.6, 12.7, 25.4, 12.7, 24
 R_TOP, R_IN = 3.19, 2.55
@@ -408,7 +412,7 @@ def undistort_map():
     """For each supersampled distorted pixel, its position on the enlarged pinhole canvas."""
     gy, gx = np.mgrid[0:H * SS, 0:W * SS].astype(np.float32)
     pts = np.stack([(gx + 0.5) / SS - 0.5, (gy + 0.5) / SS - 0.5], -1).reshape(-1, 1, 2)
-    und = cv2.undistortPoints(pts, K, DIST, None, None, None,
+    und = cv2.undistortPointsIter(pts, K, DIST, None, None,
                                   (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 20, 1e-6)).reshape(H * SS, W * SS, 2)
     Wc, Hc = W * SS * (1 + 2 * MARGIN), H * SS * (1 + 2 * MARGIN)
     mx = (und[..., 0] * FX * SS + Wc / 2 - 0.5).astype(np.float32)

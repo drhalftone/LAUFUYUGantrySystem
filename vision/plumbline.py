@@ -20,8 +20,7 @@ import numpy as np, cv2
 from scipy.optimize import least_squares
 
 HERE = Path(__file__).parent
-PIX = 3.45e-3
-W, H = 1920, 1200
+from camera import W, H, PIX          # replaced by the scan's own image size and pixel pitch below
 
 
 def lines_of(holes, min_pts=4):
@@ -37,8 +36,8 @@ def lines_of(holes, min_pts=4):
 
 
 def undistort(uv, K, dist):
-    n = cv2.undistortPoints(uv.reshape(-1, 1, 2), K, dist,
-                            criteria=(cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, 1e-10)).reshape(-1, 2)
+    n = cv2.undistortPointsIter(uv.reshape(-1, 1, 2), K, dist, None, None,
+                                (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, 1e-10)).reshape(-1, 2)
     return n * [K[0, 0], K[1, 1]] + K[:2, 2]                     # back to pixels, distortion-free
 
 
@@ -78,6 +77,9 @@ if __name__ == "__main__":
     a = ap.parse_args()
     folder = HERE / a.scan
     out = folder / "out"
+    scan = json.load(open(folder / "scan.json"))
+    W, H = scan["image_size"]
+    PIX = scan["pixel_mm"]
     f = a.f_mm / PIX
     holes = json.load(open(out / "holes.json"))
     frames = [(np.array([h[2:] for h in fr["holes"]], np.float64), lines_of(fr["holes"])) for fr in holes]

@@ -36,3 +36,5 @@ __pycache__/
 
 # Synthetic scans and their outputs - regenerate with vision/render_scan.py and vision/scan_map.py
 vision/scan*/
+vision/snaps/
+vision/persist.json
