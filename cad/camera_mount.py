@@ -26,6 +26,7 @@ carriage-plate frame of carriage_chain.py, so it drops into the same assemblies 
 
 Run:  python camera_mount.py
   -> camera_mount.step/.stl            the printed bracket (as installed; print it on its side, the 7 flat)
+  -> camera_mount_print.stl            the bracket laid for printing: camera seat face down on the bed
   -> camera_mount_assembly.step/.glb   carriage plate + mast + bracket + camera placeholder + i1 chain
 """
 import math
@@ -232,6 +233,18 @@ def holes_whole(margin=1.0):
     return out
 
 
+def print_pose():
+    """The bracket with the bar's top (the camera seat) face down on the bed at Z = 0, the bar along +X."""
+    def world(p):
+        v = cq.Vertex.makeVertex(*p).moved(TOP_LOC)
+        return cq.Vector(v.X, v.Y, v.Z)
+    o = world((0, 0, 0))
+    n = (world((0, *N)) - o).normalized()
+    d = (world((0, *D)) - o).normalized()
+    bed = cq.Location(cq.Plane(origin=world((0, *F)), xDir=d, normal=-n))
+    return cq.Workplane().add(mount.val().moved(bed.inverse))
+
+
 def camera_parts():
     """[(name, Workplane, Color)] for assemblies: the printed plate, camera, lens and the screws."""
     cam, lens = camera_placeholder()
@@ -275,6 +288,7 @@ if __name__ == "__main__":
 
     cq.exporters.export(mount, str(here / "camera_mount.step"))
     cq.exporters.export(mount, str(here / "camera_mount.stl"), tolerance=0.01, angularTolerance=0.1)
+    cq.exporters.export(print_pose(), str(here / "camera_mount_print.stl"), tolerance=0.01, angularTolerance=0.1)
 
     assy = cq.Assembly().add(cc.carriage_plate, name="carriage_plate", color=cq.Color(0.9, 0.47, 0.12))
     for name, part, color in cc.mast_parts() + camera_parts():
@@ -284,4 +298,4 @@ if __name__ == "__main__":
     assy.add(i1, name="xrite_i1_plate", color=cq.Color(0.85, 0.85, 0.2))
     assy.save(str(here / "camera_mount_assembly.step"))
     assy.save(str(here / "camera_mount_assembly.glb"))
-    print("wrote camera_mount.step/.stl and camera_mount_assembly.step/.glb")
+    print("wrote camera_mount.step/.stl, camera_mount_print.stl and camera_mount_assembly.step/.glb")
