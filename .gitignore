@@ -30,6 +30,8 @@ cad/gantry_on_plate.glb
 # Cart model embeds 80/20 PARTcommunity CAD too — regenerate with cad/gantry_cart.py
 cad/gantry_cart.step
 cad/wheeled_cart.step
+# Camera mount fit check with Basler's camera STEP (not redistributed) — regenerate with cad/camera_mount.py
+cad/camera_mount_assembly_basler.step
 
 # Python
 __pycache__/

@@ -44,7 +44,7 @@ MARGIN = float(max(-_corner[0] / (W / 2), -_corner[1] / (H / 2)) - 1 + 0.01)
 
 BOARD, BOARD_T, PITCH, EDGE, NHOLE = 609.6, 12.7, 25.4, 12.7, 24
 R_TOP, R_IN = 3.19, 2.55
-SKIP = {"lens_placeholder", "basler_ace2_placeholder", "camera_bracket", "camera_m3"}
+SKIP = {"lens_placeholder", "basler_ace_placeholder", "camera_bracket", "camera_m3"}
 CARRIAGE = {"NAUO2", "NAUO5", "NAUO6"} | {f"NAUO{i}" for i in range(21, 31)}   # fsk40_resize.CARRIAGE
 
 # glb (x, y, z) -> board (Xb, Yb, Zb):  Xb = x, Yb = -z, Zb = y - 12.7
@@ -128,7 +128,7 @@ def load_scene(plate_grey=None):
         T, g = s.graph[node]
         base = re.sub(r'_\d+$', '', g)
         mesh = s.geometry[g]
-        if base in ("lens_placeholder", "basler_ace2_placeholder"):
+        if base in ("lens_placeholder", "basler_ace_placeholder"):
             cam.setdefault(base, []).append(trimesh.transform_points(mesh.vertices, T))
         if base in SKIP or base == "breadboard_24x24":
             continue
@@ -147,7 +147,7 @@ def load_scene(plate_grey=None):
         cols.append(np.tile(c, (len(t), 1)))
         grp.append(np.full(len(t), 2 if on_y else 1 if on_x else 0))
     lens = np.concatenate(cam["lens_placeholder"])
-    body = np.concatenate(cam["basler_ace2_placeholder"])
+    body = np.concatenate(cam["basler_ace_placeholder"])
     axis = lens.mean(0) - body.mean(0)
     axis /= np.linalg.norm(axis)
     front = lens.mean(0) + axis * ((lens - lens.mean(0)) @ axis).max()   # pinhole at the lens front

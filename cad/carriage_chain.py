@@ -37,7 +37,7 @@ CLEAR_D, CBORE_D, CBORE_DEPTH = 4.5, 8.0, 5.0   # M4 x 12 SHCS into the carriage
 # plate's leaf runs on past the carriage's -Y edge to carry it. The cup is tilted MAST_TILT from
 # vertical so the 1010 leans back over the carriage toward the hinge side, high enough over the
 # carriage screws for an L-key to reach them under it. A solid wedge fills between the tilted cup and
-# the plate. The 1010 seats on the cup floor and is clamped by 1/4-20 x 1/2 BHSCS + economy T-nuts
+# the plate. The 1010 seats on the cup floor and is clamped by 1/4-20 x 1/2 FBHSCS + economy T-nuts
 # (80/20 3393) through the cup's outer (-Y, facing away from the carriage) and +X walls into its slots.
 PROFILE = 25.4        # 1010 section
 SOCKET_FIT = 0.1      # clearance per side
@@ -207,6 +207,8 @@ carriage_plate = (block(0, L, socket_footprint_y()[0], PLATE_W / 2)
 carriage_plate = hinge_half(carriage_plate.union(mast_socket()), AXIS_Y, -1, "upper")
 
 MAST_LEN_IN = 8.0     # camera mast (1010) standing in the socket
+RAIL_HEAD_D = 0.560 * 25.4   # 1/4-20 flanged button head (FBHSCS), measured
+RAIL_HEAD_H = 3.48           # head height: not yet measured (a plain button head's 0.137 in)
 PROFILE_STEP = Path.home() / "Downloads" / "8020_101097" / "1010-97.stp"   # 80/20 PARTcommunity (git-ignored)
 
 
@@ -227,8 +229,8 @@ def mast_parts(length_in=MAST_LEN_IN, vendor=False):
         profile = cq.Solid.makeBox(PROFILE, PROFILE, length, cq.Vector(-PROFILE / 2, -PROFILE / 2, 0))
     parts = [("mast_1010", profile, cq.Color(0.78, 0.79, 0.81))]
 
-    # 1/4-20 x 1/2 BHSCS (head 0.437 x 0.137 in) on each clamp wall, economy T-nut 0.087 in under the slot lip
-    head_d, head_h, shank, lip = 11.1, 3.48, 12.7, 2.21
+    # 1/4-20 x 1/2 FBHSCS (RAIL_HEAD_D x RAIL_HEAD_H) on each clamp wall, economy T-nut 0.087 in under the slot lip
+    head_d, head_h, shank, lip = RAIL_HEAD_D, RAIL_HEAD_H, 12.7, 2.21
     nut_l, nut_w, nut_t = 12.7, 11.4, 3.05
     for wall, n in (("outer", cq.Vector(0, -1, 0)), ("pos_x", cq.Vector(1, 0, 0))):
         centre = cq.Vector(0, 0, SOCKET_DEPTH / 2)
