@@ -1,0 +1,37 @@
+Unit,Section,Part,Qty,Description,Unit $,Ext $
+Bench box,Frame,41906,2,"Profile 6 30x30 light, natural: Top front/back rail, 605 mm",24.62,49.23
+Bench box,Frame,41906,2,"Profile 6 30x30 light, natural: Top side rail, 545 mm",22.57,45.13
+Bench box,Frame,41906,4,"Profile 6 30x30 light, natural: Shelf rail, 525 mm",21.88,87.54
+Bench box,Frame,41906,1,"Profile 6 30x30 light, natural: Camera mast, 1172.8 mm",44.01,44.01
+Bench box,Frame,41906,1,"Profile 6 30x30 light, natural: Camera boom, 327.9 mm",15.15,15.15
+Bench box,Frame,2633,4,"Profile 8 40x40 light, natural: Post, 122.2 mm",9.17,36.68
+Bench box,Joining,41967,26,"Angle Bracket Set 6 30x30 (bracket, cap, 2 M6x14, 2 washers, 2 T-slot nuts 6 M6) - 10 rail-rail + 16 rail-post joints",13.62,354.12
+Bench box,Joining,48050,16,"T-Slot Nut V 8 St M6, bright zinc-plated (drop-in, spring-held) - post side of the rail-post joints (replaces the Line 6 nut)",1.1,17.6
+Bench box,Joining,8000245,16,"Button-Head Screw M6x18, bright zinc-plated - post side of the rail-post joints (the set's M6x14 is short for Line 8)",0.7,11.2
+Bench box,Surfaces,2673,1,"Compound Material Al 4mm, natural anodized, cut to size: Shelf panel (notch the 4 post corners 40 x 40), 605 x 605 mm",138.97,138.97
+Bench box,Surfaces,8000240,4,"Button-Head Screw M6x12, bright zinc-plated - panel to rails",0.66,2.64
+Bench box,Surfaces,41940,4,"T-Slot Nut 6 St M6, bright zinc-plated - panel to rails",1.16,4.64
+Bench box,Camera,ballhead,1,1/4-20 mini ball head for the camera (est.),15.0,15.0
+Bench box,Camera,stud-M6,1,"M6 to 1/4-20 adapter stud, ball head to boom (est.)",2.0,2.0
+Bench box,Camera,41940,1,"T-Slot Nut 6 St M6, bright zinc-plated - ball head stud in the boom's bottom slot",1.16,1.16
+Bench box,Finish,41922,4,"Cap 6 30x30, black - exposed rail ends",1.51,6.04
+Wheeled cart,Frame,41906,2,"Profile 6 30x30 light, natural: Top front/back rail (cantilevers to laptop table), 960 mm",36.74,73.49
+Wheeled cart,Frame,41906,3,"Profile 6 30x30 light, natural: Top side + laptop end rail, 545 mm",22.57,67.7
+Wheeled cart,Frame,41906,4,"Profile 6 30x30 light, natural: Lower ring rail, 525 mm",21.88,87.54
+Wheeled cart,Frame,2633,4,"Profile 8 40x40 light, natural: Leg, 409.1 mm",21.43,85.71
+Wheeled cart,Joining,41967,22,"Angle Bracket Set 6 30x30 (bracket, cap, 2 M6x14, 2 washers, 2 T-slot nuts 6 M6) - 6 rail-rail + 16 rail-post joints",13.62,299.64
+Wheeled cart,Joining,48050,16,"T-Slot Nut V 8 St M6, bright zinc-plated (drop-in, spring-held) - post side of the rail-post joints (replaces the Line 6 nut)",1.1,17.6
+Wheeled cart,Joining,8000245,16,"Button-Head Screw M6x18, bright zinc-plated - post side of the rail-post joints (the set's M6x14 is short for Line 8)",0.7,11.2
+Wheeled cart,Locating,angle,4,"Aluminium angle 50 x 50 x 3 mm, cut 89 mm, 3 holes (est.) - box locators on the leg tops",6.0,24.0
+Wheeled cart,Locating,8000240,6,"Button-Head Screw M6x12, bright zinc-plated - locator angles to the top rails",0.66,3.96
+Wheeled cart,Locating,41940,6,"T-Slot Nut 6 St M6, bright zinc-plated - locator angles to the top rails",1.16,6.96
+Wheeled cart,Locating,8000063,6,"Button-Head Screw M6x16, bright zinc-plated - locator angles to the legs",0.66,3.96
+Wheeled cart,Locating,48050,6,"T-Slot Nut V 8 St M6, bright zinc-plated (drop-in, spring-held) - locator angles to the legs",1.1,6.6
+Wheeled cart,Mobility,41810,4,"Castor D125 swivel with double-brake, 100 kg - one under each leg",87.86,351.44
+Wheeled cart,Mobility,8000009,4,"Button-Head Screw M8x30, bright zinc-plated - caster to the leg's core bore (tap M8)",1.14,4.56
+Wheeled cart,Mobility,washer-M8,4,"M8 fender washer 8.4 x 24, under the caster bolt (est.)",0.25,1.0
+Wheeled cart,Surfaces,2673,1,"Compound Material Al 4mm, natural anodized, cut to size: Laptop table panel, 351 x 605 mm",83.86,83.86
+Wheeled cart,Surfaces,8000240,4,"Button-Head Screw M6x12, bright zinc-plated - panel to rails",0.66,2.64
+Wheeled cart,Surfaces,41940,4,"T-Slot Nut 6 St M6, bright zinc-plated - panel to rails",1.16,4.64
+Wheeled cart,Finish,41922,2,"Cap 6 30x30, black - exposed rail ends",1.51,3.02
+,,,,Total (before shipping/tax),,1970.63
