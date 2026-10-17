@@ -35,6 +35,8 @@ Wheeled cart
 Vendor CAD (git-ignored, from 80/20 PARTcommunity, unzipped in ~/Downloads):
   8020_101097/1010-97.stp, 8020_2020145/2020-145.stp   profiles, cut to length here
   8020_2323/2323.stp, 8020_2419/2419.stp               caster and base plate
+  Each part's page carries the CAD link (PARTcommunity sign-in; https://8020.net/tools-cad):
+  https://8020.net/1010.html, https://8020.net/2020.html, https://8020.net/2323.html, https://8020.net/2419.html
 Run:  python gantry_cart.py [dir holding those folders]
   -> gantry_cart.step    (box + gantry on breadboard, on the cart; git-ignored)
   -> wheeled_cart.step   (the cart alone; git-ignored)

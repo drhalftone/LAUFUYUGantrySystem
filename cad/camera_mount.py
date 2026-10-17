@@ -23,7 +23,14 @@ spacing, (b) stretched back to its 31.2 mm. The (a) pair is the datum, so every 
 the same line; only how far forward the housing sits changes.
 Basler's STEP is not redistributed: with it in ~/Downloads (BASLER_STEP) the checks run against it and a
 git-ignored camera_mount_assembly_basler.step carries it; the committed outputs use a placeholder of the
-same envelope.
+same envelope. Originals (free download, not redistributed):
+  Basler ace USB3, C-Mount (ZIP with the STEP):
+    https://www.baslerweb.com/en/downloads/document-downloads/basler-ace-usb3-c-mount-cad-technical-drawing/
+  Basler ace 2 USB3, C-Mount (for the slotted ace 2 fit):
+    https://www.baslerweb.com/en/sales-support/downloads/document-downloads/basler-ace-2-usb3-c-mount-cad-technical-drawing/
+  Edmund Optics 6 mm C Series lens #67-709 (STEP under its product downloads):
+    https://www.edmundoptics.com/p/6mm-c-series-fixed-focal-length-lens/22381/
+  80/20 1010 profile (CAD via 80/20's PARTcommunity library, https://8020.net/tools-cad): https://8020.net/1010.html
 
 Frames: built in the mast-top frame (origin at the centre of the 1010's top end, Z along the 1010,
 Y toward its carriage-facing / hinge-side face, X = carriage-plate X), then moved into the
@@ -60,8 +67,10 @@ HOLE_B_BEHIND_A = 23.7
 # name: (housing length, (a) half spacing, (a) behind the housing front, (b) behind (a))
 CAMERAS = {"ace USB3 classic (acA)": (CAM_L, HOLE_A_X, HOLE_A_FROM_FRONT, HOLE_B_BEHIND_A),
            "ace 2 USB (a2A)": (36.3, 21.0 / 2, 2.3, 31.2)}
+# from https://www.baslerweb.com/en/downloads/document-downloads/basler-ace-usb3-c-mount-cad-technical-drawing/
 BASLER_STEP = Path.home() / "Downloads" / "Basler_ace_USB3_C-Mount_v02" / "Basler ace USB3 C-Mount v02.STP"
-LENS_STEP = Path.home() / "Downloads" / "step_67709.step"   # Edmund Optics' model of #67-709 (not redistributed)
+LENS_STEP = Path.home() / "Downloads" / "step_67709.step"   # Edmund Optics' model of #67-709 (not redistributed;
+                                                            # edmundoptics.com/p/6mm-c-series-fixed-focal-length-lens/22381/)
 
 # --- "7" bracket: a stem bolted along the 1010's carriage-facing (+Y) face, and a bar off its top that
 # slopes down toward the aperture; the camera sits on the bar, screwed up into from underneath ---
