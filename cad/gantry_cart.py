@@ -25,10 +25,10 @@ Wheeled cart
     and a 2633 Lite ACM laptop panel on top butts against the box.
   - Lower ring: 1010 between the legs, LOWER_RAIL_UP above the leg bottoms, against racking; 4132s
     on the rails' inner faces.
-  - Locators: a 2 x 2 x 1/8 aluminium angle on the outside of each leg top, standing LOC_UP above
-    CART_TOP, so the box drops into the four corners and can't slide off. A LOC_GAP shim behind each
-    flange leaves the box that much clearance. At the -X corners the X rails run on, so the angle's
-    X-face flange there only rises from CART_TOP and the laptop panel stops short of it.
+  - Locators: 4166 6-hole flat plates (3 x 2 x .188, clear) on the outside faces of each leg top,
+    standing LOC_UP above CART_TOP, so the box drops into the four corners and can't slide off. A
+    LOC_GAP shim behind each plate leaves the box that much clearance. Two plates per +X corner; at
+    the -X corners the X rails run on past the leg, so there is only the Y-face plate.
   - Casters: 2323 (5 in soft rubber, swivel, top brake locks wheel + swivel, 300 lb) on a 2419
     10-series flange-mount caster base plate under each leg, wheel trailing toward the centre.
 
@@ -93,8 +93,10 @@ LEG_TOP = CART_TOP - P10             # cart legs, under the top frame
 LEG_L = LEG_TOP - LEG_BOTTOM
 LOWER_RAIL_UP = 4.0                  # cart lower ring: rail tops this far above the leg bottoms
 LOWER_RAIL_TOP = LEG_BOTTOM + LOWER_RAIL_UP
-LOC_UP, LOC_DOWN, LOC_W, LOC_T = 1.0, 2.5, 2.0, 0.125     # corner angle: above / below CART_TOP, flange, thickness
-LOC_GAP = 1 / 32                     # shim behind each angle flange = box clearance
+LOC_UP, LOC_DOWN, LOC_W, LOC_T = 1.0, 2.0, 2.0, 0.188     # 4166 locator plate: above / below CART_TOP, width, thickness
+LOC_GAP = 1 / 32                     # shim behind each locator plate = box clearance
+N_LOC_PLATES, N_LOC_BOLTS = 6, 22        # 4166s: Y face at all 4 corners (4 bolts), X face at the 2 +X corners (3)
+LAPTOP_PANEL_L = 13.84               # as ordered (cut to clear the earlier 1/8 in corner angles)
 
 
 def stock_profile(path):
@@ -163,8 +165,8 @@ def shelf_panel():
 
 
 def laptop_panel():
-    """2633 panel on the cart's cantilevered top rails, up to the -X locator angles."""
-    return box(-LAPTOP_DEPTH, 0, CART_TOP, LAPTOP_DEPTH - LOC_GAP - LOC_T, BOARD, PANEL_T)
+    """2633 panel on the cart's cantilevered top rails, stopping just short of the box."""
+    return box(-LAPTOP_DEPTH, 0, CART_TOP, LAPTOP_PANEL_L, BOARD, PANEL_T)
 
 
 def electronics():
@@ -218,43 +220,45 @@ def caster_assemblies(caster_solids, plate):
 
 
 def locators():
-    """[(name, shape, colour)] corner angle on each cart leg top + its 3393 bolts (1/4-20 x 3/8 + T-nut).
+    """[(name, shape, colour)] 4166 flat plates on the cart leg tops + their 3061/3382 bolts.
 
-    Each flange bolts to the top-frame rail behind it (rail slot, 0.5 in below CART_TOP) and to the
-    leg (vertical slot, 0.75 in below the leg top). At the -X corners the X-face flange sits above
-    the cantilevered X rail, so it has no bolt and the Y-face flange spans both sides of the corner.
+    Each plate stands vertical, 2 in wide from the corner, its top LOC_UP above CART_TOP, so its
+    hole rows sit at +0.5 (free, the lip), -0.5 (top-rail slot) and -1.5 in (leg slots, 0.5 in below
+    the leg top). On the X face the -0.5 row's corner hole is over the X rail's end (no slot), so it
+    is left empty. The -X corners have only the Y-face plate: the X rails run on past the leg there.
     """
     out = []
     g0, g1 = LOC_GAP, LOC_GAP + LOC_T
-    z_rail, z_leg = CART_TOP - P10 / 2, LEG_TOP - 0.75
+    z_rail, z_leg = CART_TOP - P10 / 2, LEG_TOP - 0.5
+    z_lo, z_hi = CART_TOP - LOC_DOWN, CART_TOP + LOC_UP
     for i, (cx, cy) in enumerate(((0, 0), (BOARD, 0), (0, BOARD), (BOARD, BOARD))):
         ox, oy = (-1 if cx == 0 else 1), (-1 if cy == 0 else 1)      # outward
         laptop_end = cx == 0
-        z_lo, z_hi = CART_TOP - LOC_DOWN, CART_TOP + LOC_UP
-        # flange on the Y face (plane y = cy)
-        xs = sorted((cx - LOC_W, cx + LOC_W)) if laptop_end else sorted((cx + ox * g1, cx - ox * LOC_W))
-        ys = sorted((cy + oy * g0, cy + oy * g1))
-        a = box(xs[0], ys[0], z_lo, xs[1] - xs[0], ys[1] - ys[0], z_hi - z_lo)
-        # flange on the X face (plane x = cx); only above the rail at the laptop end
-        zx = CART_TOP if laptop_end else z_lo
-        xs = sorted((cx + ox * g0, cx + ox * g1))
-        ys = sorted((cy + oy * g1, cy - oy * LOC_W))
-        a = a.fuse(box(xs[0], ys[0], zx, xs[1] - xs[0], ys[1] - ys[0], z_hi - zx)).clean()
-        # (face, outward normal, point on the member face, slot direction)
-        bolts = [("y_rail", (0, oy, 0), (cx - ox * 0.5, cy, z_rail), (1, 0, 0)),
-                 ("y_leg", (0, oy, 0), (cx - ox * 0.5, cy, z_leg), (0, 0, 1))]
+        holes = [(a, z) for a in (0.5, 1.5) for z in (CART_TOP + 0.5, z_rail, z_leg)]
+        # (face, outward normal, plate box, hole points, bolts as (point, slot direction))
+        xs, ys = sorted((cx, cx - ox * LOC_W)), sorted((cy + oy * g0, cy + oy * g1))
+        plates = [("y", (0, oy, 0), (xs[0], ys[0], z_lo, xs[1] - xs[0], ys[1] - ys[0], z_hi - z_lo),
+                   [(cx - ox * a, cy, z) for a, z in holes],
+                   [((cx - ox * a, cy, z_rail), (1, 0, 0)) for a in (0.5, 1.5)]
+                   + [((cx - ox * a, cy, z_leg), (0, 0, 1)) for a in (0.5, 1.5)])]
         if not laptop_end:
-            bolts += [("x_rail", (ox, 0, 0), (cx, cy - oy * 1.5, z_rail), (0, 1, 0)),
-                      ("x_leg", (ox, 0, 0), (cx, cy - oy * 0.5, z_leg), (0, 0, 1))]
-        hw_parts = []
-        for face, n, at, slot in bolts:
-            n, at, slot = cq.Vector(*n), cq.Vector(*at), cq.Vector(*slot)
-            a = a.cut(cq.Solid.makeCylinder(0.14 * IN, 1 * IN, (at - n * 0.5) * IN, n))
-            screw = hw.bhcs(hw.SCREW_L).moved(cq.Location(cq.Plane((at + n * g1) * IN, slot, n)))
-            nut = hw.tnut().moved(cq.Location(cq.Plane(at * IN, slot, n)))
-            hw_parts += [(f"locator{i + 1}_3393_screw_{face}", screw, hw.STEEL),
-                         (f"locator{i + 1}_3393_tnut_{face}", nut, hw.ZINC)]
-        out += [(f"locator{i + 1}_angle", a, hw.ALU)] + hw_parts
+            xs, ys = sorted((cx + ox * g0, cx + ox * g1)), sorted((cy, cy - oy * LOC_W))
+            plates.append(("x", (ox, 0, 0), (xs[0], ys[0], z_lo, xs[1] - xs[0], ys[1] - ys[0], z_hi - z_lo),
+                           [(cx, cy - oy * a, z) for a, z in holes],
+                           [((cx, cy - oy * 1.5, z_rail), (0, 1, 0))]
+                           + [((cx, cy - oy * a, z_leg), (0, 0, 1)) for a in (0.5, 1.5)]))
+        for face, n, b, pts, bolts in plates:
+            n = cq.Vector(*n)
+            plate = box(*b)
+            for pt in pts:
+                plate = plate.cut(cq.Solid.makeCylinder(0.257 / 2 * IN, 1 * IN, (cq.Vector(*pt) - n * 0.5) * IN, n))
+            out.append((f"locator{i + 1}_4166_{face}", plate, hw.ALU))
+            for j, (at, slot) in enumerate(bolts):
+                at, slot = cq.Vector(*at), cq.Vector(*slot)
+                screw = hw.bhcs(0.5).moved(cq.Location(cq.Plane((at + n * g1) * IN, slot, n)))
+                nut = hw.tnut().moved(cq.Location(cq.Plane(at * IN, slot, n)))
+                out += [(f"locator{i + 1}_{face}_3061_screw_{j + 1}", screw, hw.STEEL),
+                        (f"locator{i + 1}_{face}_3382_tnut_{j + 1}", nut, hw.ZINC)]
     return out
 
 
@@ -419,6 +423,6 @@ if __name__ == "__main__":
           f"{BOOM_BOTTOM:.2f} in; lens {CAMERA_HEIGHT:g} in above the board")
     n_caps = 2 * sum(len(v) for v in END_CAPS.values())
     print(f"hardware: {len(joints())} x 4132 (box {len(box_joints())}, cart {len(cart_joints())}) + "
-          f"{2 * len(joints()) + 12} x 3393 (12 on the locators), "
+          f"{2 * len(joints())} x 3393, {N_LOC_BOLTS} x 3061 + 3382 on the locators, "
           f"{sum(len(v) for v in PANEL_SCREWS.values())} x 3321 panel screws, 16 x 5/16 SHCS, 8 x 1/4 SHCS, "
-          f"{n_caps} x 2015, 4 corner angles {LOC_W:g} x {LOC_W:g} x {LOC_T:g} x {LOC_DOWN + LOC_UP:g} in")
+          f"{n_caps} x 2015, {N_LOC_PLATES} x 4166 locator plates")

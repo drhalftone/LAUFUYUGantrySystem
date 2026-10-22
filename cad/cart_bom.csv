@@ -8,29 +8,29 @@ Bench box,Frame,1010-cut,10,"1010 cut charge, per cut",3.0,30.0
 Bench box,Frame,2020,4,"Post, 4.71 in",5.32,21.29
 Bench box,Frame,2020-cut,4,"2020 cut charge, per cut",3.18,12.72
 Bench box,Joining,4132,26,10 series 2-hole gusseted inside corner bracket,7.11,184.86
-Bench box,Joining,3416,52,"Bolt assembly: 1/4-20 x .375 BHSCS + economy T-nut, 2 per 4132",0.71,36.92
-Bench box,Surfaces,2637,1,"Shelf panel (notch the 4 post corners 2 x 2 in), 24 x 24 in, Lite ACM .236 black",55.32,55.32
-Bench box,Surfaces,2637-cut,1,"Panel cut-to-size charge, per panel",16.13,16.13
-Bench box,Surfaces,3321,4,"Bolt assembly: 1/4-20 x .5 FBHSCS + economy T-nut, panel to rail (countersink the panel)",0.87,3.48
-Bench box,Camera,ballhead,1,1/4-20 mini ball head for the camera (est.),15.0,15.0
-Bench box,Camera,3393-cam,1,"1/4-20 stud + economy T-nut, ball head to boom (est.)",0.73,0.73
-Bench box,Finish,2015,4,10 series 1 x 1 end cap (exposed 1010 ends),2.02,8.08
+Bench box,Joining,3393,52,"Bolt assembly: 1/4-20 x .5 BHSCS (3061) + slide-in economy T-nut (3382), 2 per 4132",0.73,37.96
+Bench box,Surfaces,2650,1,"Shelf panel, 24 x 24 in",78.72,78.72
+Bench box,Surfaces,2650-cut,1,"Panel cut-to-size charge, per panel",16.13,16.13
+Bench box,Surfaces,7599,4,"Machining: panel corner clearance notch 2.06 x 2.06 (10 series), shelf corners around the 2020 posts",5.7,22.8
+Bench box,Surfaces,3321,4,"Bolt assembly: 1/4-20 x .5 FBHSCS + slide-in economy T-nut, panel to rail",0.87,3.48
+Bench box,Finish,2015,4,"10 series 1 x 1 end cap, push-in (exposed 1010 ends)",2.02,8.08
 Wheeled cart,Frame,1010,2,"Top front/back rail (cantilevers to laptop table), 38 in",17.1,34.2
 Wheeled cart,Frame,1010,3,"Top side + laptop end rail, 22 in",9.9,29.7
 Wheeled cart,Frame,1010,4,"Lower ring rail, 20 in",9.0,36.0
 Wheeled cart,Frame,1010-cut,9,"1010 cut charge, per cut",3.0,27.0
 Wheeled cart,Frame,2020,4,"Leg, 16.07 in",18.16,72.64
 Wheeled cart,Frame,2020-cut,4,"2020 cut charge, per cut",3.18,12.72
+Wheeled cart,Frame,7064,4,"Machining: four-hole end tap 1/4-20 x 1.125 deep, leg bottom end (for the 2419)",11.77,47.08
 Wheeled cart,Joining,4132,22,10 series 2-hole gusseted inside corner bracket,7.11,156.42
-Wheeled cart,Joining,3416,44,"Bolt assembly: 1/4-20 x .375 BHSCS + economy T-nut, 2 per 4132",0.71,31.24
-Wheeled cart,Locating,angle,4,"Aluminium angle 2 x 2 x 1/8 in, cut 3.5 in, 3 holes (est.) - box locators on the leg tops",6.0,24.0
-Wheeled cart,Locating,3416,12,"Bolt assembly: 1/4-20 x .375 BHSCS + economy T-nut, locator angles (1/32 in shim behind each flange)",0.71,8.52
+Wheeled cart,Joining,3393,44,"Bolt assembly: 1/4-20 x .5 BHSCS (3061) + slide-in economy T-nut (3382), 2 per 4132",0.73,32.12
+Wheeled cart,Locating,4166,6,"10 series 6-hole rectangular flat plate, 3 x 2 x .188, clear - box locators on the leg tops",9.71,58.26
+Wheeled cart,Locating,3393,22,"Bolt assembly: 1/4-20 x .5 BHSCS (3061) + slide-in economy T-nut (3382), locator plates",0.73,16.06
 Wheeled cart,Mobility,2323,4,"Flange mount swivel caster, 5 in, top brake, 300 lb",42.78,171.12
 Wheeled cart,Mobility,2419,4,10 series flange mount caster base plate,28.46,113.84
-Wheeled cart,Mobility,SHCS-5/16,16,"5/16-18 x 5/8 SHCS, caster flange to 2419 plate (est.)",0.35,5.6
-Wheeled cart,Mobility,leg-end,8,"Tap 2020 end hole 1/4-20 + 1/4-20 x 3/4 SHCS, 2419 to leg (est.) - 2 corner holes per leg",3.0,24.0
-Wheeled cart,Surfaces,2637,1,"Laptop table panel, 13.84 x 24 in, Lite ACM .236 black",31.9,31.9
-Wheeled cart,Surfaces,2637-cut,1,"Panel cut-to-size charge, per panel",16.13,16.13
-Wheeled cart,Surfaces,3321,4,"Bolt assembly: 1/4-20 x .5 FBHSCS + economy T-nut, panel to rail (countersink the panel)",0.87,3.48
-Wheeled cart,Finish,2015,2,10 series 1 x 1 end cap (exposed 1010 ends),2.02,4.04
-,,,,Total (before shipping/tax),,1290.9
+Wheeled cart,Mobility,3110,16,"5/16-18 x .625 SHCS, caster flange to 2419",0.41,6.56
+Wheeled cart,Mobility,3064,8,"1/4-20 x .750 SHCS, 2419 to leg end (2 per plate land on the leg's corner holes)",0.37,2.96
+Wheeled cart,Surfaces,2650,1,"Laptop table panel, 13.84 x 24 in",45.4,45.4
+Wheeled cart,Surfaces,2650-cut,1,"Panel cut-to-size charge, per panel",16.13,16.13
+Wheeled cart,Surfaces,3321,4,"Bolt assembly: 1/4-20 x .5 FBHSCS + slide-in economy T-nut, panel to rail",0.87,3.48
+Wheeled cart,Finish,2015,2,"10 series 1 x 1 end cap, push-in (exposed 1010 ends)",2.02,4.04
+,,,,Total (before shipping/tax),,1405.59
