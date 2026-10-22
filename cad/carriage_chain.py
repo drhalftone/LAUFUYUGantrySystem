@@ -209,7 +209,7 @@ carriage_plate = hinge_half(carriage_plate.union(mast_socket()), AXIS_Y, -1, "up
 MAST_LEN_IN = 8.0     # camera mast (1010) standing in the socket
 RAIL_HEAD_D = 0.560 * 25.4   # 1/4-20 flanged button head (FBHSCS), measured
 RAIL_HEAD_H = 3.48           # head height: not yet measured (a plain button head's 0.137 in)
-PROFILE_STEP = Path.home() / "Downloads" / "8020_101097" / "1010-97.stp"   # 80/20 PARTcommunity (git-ignored)
+PROFILE_STEP = Path.home() / "Downloads" / "8020_101097" / "1010-97.stp"   # 80/20 PARTcommunity (git-ignored): https://8020.net/1010.html
 
 
 def mast_parts(length_in=MAST_LEN_IN, vendor=False):

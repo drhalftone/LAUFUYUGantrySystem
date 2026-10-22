@@ -163,6 +163,27 @@ and verify with `ping 192.168.0.30`.
   AC plug removed; bond the controller `PE` and frame to protective earth; don't plug/unplug
   a motor while its driver is powered.
 
+### 2.6 Vendor CAD models
+
+The scripts in [`cad/`](cad/) check fits against vendor STEP models that are not
+redistributed here. Download them into `~/Downloads`, unzipped under the folder names below.
+Without them the committed outputs use placeholders, and the outputs that embed them stay
+git-ignored.
+
+| Model | Expected under `~/Downloads` | Download | Used by |
+|---|---|---|---|
+| Basler ace USB3, C-Mount | `Basler_ace_USB3_C-Mount_v02/` | [baslerweb.com](https://www.baslerweb.com/en/downloads/document-downloads/basler-ace-usb3-c-mount-cad-technical-drawing/) | `camera_mount.py` |
+| Basler ace 2 USB3, C-Mount (fit reference for the slotted holes) | — | [baslerweb.com](https://www.baslerweb.com/en/sales-support/downloads/document-downloads/basler-ace-2-usb3-c-mount-cad-technical-drawing/) | `camera_mount.py` |
+| Edmund Optics 6 mm C Series lens #67-709 | `step_67709.step` | [edmundoptics.com](https://www.edmundoptics.com/p/6mm-c-series-fixed-focal-length-lens/22381/) | `camera_mount.py` |
+| 80/20 1010 profile | `8020_101097/1010-97.stp` | [8020.net/1010](https://8020.net/1010.html) | `carriage_chain.py`, `camera_mount.py`, `gantry_cart.py` |
+| 80/20 2020 profile | `8020_2020145/2020-145.stp` | [8020.net/2020](https://8020.net/2020.html) | `gantry_cart.py` |
+| 80/20 2323 caster | `8020_2323/2323.stp` | [8020.net/2323](https://8020.net/2323.html) | `gantry_cart.py` |
+| 80/20 2419 caster base plate | `8020_2419/2419.stp` | [8020.net/2419](https://8020.net/2419.html) | `gantry_cart.py` |
+| FUYU FSK40-E1250-10C7-BC-B57 rail | `192830955-3-fsk40-e1250-10c7-bc-b57/` | TraceParts | `fsk40_resize.py` |
+
+80/20's CAD files download through its PARTcommunity library, which needs a separate
+sign-in (see [8020.net/tools-cad](https://8020.net/tools-cad)).
+
 ---
 
 ## 3. Software — `FuyuRailController`
