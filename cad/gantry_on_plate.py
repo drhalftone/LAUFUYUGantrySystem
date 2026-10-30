@@ -1,13 +1,14 @@
 """The FSK40XY-H1 gantry bolted to a 24 x 24 in optical breadboard, as built in the lab.
 
 Breadboard (step_03679.step): 609.6 x 609.6 x 12.7 mm, 1/4-20 tapped holes on a 25.4 mm grid,
-outer rows 12.7 mm in from the edges. Each leg's inner bottom T-slot (10 mm inboard of the
+outer rows 12.7 mm in from the edges. Each leg's outer bottom T-slot (10 mm outboard of the
 rail centre line) sits over the breadboard's outermost hole row on its side, which fixes the
-leg spacing at 609.6 - 2 * (12.7 - 10) = 604.2 mm centre to centre: the rails straddle the board's
-side edges. The beam is centred between the legs. Along their length the legs are slid toward the far
-(non-motor) end, +X, until their far end plates are flush with the board's +X edge: the whole rail,
-motor included, stays on the board. The i1 plate trails the beam toward the motor end, so near the
--X end of the leg stroke it reaches past the board's -X edge (printed below): limit the stroke there.
+leg spacing at 609.6 - 2 * (12.7 + 10) = 564.2 mm centre to centre: the rails' 40 mm bases sit just
+inside the board's side edges (outer faces 2.7 mm in). The beam is centred between the legs. Along
+their length the legs are slid toward the far (non-motor) end, +X, until the i1 plate, which trails
+the beam toward the motor end, is flush with the board's -X edge with the leg carriages at home
+(against the motor-end hardware, LEG_CARRIAGE, as modelled): the i1 plate stays on the board over
+the whole leg stroke, and the legs' far end plates overhang the board's +X edge (printed below).
 
 Fasteners: the bottom T-slot is a 4.5 mm opening over an 8.2 x 4.0 mm cavity, which fits an
 M4 SHCS head (7.0 x 4.0) exactly, and an M4 shank passes through a 1/4-20 tapped hole
@@ -33,8 +34,11 @@ PITCH = 25.4
 EDGE = 12.7           # outer hole row from the board edge
 SLOT_OFFSET = 10.0    # bottom T-slots are +/- this from the rail centre line
 
-LEG_SPACING = BOARD - 2 * (EDGE - SLOT_OFFSET)
+LEG_SPACING = BOARD - 2 * (EDGE + SLOT_OFFSET)
 SCREW_COLUMNS = (8, 15, 22)   # board hole columns (from the motor end) used on each leg
+# Leg carriages from mid-stroke: home, against the motor end. In the TraceParts model the carriage
+# touches the motor-end hardware 149.5 mm from mid-stroke, not LEG_STROKE / 2 = 155.
+LEG_CARRIAGE = -149.5
 
 # Leg carriage (= beam centre line) at mid-stroke, in the TraceParts frame, as in fsk40_resize.h_gantry
 LEG_CARRIAGE_X = (579.18 + 644.18) / 2 - (SRC_STROKE - LEG_STROKE) / 2
@@ -62,7 +66,7 @@ if __name__ == "__main__":
     if abs(bb.xlen - BOARD) > 0.1 or abs(bb.zlen - BOARD) > 0.1 or abs(bb.ylen - BOARD_T) > 0.1:
         sys.exit(f"unexpected breadboard size {bb.xlen:.1f} x {bb.zlen:.1f} x {bb.ylen:.1f}")
 
-    leg, beam = build_rails()
+    leg, beam = build_rails(LEG_CARRIAGE)
 
     # Hinge plate + hanging chain (carriage_chain.py), ending in the i1 plate flat on the board
     # (xrite_i1_plate.py), on the beam carriage. Chain frame -> rail frame as in fsk40_with_chain.py:
@@ -86,20 +90,20 @@ if __name__ == "__main__":
     chain.add(i1_plate, name="xrite_i1_plate", color=cq.Color(0.85, 0.85, 0.2))
     beam.add(chain, name="hinge_chain", loc=on_carriage)
 
-    model = h_gantry(leg, beam, LEG_SPACING)
+    model = h_gantry(leg, beam, LEG_SPACING, LEG_CARRIAGE)
     model.name = "FSK40XY_H1_on_breadboard"
 
     # Board frame: X 0..609.6, Z -609.6..0, top face Y = 12.7; first hole row at Z = -12.7.
     # Put its top on the table (rail base underside), its Z = -12.7 row under the left leg's
-    # inner slot, and its +X edge flush with the legs' far ends.
+    # outer slot, and its -X edge flush with the i1 plate's (legs at home).
     plate_bb = i1_plate.val().moved(model.objects["beam"].loc * on_carriage).BoundingBox()
     leg_bb = leg.toCompound().BoundingBox()
-    board_off = cq.Vector(leg_bb.xmax - BOARD, BASE_BOTTOM - BOARD_T, (CENTRE_Z - SLOT_OFFSET) + EDGE)
+    board_off = cq.Vector(plate_bb.xmin, BASE_BOTTOM - BOARD_T, (CENTRE_Z + SLOT_OFFSET) + EDGE)
     leg_shift = LEG_BASE_MID - BOARD / 2 - board_off.x     # leg bases toward +X from centred on the board
     model.add(board, name="breadboard_24x24", loc=cq.Location(board_off), color=cq.Color(0.15, 0.15, 0.17))
 
     screw, nut = m4_screw_and_nut()
-    slots = {"left": CENTRE_Z - SLOT_OFFSET, "right": CENTRE_Z - LEG_SPACING + SLOT_OFFSET}
+    slots = {"left": CENTRE_Z + SLOT_OFFSET, "right": CENTRE_Z - LEG_SPACING - SLOT_OFFSET}
     for side, z in slots.items():
         for k in SCREW_COLUMNS:
             x = board_off.x + EDGE + k * PITCH
@@ -120,13 +124,15 @@ if __name__ == "__main__":
           f"leg spacing {LEG_SPACING:.1f} mm centre to centre")
     leg0 = BASE_X0 - board_off.x
     print(f"  legs shifted {leg_shift:.1f} mm toward +X: bases X = {leg0:.1f}..{leg0 + base_length(LEG_STROKE):.1f}, "
-          f"beam centre X = {LEG_CARRIAGE_X - board_off.x:.1f} at mid-stroke")
-    xs0, xs1 = plate_bb.xmin - board_off.x, plate_bb.xmax - board_off.x
+          f"beam centre X = {LEG_CARRIAGE_X - board_off.x:.1f} at mid-stroke, "
+          f"{LEG_CARRIAGE_X + LEG_CARRIAGE - board_off.x:.1f} as modelled")
+    # i1 plate X extent with the legs at mid-stroke
+    xs0, xs1 = plate_bb.xmin - board_off.x - LEG_CARRIAGE, plate_bb.xmax - board_off.x - LEG_CARRIAGE
     ys0, ys1 = board_off.z - plate_bb.zmax, board_off.z - plate_bb.zmin
     print(f"  i1 plate over the leg stroke: X = {xs0 - LEG_STROKE / 2:.1f}..{xs1 + LEG_STROKE / 2:.1f}; "
           f"over the beam stroke: Y = {ys0 - BEAM_STROKE / 2:.1f}..{ys1 + BEAM_STROKE / 2:.1f}")
-    print(f"  legs X = {leg_bb.xmin - board_off.x:.1f}..{leg_bb.xmax - board_off.x:.1f} (motor to far end plate); "
-          f"i1 plate stays on the board for leg travel >= {-xs0:+.1f} mm from home")
+    print(f"  legs X = {leg_bb.xmin - board_off.x:.1f}..{leg_bb.xmax - board_off.x:.1f} (motor to far end plate), "
+          f"far end {leg_bb.xmax - board_off.x - BOARD:.1f} mm past the board's +X edge")
     for side, z in slots.items():
         xs = ", ".join(f"{EDGE + k * PITCH:.1f}" for k in SCREW_COLUMNS)
         print(f"  {side} leg: M4 screws at Y = {board_off.z - z:.1f}, X = {xs}")

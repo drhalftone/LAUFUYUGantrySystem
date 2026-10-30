@@ -9,7 +9,7 @@ parallel legs are 310 mm stroke and the cross beam is 610 mm. TraceParts only ha
   trim      guide rail: shortened at the far end so its 25 mm hole pitch stays put
             relative to the motor end; rail screws past the new end are dropped
   far end   end plate, its screws and cap: moved back by the change in stroke
-  carriage  carriage, ball nut and their screws: moved to mid-stroke
+  carriage  carriage, ball nut and their screws: moved to mid-stroke (or an offset from it)
   (rest)    motor, coupling, motor-end bearing block, motor-end hardware: unchanged
 
 Frame (TraceParts): X along travel (motor at -X), Y up, Z across; the base underside
@@ -131,8 +131,9 @@ def stretch(shape, dl):
     return unify(left.fuse(right))
 
 
-def rail(stroke, parts):
-    """cq.Assembly of one FSK40 at the given stroke, carriage at mid-stroke."""
+def rail(stroke, parts, carriage=0.0):
+    """cq.Assembly of one FSK40 at the given stroke, carriage this far from mid-stroke (+ toward the
+    far end; -stroke / 2 is home, against the motor end)."""
     dl = SRC_STROKE - stroke
     rail_end = bb_rail_end(parts, dl)
     assy = cq.Assembly(name=f"FSK40_S{stroke:.0f}")
@@ -149,7 +150,7 @@ def rail(stroke, parts):
         elif top in FAR_END:
             s = s.translate(cq.Vector(-dl, 0, 0))
         elif top in CARRIAGE:
-            s = s.translate(cq.Vector(-dl / 2, 0, 0))
+            s = s.translate(cq.Vector(-dl / 2 + carriage, 0, 0))
         c = cq.Color(col.Red(), col.Green(), col.Blue()) if col is not None else cq.Color(0.7, 0.72, 0.75)
         assy.add(s, name=name.replace(".", "_"), color=c)
     return assy
@@ -166,12 +167,13 @@ def base_length(stroke):
     return stroke + 125.0
 
 
-def h_gantry(leg, beam, leg_spacing):
+def h_gantry(leg, beam, leg_spacing, leg_carriage=0.0):
     """Legs along X (left leg in the TraceParts frame, right leg leg_spacing toward -Z); beam turned
     90 deg about Y, its base resting on the two leg carriage plates and centred between the legs.
-    All carriages sit at mid-stroke."""
+    The beam carriage sits at mid-stroke, the leg carriages leg_carriage from it (as built by
+    build_rails)."""
     here = Path(__file__).parent
-    leg_x = (579.18 + 644.18) / 2 - (SRC_STROKE - LEG_STROKE) / 2   # leg carriage centre
+    leg_x = (579.18 + 644.18) / 2 - (SRC_STROKE - LEG_STROKE) / 2 + leg_carriage   # leg carriage centre
     beam_y = CARRIAGE_TOP + PLATE_T - BASE_BOTTOM           # lift so the beam base sits on the plates
     # beam X -> world -Z: put the centre of its base midway between the legs
     dz = CENTRE_Z - leg_spacing / 2 + BASE_X0 + base_length(BEAM_STROKE) / 2
@@ -189,13 +191,13 @@ def h_gantry(leg, beam, leg_spacing):
     return gantry
 
 
-def build_rails():
+def build_rails(leg_carriage=0.0):
     parts = read_parts(SRC)
     found = {n.split(".")[0] for n, _, _ in parts}
     missing = (STRETCH | FAR_END | CARRIAGE | {RAIL}) - found
     if missing:
         sys.exit(f"unexpected STEP structure, missing {sorted(missing)}")
-    return rail(LEG_STROKE, parts), rail(BEAM_STROKE, parts)
+    return rail(LEG_STROKE, parts, leg_carriage), rail(BEAM_STROKE, parts)
 
 
 if __name__ == "__main__":
