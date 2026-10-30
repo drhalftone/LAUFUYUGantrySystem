@@ -17,6 +17,7 @@ import datetime
 import html
 from pathlib import Path
 import gantry_cart as g
+import gantry_on_plate as gp
 
 PRICE_DATE = "2026-10-22"
 PRICES = {                                 # part: (unit price, description)
@@ -38,8 +39,19 @@ PRICES = {                                 # part: (unit price, description)
     "3321": (0.87, "Bolt assembly: 1/4-20 x .5 FBHSCS + slide-in economy T-nut, panel to rail"),
     "2015": (2.02, "10 series 1 x 1 end cap, push-in (exposed 1010 ends)"),
 }
+# Gantry legs to the breadboard (gantry_on_plate.py): one M4 per leg per screw column, through the board's
+# outermost hole rows. X from the board's motor-end (-X) edge, Y rows 0.5 in in from the side edges.
+GANTRY_SCREW_X = [(gp.EDGE + k * gp.PITCH) / 25.4 for k in gp.SCREW_COLUMNS]
+GANTRY_SCREWS = 2 * len(GANTRY_SCREW_X)
+GANTRY_CLAMP = gp.LIP_TOP - gp.BASE_BOTTOM + gp.BOARD_T           # slot lip + board, mm
+GANTRY_TIP = gp.SCREW_L - GANTRY_CLAMP                            # below the board, in the A rail's top slot
+
 # Not sold by 80/20: kept out of the order and the total until the owner approves each one.
 NEEDS_APPROVAL = [
+    (f"M4 x {gp.SCREW_L:g} SHCS + M4 hex nut", f"{GANTRY_SCREWS} + {GANTRY_SCREWS}",
+     "gantry legs to the breadboard: head in each leg's outer bottom T-slot, through the board's outermost hole "
+     f"rows (0.5 in in from the side edges) at {', '.join(f'{x:g}' for x in GANTRY_SCREW_X)} in from the motor-end "
+     "edge, nut under the board in the A rail's top slot; 80/20 sells no metric hardware"),
     ("1/32 in shim stock", "6 pieces 3 x 2 in", "behind each 4166 locator plate, sets the box clearance; 80/20 sells no shim"),
     ("1/4-20 mini ball head + 1/4-20 stud", "1 + 1", "camera on the stand's 1010 boom (economy T-nut in the boom's bottom "
      "slot); skip if the camera rides only on the gantry's own mast (camera_mount.py)"),
@@ -67,6 +79,11 @@ SCREW_CHECK = [   # (joint, part, head / key, clamped (in), length (in))
      0.236, 0.500),
 ]
 TAPPED_CHECK = [  # (joint, part, head / key, verdict)
+    ("Gantry leg to breadboard (M4 through the 1/4-20 holes)", f"M4 x {gp.SCREW_L:g} + nut",
+     "socket cap, 3 mm key; head in the leg's bottom T-slot",
+     f"clamps {GANTRY_CLAMP:.1f} mm (slot lip + board); the tip is {GANTRY_TIP:.1f} mm below the board and the "
+     f"{gp.NUT_H:g} mm nut on it, both inside the A rail's {SLOT_FLOOR} in "
+     f"({SLOT_FLOOR * 25.4:.1f} mm) top slot; the 8.1 mm nut corners clear the 0.342 in (8.7 mm) slot opening"),
     ("2323 caster flange to 2419 (tapped 5/16-18)", "3110", "socket cap, 1/4 key",
      "80/20 lists 4 x 3110 for the 2323; 0.625 in through the flange into the 0.5 in plate"),
     ("2419 to 2020 leg end (7064 end tap, 1.125 deep)", "3064",

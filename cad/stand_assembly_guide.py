@@ -483,7 +483,9 @@ step("Lift the box onto the cart", "Final",
      cart_all + box_all + mast_br + [p.name for p in BOX_CAPS] + ["board"], box_all + mast_br + [p.name for p in BOX_CAPS] + ["board"],
      vw(FL, h=820, margin=30),
      ["Lock the casters. With two people, lower the bench box straight down into the four corner locators.",
-      "Mount the breadboard + gantry on the top frame: the gantry legs' M4 nuts slide into the top slots of the <b>A</b> rails from their ends.",
+      "Mount the breadboard + gantry on the top frame: the gantry legs' M4 nuts (under the board's outermost hole rows, "
+      "8.5, 15.5 and 22.5 in from the motor-end edge) slide into the top slots of the <b>A</b> rails from their ends. "
+      "The legs' far ends overhang the board's mast-side edge by about 5/8 in.",
       "Then push 2015 end caps onto the four <b>A</b> rail ends.",
       f"The board top ends up {g.BOARD_TOP:g} in above the floor; the laptop table is at {g.CART_TOP + g.PANEL_T:.2f} in."],
      [lbl("board", "Breadboard + gantry", -60, -80), lbl("laptop_panel", "Laptop table", -60, 50),
