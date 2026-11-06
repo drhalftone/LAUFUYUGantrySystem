@@ -316,6 +316,7 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(int dims, QWidget *parent) : QWidget(
         // SINCE WE CREATED THE CONTROLLER, WE SHOULD HANDLE ANY ERROR MESSAGES
         connect(this, SIGNAL(emitSetVelocity(int,int)), controller, SLOT(onSetVelocity(int,int)));
         connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
+        connect(controller, SIGNAL(emitWarning(QString)), this, SLOT(onWarning(QString)), Qt::QueuedConnection);
 
         controllerExistsFlag = true;
         for (int n = 0; n < dims; n++) {
@@ -369,6 +370,7 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent,
         // SINCE WE CREATED THE CONTROLLER, WE SHOULD HANDLE ANY ERROR MESSAGES
         connect(this, SIGNAL(emitSetVelocity(int,int)), controller, SLOT(onSetVelocity(int,int)));
         connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
+        connect(controller, SIGNAL(emitWarning(QString)), this, SLOT(onWarning(QString)), Qt::QueuedConnection);
 
         controllerExistsFlag = true;
         for (int n = 0; n < channels.count(); n++) {
@@ -1410,6 +1412,7 @@ LAUVelmexWidget::LAUVelmexWidget(int dim, LAUVelmexController *obj, QWidget *par
             connect(this, SIGNAL(emitSetSliderPosition(int, int)), controller, SLOT(onMoveToPosition(int, int)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitConnected(bool)), this, SLOT(onConnected(bool)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
+            connect(controller, SIGNAL(emitWarning(QString)), this, SLOT(onWarning(QString)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitCalibrationComplete(int, int, int)), this, SLOT(onUpdateLimits(int, int, int)), Qt::QueuedConnection);
             connect(controller, SIGNAL(emitSliderPosition(int, int)), this, SLOT(onUpdatePositon(int, int)), Qt::QueuedConnection);
 
@@ -2433,6 +2436,7 @@ void LAUVelmexController::initialize()
         lastCommanded[a] = FMC_UNSET;
         homeDir[a] = 2;
         positionKnown[a] = false;
+        lastSavedCount[a] = FMC_UNSET;
     }
 
     settings.beginReadArray(QString("LAUVelmexController"));
@@ -2560,6 +2564,9 @@ void LAUVelmexController::onStart()
         return;
     }
 
+    // WAS THE CONTROLLER POWER-CYCLED SINCE WE LAST RAN?  (its zero point would be gone)
+    checkZeroAfterConnect();
+
     // POLL THE CONTROLLER FROM OUR THREAD, LIKE THE VELMEX TIMER
     startTimer(500);
     limitTimerId = startTimer(100);   // live limit-switch inputs for the rail panels
@@ -2573,6 +2580,17 @@ void LAUVelmexController::onFinish()
     if (connectedFlag) {
         for (int n = 0; n < channels.count(); n++) {
             fmcStop(deviceID, channels.at(n), FMC_STOP_DECEL);
+        }
+        // Record where each axis came to rest, so the next launch can tell an untouched controller
+        // from one that was switched off.  Give a decelerating axis up to a second to settle.
+        for (int n = 0; n < channels.count(); n++) {
+            const int ch = channels.at(n);
+            for (int i = 0; (i < 100) && (fmcCheckStop(deviceID, ch) != 1); i++) {
+                QThread::msleep(10);
+            }
+            if (positionKnown[ch] && updateMotorPosition(ch)) {
+                savePosition(ch, true);
+            }
         }
         fmcClose(deviceID);
         connectedFlag = false;
@@ -2619,7 +2637,70 @@ void LAUVelmexController::onCalibrateSlide(int dim)
         qSwap(leftMostCount[dim], rightMostCount[dim]);
     }
 
+    // The counter is now zeroed at this axis's left-end switch: the saved travel is good again.
+    QSettings().setValue(QString("LAUVelmexController::axis%1::zeroValid").arg(dim), true);
+    savePosition(dim, true);
+
     emit emitCalibrationComplete(leftMostCount[dim], rightMostCount[dim], dim);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUVelmexController::savePosition(int dim, bool force)
+{
+    // Called every 500 ms from the poll timer, so it must be cheap: write only when the position
+    // actually changed.  Saving continuously (not just on exit) keeps the record good after a crash.
+    if (positionKnown[dim] == false) {
+        return;
+    }
+    if (force || currentCount[dim] != lastSavedCount[dim]) {
+        QSettings().setValue(QString("LAUVelmexController::axis%1::lastCount").arg(dim), currentCount[dim]);
+        lastSavedCount[dim] = currentCount[dim];
+    }
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUVelmexController::checkZeroAfterConnect()
+{
+    // Tolerance: a decelerating stop at exit can drift a little after the last save.
+    const int tolerance = fmcMMToCount(2.0);
+
+    QSettings settings;
+    QStringList lines;
+    for (int n = 0; n < channels.count(); n++) {
+        const int ch = channels.at(n);
+        if (positionKnown[ch] == false) {
+            continue;
+        }
+        const QString name = (ch == 0) ? QString("X") : ((ch == 1 || ch == 2) ? QString("Y") : QString("axis %1").arg(ch));
+        const QString validKey = QString("LAUVelmexController::axis%1::zeroValid").arg(ch);
+        const QString countKey = QString("LAUVelmexController::axis%1::lastCount").arg(ch);
+
+        bool zeroValid = settings.value(validKey, false).toBool();
+        if (zeroValid && settings.contains(countKey)) {
+            const int saved = settings.value(countKey).toInt();
+            if (qAbs(currentCount[ch] - saved) > tolerance) {
+                zeroValid = false;
+                settings.setValue(validKey, false);   // keep warning on every launch until recalibrated
+                lines << QString("%1 axis: the controller now reads %2 mm, but it was at %3 mm when the app last closed. "
+                                 "The controller was probably switched off, so its zero point is lost.")
+                         .arg(name).arg(fmcCountToMM(currentCount[ch]), 0, 'f', 1).arg(fmcCountToMM(saved), 0, 'f', 1);
+            }
+        } else if (settings.contains(validKey)) {
+            lines << QString("%1 axis: still needs Calibrate (its zero point was lost earlier).").arg(name);
+        } else {
+            lines << QString("%1 axis: has not been calibrated yet.").arg(name);
+        }
+        lastSavedCount[ch] = FMC_UNSET;
+        savePosition(ch, true);   // start this session's record from the real reading
+    }
+    if (lines.isEmpty() == false) {
+        emit emitWarning(lines.join(QString("\n\n")) +
+                         QString("\n\nPress Calibrate on these axes before relying on the slider positions."));
+    }
 }
 
 /****************************************************************************************************************/

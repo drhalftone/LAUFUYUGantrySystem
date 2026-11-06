@@ -257,6 +257,9 @@ protected:
             if (flag) {
                 velmexControllerIsWaitingWhileBusy = false;
             }
+            for (int n = 0; n < channels.count(); n++) {
+                savePosition(channels.at(n));
+            }
         }
     }
 
@@ -308,6 +311,17 @@ private:
     // Never command motion from an unread axis.
     bool positionKnown[VELMEXMAXDIMENSIONS];
 
+    // CALIBRATION SURVIVES AN APP RESTART BUT NOT A CONTROLLER POWER-CYCLE.  Calibrate zeroes the
+    // FMC4030's own position counter at the left-end switch; the PC only stores the travel measured
+    // from that zero.  Steppers have no encoder, so a controller that was switched off comes back
+    // counting from wherever the carriage sits, and the saved travel no longer lines up.  To catch
+    // that, each axis's position is saved whenever it changes (QSettings key
+    // LAUVelmexController::axisN::lastCount) and compared with the controller's reading on connect;
+    // a mismatch clears LAUVelmexController::axisN::zeroValid and warns the user to calibrate.
+    int lastSavedCount[VELMEXMAXDIMENSIONS];
+    void savePosition(int dim, bool force = false);
+    void checkZeroAfterConnect();
+
     QList<QWidget *> widgets;
 
     // Limit-switch inputs are read on their own fast timer (and from inside the blocking calibrate
@@ -336,6 +350,7 @@ signals:
     void emitConnected(bool state);
     void emitSliderPosition(int pos, int dim);
     void emitError(QString errorString);
+    void emitWarning(QString warningString);                 // advisory only: does NOT disable the panels
     void emitCalibrationComplete(int left, int right, int dim);
     void emitScanComplete();
     void emitLimitStatus(int limitN, int limitP, bool ok);   // bit 0 = axis 0 (LN1/LP1) ... bit 2 = axis 2
@@ -539,6 +554,10 @@ public slots:
         setEnabled(false);
 #endif
         QMessageBox::critical(this, QString("Velmex Slider Controller"), string, QMessageBox::Close);
+    }
+    void onWarning(QString string)
+    {
+        QMessageBox::warning(this, QString("Calibration Needed"), string, QMessageBox::Ok);
     }
     void onConnected(bool state);
     void onTriggerScanner(float pos, int n, int N);      // TELLS WIDGET TO MOVE RAIL TO NEXT POSITION
@@ -756,6 +775,10 @@ public slots:
     void onError(QString string)
     {
         QMessageBox::critical(this, QString("Velmex Slider Controller"), string, QMessageBox::Close);
+    }
+    void onWarning(QString string)
+    {
+        QMessageBox::warning(this, QString("Calibration Needed"), string, QMessageBox::Ok);
     }
 
     void onUpdateSliderPosition(float val);
