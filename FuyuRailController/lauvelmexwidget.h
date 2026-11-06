@@ -50,6 +50,8 @@
 #include <QDoubleSpinBox>
 #include <QProgressDialog>
 #include <QDialogButtonBox>
+#include <QListWidget>
+#include <QPointer>
 
 #ifdef ENABLEPROSILICAFPGA
 #define VELMEXSCANNERNUMBEROFSCANSTEPS 64
@@ -237,8 +239,12 @@ public slots:
     }
 
 protected:
-    void timerEvent(QTimerEvent *)
+    void timerEvent(QTimerEvent *event)
     {
+        if (event->timerId() == limitTimerId) {
+            pollLimits();
+            return;
+        }
         if (state == StateStopped) {
             // POLL EACH AXIS TOWARD ITS REQUESTED POSITION.  moveToPosition() talks to the
             // FMC4030 (or the built-in simulator) and reports whether the axis has settled.
@@ -273,11 +279,11 @@ private:
     // subdivision, soft limits) are wrong, so log every motion command we issue.  Disable with
     // the QSettings key LAUVelmexController::diagnostics = false.
     //
-    // FMC4030_Get_Device_Para / FMC4030_Get_Machine_Status would report those axis parameters
-    // and the limit-input state directly, but do NOT call them from here: against the current
-    // FMC4030-Dll (X64, 20240920) both return -5 ("failed to send data") and then crash the
-    // process, so their real signatures differ from the 2021 SDK document.  Read those values
-    // with FUYU's own controller software instead (User Manual V2001, Figure 16).
+    // FMC4030_Get_Machine_Status reports the limit-input state.  It once returned -5 and crashed
+    // the process; the cause was an undersized output buffer (the DLL writes the whole ~660-byte
+    // machine_status block) and calling it before the controller had settled after open.  It is
+    // now called with a 1 KB buffer (fmcGetLimits) and works -- verified by tools/fmc_limits.py,
+    // whose realPos field matches FMC4030_Get_Axis_Current_Pos.
     bool diagnosticsFlag;
 
     // Speed used for the two switch-seeking legs of Calibrate, in mm/s.  Tunable at run time via
@@ -304,6 +310,11 @@ private:
 
     QList<QWidget *> widgets;
 
+    // Limit-switch inputs are read on their own fast timer (and from inside the blocking calibrate
+    // wait) and broadcast with emitLimitStatus() so every rail panel can show its two switches live.
+    int limitTimerId = 0;
+    void pollLimits();
+
     void initialize();
     bool calibrateLeft(int dim = 0);
     bool calibrateRight(int dim = 0);
@@ -327,6 +338,7 @@ signals:
     void emitError(QString errorString);
     void emitCalibrationComplete(int left, int right, int dim);
     void emitScanComplete();
+    void emitLimitStatus(int limitN, int limitP, bool ok);   // bit 0 = axis 0 (LN1/LP1) ... bit 2 = axis 2
 };
 
 /****************************************************************************************************************/
@@ -937,7 +949,7 @@ public:
     void setUnits(int index) { unitsComboBox->setCurrentIndex(index); }            // 0 = inches, 1 = mm
     void setSpeed(int mmPerSec) { speedSpinBox->setValue((double)mmPerSec / speedMMPerUnit(unitsComboBox->currentIndex())); }
     void setScanSteps(int val) { scanStepsSpinBox->setValue(val); }
-    // combo index 0 = "toward the motor end" (SDK dir 1, + switch); 1 = "away" (SDK dir 2, - switch)
+    // Left End combo: index 0 = "motor end" (SDK dir 1, + switch); 1 = "idler end" (SDK dir 2, - switch)
     void setHomeDirection(int dir) { homeComboBox->setCurrentIndex(dir == 1 ? 0 : 1); }
 
     int units() const { return (unitsComboBox->currentIndex()); }
@@ -945,17 +957,31 @@ public:
     int scanSteps() const { return (scanStepsSpinBox->value()); }
     int homeDirection() const { return (homeComboBox->currentIndex() == 0 ? 1 : 2); }
 
+public slots:
+    void onLimitStatus(int limitN, int limitP, bool ok);   // live LN/LP inputs from the controller
+
 protected:
     void showEvent(QShowEvent *)
     {
         this->setFixedSize(this->size());
     }
+    void timerEvent(QTimerEvent *);   // grey the limit tiles if readings stop arriving
 
 private slots:
     void onUnitsChanged(int idx);
 
 private:
     void applySpeedUnit(int idx);
+    void paintLimits();
+
+    // Limit-switch strip: the LEFT-end switch on the left, the RIGHT-end switch on the right.  Which
+    // physical end is left follows the Left End combo live, so changing it swaps the tiles at once.
+    int axis = 0;
+    QLabel *leftEndLabel = nullptr;
+    QLabel *rightEndLabel = nullptr;
+    int limitStaleTicks = 0;
+    bool limitOk = false;
+    int limitN = 0, limitP = 0;
 
     int prevUnitIndex;
     QComboBox *unitsComboBox;

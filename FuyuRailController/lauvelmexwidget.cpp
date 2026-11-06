@@ -45,6 +45,10 @@
 #include <QProgressDialog>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QGridLayout>
+#include <QTime>
+#include <QTimer>
+#include <cstring>
 
 int LAUVelmexWidget::unitIndex = 1;   // 0 = inches, 1 = millimetres (default: mm, FMC4030 is mm-native)
 bool LAUVelmexController::velmexControllerIsWaitingWhileBusy = false;
@@ -1367,8 +1371,9 @@ LAUVelmexWidget::LAUVelmexWidget(int dim, LAUVelmexController *obj, QWidget *par
     connect(rightLimitSpinBox, SIGNAL(valueChanged(double)), this, SLOT(onRightLimitSpinBox_valueChanged(double)));
 
     calibrateButton = new QPushButton(QString("Calibrate"));
-    calibrateButton->setToolTip(QString("Home this axis: drive to the home switch to set zero,\n"
-                                        "then seek the far switch to set the travel."));
+    calibrateButton->setToolTip(QString("Drive to the LEFT-end switch to set zero,\n"
+                                        "then to the RIGHT-end switch to set the travel.\n"
+                                        "Which physical end is left is set in Settings (Left End)."));
     connect(calibrateButton, SIGNAL(clicked()), this, SLOT(onCalibrateButton_clicked()));
     centerButton = new QPushButton(QString("Center"));
     centerButton->setToolTip(QString("Move this axis to the middle of its travel."));
@@ -1698,6 +1703,8 @@ void LAUVelmexWidget::onSettingsButton_clicked()
     d.setScanSteps(velmexScannerNumberOfScanSteps);
     if (controller) {
         d.setHomeDirection(controller->homeDirection(dimension));
+        // live limit-switch strip; the controller broadcasts readings ~10x/s from its own thread
+        connect(controller, SIGNAL(emitLimitStatus(int, int, bool)), &d, SLOT(onLimitStatus(int, int, bool)), Qt::QueuedConnection);
     }
     if (d.exec() == QDialog::Accepted) {
         // EXTRACT THE PARAMETERS OF INTEREST
@@ -2084,6 +2091,17 @@ static int fmcGetPos(int, int axis, float *pos)
     *pos = (float)gFmcSim[axis].pos;
     return (0);
 }
+static int fmcGetLimits(int, int *limN, int *limP)
+{
+    // emulated switches sit at 0 (negative) and limitMax (positive)
+    *limN = 0;
+    *limP = 0;
+    for (int a = 0; a < VELMEXMAXDIMENSIONS && a < 31; a++) {
+        if (gFmcSim[a].pos <= 0.0)               *limN |= (1 << a);
+        if (gFmcSim[a].pos >= gFmcSim[a].limitMax) *limP |= (1 << a);
+    }
+    return (0);
+}
 #else
 // ---- real vendor library, loaded at RUN TIME via QLibrary ----
 // There is NO link-time dependency on the SDK, so the app launches even if FMC4030-Dll.dll
@@ -2102,6 +2120,7 @@ namespace {
     typedef int (*FnHome)(int, int, float, float, float, int);
     typedef int (*FnStop)(int, int, int);
     typedef int (*FnGetPos)(int, int, float *);
+    typedef int (*FnStatus)(int, unsigned char *);
 
     struct FmcLib {
         QLibrary lib;
@@ -2112,6 +2131,7 @@ namespace {
         FnHome   home      = nullptr;
         FnStop   stop      = nullptr;
         FnGetPos getPos    = nullptr;
+        FnStatus status    = nullptr;   // optional: only the limit-switch monitor needs it
         bool loaded = false;
 
         FmcLib() {
@@ -2128,7 +2148,8 @@ namespace {
                 home      = (FnHome)   lib.resolve("FMC4030_Home_Single_Axis");
                 stop      = (FnStop)   lib.resolve("FMC4030_Stop_Single_Axis");
                 getPos    = (FnGetPos) lib.resolve("FMC4030_Get_Axis_Current_Pos");
-                loaded = open && close && jog && checkStop && home && stop && getPos;
+                status    = (FnStatus) lib.resolve("FMC4030_Get_Machine_Status");
+                loaded =open && close && jog && checkStop && home && stop && getPos;
                 if (!loaded) {
                     qWarning() << "FMC4030 library loaded but a symbol was missing:" << lib.errorString();
                 }
@@ -2179,6 +2200,24 @@ static int fmcGetPos(int id, int axis, float *pos)
     FmcLib &L = fmcLib();
     return (L.loaded ? L.getPos(id, axis, pos) : FMC_NO_LIB);
 }
+static int fmcGetLimits(int id, int *limN, int *limP)
+{
+    // machine_status (FMC4030-Dll.h, MSVC alignment): 0 realPos[3], 12 realSpeed[3], 24 inputStatus,
+    // 28 outputStatus, 32 limitNStatus, 36 limitPStatus, ... ~660 bytes in all.  The buffer MUST be
+    // larger than the struct -- an undersized one is what crashed earlier attempts.
+    FmcLib &L = fmcLib();
+    if (L.loaded == false || L.status == nullptr) {
+        return (FMC_NO_LIB);
+    }
+    unsigned char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    const int rc = L.status(id, buffer);
+    if (rc == 0) {
+        memcpy(limN, buffer + 32, sizeof(int));
+        memcpy(limP, buffer + 36, sizeof(int));
+    }
+    return (rc);
+}
 #endif
 
 static inline double fmcCountToMM(int count) { return ((double)count / FMC_COUNTS_PER_MM); }
@@ -2198,7 +2237,8 @@ LAUVelmexSettingsDialog::LAUVelmexSettingsDialog(int dim, QWidget *parent) : QDi
     } else if (dim == 1) {
         this->setWindowTitle(QString("Y Axis Settings"));
     } else if (dim == 2) {
-        this->setWindowTitle(QString("Z Axis Settings"));
+        // SDK axis 2 (PU3/DR3) drives the Y cross-beam on this machine (see the "Y Controls" box).
+        this->setWindowTitle(QString("Y Axis Settings"));
     } else {
         this->setWindowTitle(QString("Axis Settings"));
     }
@@ -2218,13 +2258,16 @@ LAUVelmexSettingsDialog::LAUVelmexSettingsDialog(int dim, QWidget *parent) : QDi
     reinterpret_cast<QFormLayout *>(groupBox->layout())->addRow(QString("Units:"), unitsComboBox);
 
     homeComboBox = new QComboBox();
-    homeComboBox->addItem(QString("toward the motor end"));
-    homeComboBox->addItem(QString("away from the motor end"));
+    // index 0 = motor end (homeDir 1), index 1 = idler end (homeDir 2) -- see homeDirection()
+    homeComboBox->addItem(QString("motor end"));
+    homeComboBox->addItem(QString("idler end"));
     homeComboBox->setFixedWidth(150);
-    homeComboBox->setToolTip(QString("Which end Calibrate homes to:\n"
-                                     "  toward the motor end  = positive / LP limit switch\n"
-                                     "  away from the motor end = negative / LN home switch (default)"));
-    reinterpret_cast<QFormLayout *>(groupBox->layout())->addRow(QString("Home Toward:"), homeComboBox);
+    homeComboBox->setToolTip(QString("Which end of the rail is LEFT (slider position 0).\n"
+                                     "Calibrate drives to this end's switch first and zeroes the axis there,\n"
+                                     "then drives to the other end to measure the travel.\n"
+                                     "  motor end = positive / LP limit switch\n"
+                                     "  idler end = negative / LN limit switch (default)"));
+    reinterpret_cast<QFormLayout *>(groupBox->layout())->addRow(QString("Left End:"), homeComboBox);
 
     speedSpinBox = new QDoubleSpinBox();
     speedSpinBox->setFixedWidth(150);
@@ -2250,10 +2293,73 @@ LAUVelmexSettingsDialog::LAUVelmexSettingsDialog(int dim, QWidget *parent) : QDi
                                          "from the left limit to the right limit."));
     reinterpret_cast<QFormLayout *>(groupBox->layout())->addRow(QString("Scan Steps:"), scanStepsSpinBox);
 
+    // LIVE LIMIT SWITCHES: LEFT-END SWITCH ON THE LEFT, RIGHT-END SWITCH ON THE RIGHT, LIKE THE SLIDERS
+    axis = dim;
+    QGroupBox *limitBox = new QGroupBox(QString("Limit Switches (live)"));
+    QHBoxLayout *limitLayout = new QHBoxLayout(limitBox);
+    limitLayout->setContentsMargins(6, 6, 6, 6);
+    limitLayout->setSpacing(6);
+    leftEndLabel = new QLabel();
+    rightEndLabel = new QLabel();
+    for (QLabel *label : { leftEndLabel, rightEndLabel }) {
+        label->setAlignment(Qt::AlignCenter);
+        label->setMinimumSize(150, 56);
+        label->setToolTip(QString("Live limit-switch input: green = clear, red = tripped, grey = no reading.\n"
+                                  "Follows the Left End choice above."));
+        limitLayout->addWidget(label, 1);
+    }
+    this->layout()->addWidget(limitBox);
+    connect(homeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { paintLimits(); });
+    paintLimits();     // grey until the first reading
+    startTimer(250);   // watchdog for stale readings
+
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     this->layout()->addWidget(buttonBox);
     connect(buttonBox->button(QDialogButtonBox::Ok), SIGNAL(clicked()), this, SLOT(accept()));
     connect(buttonBox->button(QDialogButtonBox::Cancel), SIGNAL(clicked()), this, SLOT(reject()));
+}
+
+void LAUVelmexSettingsDialog::onLimitStatus(int limN, int limP, bool ok)
+{
+    limitN = limN;
+    limitP = limP;
+    limitOk = ok;
+    if (ok) {
+        limitStaleTicks = 0;
+    }
+    paintLimits();
+}
+
+void LAUVelmexSettingsDialog::timerEvent(QTimerEvent *)
+{
+    // No reading for ~1 s (disconnected, controller off): grey the tiles rather than leave a stale green.
+    if (++limitStaleTicks == 4) {
+        limitOk = false;
+        paintLimits();
+    }
+}
+
+void LAUVelmexSettingsDialog::paintLimits()
+{
+    if (leftEndLabel == nullptr || axis < 0 || axis > 30) {
+        return;
+    }
+    // SDK axis n uses inputs LN(n+1) / LP(n+1), bit n of each mask.  Left End index 0 = the motor (LP) end.
+    const bool motorIsLeft = (homeComboBox->currentIndex() == 0);
+    const bool lnOn = ((limitN >> axis) & 1) != 0;
+    const bool lpOn = ((limitP >> axis) & 1) != 0;
+    const QString ln = QString("LN%1 — idler end").arg(axis + 1);
+    const QString lp = QString("LP%1 — motor end").arg(axis + 1);
+
+    auto paint = [this](QLabel *label, const QString &title, const QString &input, bool on) {
+        const char *color = limitOk ? (on ? "#c62828" : "#2e7d32") : "#757575";
+        const QString state = limitOk ? (on ? QString("TRIPPED") : QString("clear")) : QString("no reading");
+        label->setText(QString("%1\n%2\n%3").arg(title, input, state));
+        label->setStyleSheet(QString("QLabel { background-color: %1; color: white; border-radius: 4px; font-weight: bold; }")
+                             .arg(QString::fromLatin1(color)));
+    };
+    paint(leftEndLabel,  QString("◀ LEFT"),  motorIsLeft ? lp : ln, motorIsLeft ? lpOn : lnOn);
+    paint(rightEndLabel, QString("RIGHT ▶"), motorIsLeft ? ln : lp, motorIsLeft ? lnOn : lpOn);
 }
 
 void LAUVelmexSettingsDialog::applySpeedUnit(int idx)
@@ -2359,11 +2465,29 @@ bool LAUVelmexController::testConnection(const QString &ip, quint16 port, QStrin
     QByteArray ipBytes = ip.toLatin1();
     int rc = fmcOpen(0, ipBytes.constData(), (int)port);
     if (rc == 0) {
-        fmcClose(0);
-        if (message) {
-            *message = QString("Success — reached the FMC4030 at %1:%2.").arg(ip).arg(port);
+        // FMC4030_Open_Device returns 0 even when nothing is listening (controller powered off),
+        // so a successful open proves nothing.  Require a real reply: read an axis position.  The
+        // controller needs up to ~1 s after open before it answers, so retry for a few seconds.
+        bool replied = false;
+        for (int retry = 0; (replied == false) && (retry < 30); retry++) {
+            float mm = 0.0f;
+            replied = (fmcGetPos(0, 0, &mm) == 0);
+            if (replied == false) {
+                QThread::msleep(100);
+            }
         }
-        return (true);
+        fmcClose(0);
+        if (replied) {
+            if (message) {
+                *message = QString("Success — reached the FMC4030 at %1:%2.").arg(ip).arg(port);
+            }
+            return (true);
+        }
+        if (message) {
+            *message = QString("No reply from the FMC4030 at %1:%2.\n\n"
+                               "Is the controller powered on and the Ethernet cable connected?").arg(ip).arg(port);
+        }
+        return (false);
     }
     if (message) {
         if (rc == FMC_NO_LIB) {
@@ -2422,8 +2546,23 @@ void LAUVelmexController::onStart()
         lastCommanded[ch] = FMC_UNSET;
     }
 
+    // An open that never yields a single position reading means nothing answered (the SDK's open
+    // succeeds even with the controller powered off).  Report disconnected instead of pretending.
+    bool anyReply = false;
+    for (int n = 0; n < channels.count(); n++) {
+        anyReply = anyReply || positionKnown[channels.at(n)];
+    }
+    if (anyReply == false) {
+        fmcClose(deviceID);
+        connectedFlag = false;
+        emit emitError(QString("No reply from the FMC4030 at %1:%2 -- is the controller powered on?").arg(ipAddress).arg(portNumber));
+        emit emitConnected(false);
+        return;
+    }
+
     // POLL THE CONTROLLER FROM OUR THREAD, LIKE THE VELMEX TIMER
     startTimer(500);
+    limitTimerId = startTimer(100);   // live limit-switch inputs for the rail panels
     emit emitConnected(true);
 }
 
@@ -2486,6 +2625,17 @@ void LAUVelmexController::onCalibrateSlide(int dim)
 /****************************************************************************************************************/
 /****************************************************************************************************************/
 /****************************************************************************************************************/
+void LAUVelmexController::pollLimits()
+{
+    // Runs in the controller thread, so it never interleaves with a motion command on the socket.
+    int limN = 0, limP = 0;
+    const bool ok = connectedFlag && (fmcGetLimits(deviceID, &limN, &limP) == 0);
+    emit emitLimitStatus(limN, limP, ok);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
 bool LAUVelmexController::waitForAxisToStop(int dim, const char *what, qint64 *elapsedMS)
 {
     QElapsedTimer clock;
@@ -2497,6 +2647,10 @@ bool LAUVelmexController::waitForAxisToStop(int dim, const char *what, qint64 *e
     // of the rail.
     const int iterations = FMC_SETTLE_TIMEOUT_MS / FMC_SETTLE_POLL_MS;
     for (int i = 0; i < iterations; i++) {
+        // This loop blocks the thread's event loop, so keep the limit-switch display live from here.
+        if ((i % 10) == 0) {
+            pollLimits();
+        }
         if (fmcCheckStop(deviceID, dim) == 1) {
             if (elapsedMS) {
                 *elapsedMS = clock.elapsed();

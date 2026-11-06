@@ -146,7 +146,8 @@ X rails share **one** controller axis (a single PU/DR signal), so:
   homes the **negative** switch (sets zero) and `calibrateRight()` seeks the **positive**
   switch (sets the travel). The sliders' range then reflects the real travel — there is no
   manual "full travel" field.
-- **Settings dialog** (`?`): **Units · Home Toward · Speed · Scan Steps**. The Velmex-specific
+- **Settings dialog** (`?`): **Units · Left End · Speed · Scan Steps**. *Left End* picks which physical end (motor or
+  idler) is slider position 0; Calibrate zeroes there first. The Velmex-specific
   mechanical fields (rotary, motor clicks/rotation, travel/rotation) were removed because the
   FMC4030 abstracts them away.
 
