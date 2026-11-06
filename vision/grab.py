@@ -109,12 +109,25 @@ def save_frame(cam, out, at, avg, lens_mm=F_MM):
           f"saturated {np.mean(img >= 254.5) * 100:.2f}%  ({len(scan['frames'])} frames in scan.json)")
 
 
+def sharpness(g):
+    """Focus score per horizontal band (top = far, bottom = near on the tilted view): mean squared
+    Laplacian of the lightly smoothed image, so sensor noise doesn't count as detail.  Higher = sharper;
+    only comparable between frames of the same scene and exposure."""
+    s = cv2.GaussianBlur(g.astype(np.float32), (0, 0), 1.0)
+    lap = cv2.Laplacian(s, cv2.CV_32F) ** 2
+    h = lap.shape[0] // 3
+    return [float(lap[k * h:(k + 1) * h].mean()) for k in range(3)]
+
+
 def live(cam, out):
-    """Preview at half size with the clipped pixels in red. +/- exposure x1.25, a auto, s save to out/, q quit."""
+    """Preview at half size with the clipped pixels in red, plus a focus readout. +/- exposure x1.25,
+    a auto, r reset focus peaks, s save to out/, q quit."""
     print(__doc__.split("Run:")[0].strip().splitlines()[0])
-    print("keys: + / - exposure, a auto-expose, s save snapshot, q or Esc quit")
+    print("keys: + / - exposure, a auto-expose, r reset focus peaks, s save snapshot, q or Esc quit")
+    print("focus: turn the ring slowly; each band shows its score and the best seen (peak). Stop at the peak")
     win = "Basler"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    peak = [0.0, 0.0, 0.0]
     cam.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
     try:
         while cam.cam.IsGrabbing():
@@ -127,10 +140,24 @@ def live(cam, out):
             v = cv2.resize(v, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
             cv2.putText(v, f"exp {cam.exposure_ms:.2f} ms  mean {g.mean():.0f}  p99 {np.percentile(g[::4, ::4], 99):.0f}",
                         (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            sh = sharpness(g)
+            hh = v.shape[0] // 3
+            for b, (name, val) in enumerate(zip(("far (top)", "middle", "near (bottom)"), sh)):
+                peak[b] = max(peak[b], val)
+                frac = val / peak[b] if peak[b] > 0 else 0.0
+                y0 = b * hh
+                cv2.line(v, (0, y0), (v.shape[1], y0), (80, 80, 80), 1)
+                col = (0, 255, 0) if frac > 0.97 else (0, 200, 255) if frac > 0.85 else (0, 0, 255)
+                cv2.rectangle(v, (v.shape[1] - 230, y0 + 40), (v.shape[1] - 230 + int(200 * frac), y0 + 60), col, -1)
+                cv2.rectangle(v, (v.shape[1] - 230, y0 + 40), (v.shape[1] - 30, y0 + 60), (255, 255, 255), 1)
+                cv2.putText(v, f"{name}: {val:6.1f}  peak {peak[b]:6.1f}", (v.shape[1] - 330, y0 + 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
             cv2.imshow(win, v)
             k = cv2.waitKey(1) & 0xFF
             if k in (ord("q"), 27) or cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
                 break
+            if k == ord("r"):
+                peak = [0.0, 0.0, 0.0]
             if k in (ord("+"), ord("=")):
                 cam.exposure_ms *= 1.25
             elif k in (ord("-"), ord("_")):

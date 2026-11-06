@@ -30,6 +30,7 @@ import numpy as np, cv2
 from scipy.spatial import cKDTree
 
 PITCH, EDGE, NHOLE = 25.4, 12.7, 24
+BRIGHT = 1.4          # ratio above which a pixel is a highlight (thread / lit hole wall), not board
 SYMMETRIES = [np.array(m) for m in ([[1, 0], [0, 1]], [[0, -1], [1, 0]], [[-1, 0], [0, -1]], [[0, 1], [-1, 0]],
                                     [[1, 0], [0, -1]], [[-1, 0], [0, 1]], [[0, 1], [1, 0]], [[0, -1], [-1, 0]])]
 
@@ -53,10 +54,25 @@ def detect_holes(gray, min_d=10, max_d=70, thresh=0.6):
     """gray: 2-D uint8/float image. min_d/max_d: plausible hole diameters in px (smallest far, largest near)."""
     g = gray.astype(np.float32)
     k = _odd(max_d * 1.4)
-    bg = cv2.morphologyEx(g, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-    bg = cv2.GaussianBlur(bg, (0, 0), k / 6)
+    # The background (board illumination with the holes closed over) is smooth -- it is blurred by k/6
+    # px anyway -- so estimate it at 1/4 scale: ~16x less work than the full-res closing, same result.
+    s = 4
+    small = cv2.resize(g, (g.shape[1] // s, g.shape[0] // s), interpolation=cv2.INTER_AREA)
+    ks = _odd(k / s)
+    bg = cv2.morphologyEx(small, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks)))
+    bg = cv2.GaussianBlur(bg, (0, 0), k / 6 / s)
+    bg = cv2.resize(bg, (g.shape[1], g.shape[0]), interpolation=cv2.INTER_LINEAR)
     ratio = cv2.GaussianBlur(g, (0, 0), 0.8) / np.maximum(bg, 1)
-    mask = (ratio < thresh).astype(np.uint8)
+    dark = (ratio < thresh).astype(np.uint8)
+    # Under a low, angled light a tapped hole isn't one dark disc: the threads throw bright stripes
+    # across the interior and the lit far wall shows as a bright crescent on the rim.  Count a bright
+    # highlight that TOUCHES a dark hole as part of the hole (isolated bright debris stays out), then
+    # close small gaps, so the blob is the whole opening again.
+    bright = (ratio > BRIGHT).astype(np.uint8)
+    near = cv2.dilate(dark, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_odd(min_d * 0.5),) * 2))
+    mask = dark | (bright & near)
+    c_ = _odd(min_d * 0.6)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (c_, c_)))
     # open with a disc a bit smaller than the smallest hole: erases thin dark lines (edges of the i1
     # cradle, shadows) that would otherwise merge with a hole they touch; centres come from `ratio`
     o = _odd(min_d * 0.8)
@@ -73,7 +89,9 @@ def detect_holes(gray, min_d=10, max_d=70, thresh=0.6):
             continue
         fill = area / (np.pi * A * B / 4)
         solidity = area / max(cv2.contourArea(cv2.convexHull(c)), 1e-6)
-        if not (0.8 < fill < 1.15) or solidity < 0.92:
+        # (tolerant: a hole seen obliquely under directional light is the dark part of the opening only,
+        # slightly crescent-shaped; the lattice fit downstream rejects anything not on the grid)
+        if not (0.72 < fill < 1.15) or solidity < 0.85:
             continue
         x, y, w, h = cv2.boundingRect(c)
         if x == 0 or y == 0 or x + w >= g.shape[1] or y + h >= g.shape[0]:
@@ -90,7 +108,11 @@ def detect_holes(gray, min_d=10, max_d=70, thresh=0.6):
 
 
 def _refine(ratio, c, axes, thresh, n_rays=48):
-    """Sub-pixel ellipse: where the ratio image crosses `thresh` along rays from the centre."""
+    """Sub-pixel ellipse: where the ratio image crosses `thresh` along rays from the centre.
+
+    The crossing is searched from the OUTSIDE in (the outermost dark->board transition), so bright
+    thread highlights inside a tapped hole -- which a centre-out search would hit first -- don't
+    pull the edge inward."""
     cx, cy = c
     rmax = max(axes) * 0.9 + 3
     rs = np.linspace(0, rmax, int(rmax * 4))
@@ -102,12 +124,16 @@ def _refine(ratio, c, axes, thresh, n_rays=48):
     pts = []
     for k in range(n_rays):
         p = prof[k]
-        above = np.nonzero(p >= thresh)[0]
-        above = above[above > 0]
-        if len(above) == 0:
-            continue
-        i = above[0]
-        if p[i - 1] >= thresh:
+        # "not board" = dark, or a highlight inside the hole (thread / lit wall); fold highlights onto
+        # the dark side so the outermost not-board -> board step is the opening's real rim
+        q = np.where(p > BRIGHT, 0.0, p)
+        below = np.nonzero(q < thresh)[0]
+        if len(below) == 0 or below[-1] >= len(q) - 1:
+            continue                                   # never dark, or still dark at rmax: no clean edge
+        i = below[-1] + 1                              # first board sample after the outermost hole one
+        if p[i - 1] > BRIGHT:
+            r = rs[i - 1] + 0.5 * (rs[i] - rs[i - 1])  # highlight -> board: no gradient to interpolate
+            pts.append((cx + r * np.cos(th[k]), cy + r * np.sin(th[k])))
             continue
         f = (thresh - p[i - 1]) / (p[i] - p[i - 1])
         r = rs[i - 1] + f * (rs[i] - rs[i - 1])
@@ -121,13 +147,72 @@ def _refine(ratio, c, axes, thresh, n_rays=48):
 
 
 # ----------------------------------------------------------------------------------------- 2. lattice
+class GridModel:
+    """Lattice (i, j) -> pixel through a real lens: a homography to the ideal (pinhole) image, then
+    radial distortion (k1, k2, OpenCV's model) about the image centre.  A homography alone keeps rows of
+    holes straight; a real wide lens bows them by several px at the edges, which is what made a plain
+    homography reject correct holes on real frames.  f only sets the units of k1, k2 (any value near the
+    true focal length in px will do; the default is 0.55 x the larger image side, ~a 6 mm lens here)."""
+
+    def __init__(self, Hm, k=(0.0, 0.0), centre=(0.0, 0.0), f=1000.0):
+        self.H = np.asarray(Hm, float) / Hm[2, 2]
+        self.k = np.asarray(k, float)
+        self.centre = np.asarray(centre, float)
+        self.f = float(f)
+
+    def ideal(self, ij):
+        return cv2.perspectiveTransform(np.asarray(ij, np.float64).reshape(1, -1, 2), self.H)[0]
+
+    def __call__(self, ij):
+        x = (self.ideal(ij) - self.centre) / self.f
+        r2 = (x * x).sum(1, keepdims=True)
+        return self.centre + self.f * x * (1 + self.k[0] * r2 + self.k[1] * r2 * r2)
+
+    def jacobian(self, ij, h=1e-3):
+        """(N, 2, 2) d(pixel)/d(i, j), numerically."""
+        ij = np.asarray(ij, float)
+        p0 = self(ij)
+        return np.stack([(self(ij + [h, 0]) - p0) / h, (self(ij + [0, h]) - p0) / h], -1)
+
+    def corner_shift(self, size):
+        """Distortion at the image corner, px (how far the lens moves a corner pixel)."""
+        x = (np.asarray(size, float) - self.centre) / self.f
+        r2 = (x * x).sum()
+        return float(self.f * np.sqrt(r2) * abs(self.k[0] * r2 + self.k[1] * r2 * r2))
+
+
+def fit_grid_model(ij, uv, centre, f, H0=None, k0=(0.0, 0.0), fit_k=True):
+    """Robust least squares of GridModel to labelled holes.  H0: starting homography (default: a RANSAC
+    homography).  soft-L1 loss so a few mislabelled holes don't bend the fit."""
+    from scipy.optimize import least_squares
+    ij, uv = np.asarray(ij, float), np.asarray(uv, float)
+    if H0 is None:
+        H0, _ = cv2.findHomography(ij, uv, cv2.RANSAC, 0.3 * _pitch_px(uv, ij))
+        if H0 is None:
+            return None
+    H0 = H0 / H0[2, 2]
+    x0 = np.r_[H0.ravel()[:8], k0 if fit_k else []]
+
+    def build(x):
+        Hm = np.r_[x[:8], 1.0].reshape(3, 3)
+        return GridModel(Hm, x[8:10] if fit_k else k0, centre, f)
+
+    def res(x):
+        return (build(x)(ij) - uv).ravel()
+
+    r = least_squares(res, x0, loss="soft_l1", f_scale=1.0, x_scale="jac", max_nfev=200)
+    return build(r.x)
+
+
 @dataclass
 class Lattice:
     ij: np.ndarray                 # (M, 2) relative lattice indices
     uv: np.ndarray                 # (M, 2) px
     det: np.ndarray                # (M,) index into the detections
-    H: np.ndarray                  # lattice (i, j, 1) -> pixel homography
-    rms: float                     # homography residual over the lattice, px
+    H: np.ndarray                  # lattice (i, j, 1) -> ideal-pixel homography (model.H)
+    rms: float                     # grid-model residual over the lattice, px
+    model: GridModel = None        # lattice -> pixel including lens distortion
+    expected: np.ndarray = None    # (K, 2) cells the model puts in view with no detection on them
 
 
 def grow_lattice(pts, tol=0.28, image_size=None, shapes=None):
@@ -193,23 +278,35 @@ def grow_lattice(pts, tol=0.28, image_size=None, shapes=None):
     return _fit_and_fill(pts, tree, det, ij, tol, image_size, shapes)
 
 
-def _fit_and_fill(pts, tree, det, ij, tol, image_size, shapes=None, rounds=3):
-    """Homography over the grown set; re-predict every lattice cell in view and snap to detections."""
-    for _ in range(rounds):
-        Hm, inl = cv2.findHomography(ij, pts[det], cv2.RANSAC, 0.15 * _pitch_px(pts[det], ij))
-        if Hm is None:
-            break
-        lo, hi = ij.min(0) - 3, ij.max(0) + 3
-        gi, gj = np.meshgrid(np.arange(lo[0], hi[0] + 1), np.arange(lo[1], hi[1] + 1), indexing="ij")
-        cells = np.stack([gi.ravel(), gj.ravel()], 1)
-        pred = cv2.perspectiveTransform(cells[None].astype(np.float64), Hm)[0]
-        if image_size is not None:
-            ok = (pred[:, 0] > -20) & (pred[:, 1] > -20) & (pred[:, 0] < image_size[0] + 20) & (pred[:, 1] < image_size[1] + 20)
-            cells, pred = cells[ok], pred[ok]
-        # local pitch at each predicted cell, for the snapping tolerance
-        dpi = cv2.perspectiveTransform((cells + [1, 0])[None].astype(np.float64), Hm)[0] - pred
-        dpj = cv2.perspectiveTransform((cells + [0, 1])[None].astype(np.float64), Hm)[0] - pred
-        loc = np.minimum(np.linalg.norm(dpi, axis=1), np.linalg.norm(dpj, axis=1))
+def _cells_in_view(model, ij, image_size, margin=3):
+    lo, hi = ij.min(0) - margin, ij.max(0) + margin
+    gi, gj = np.meshgrid(np.arange(lo[0], hi[0] + 1), np.arange(lo[1], hi[1] + 1), indexing="ij")
+    cells = np.stack([gi.ravel(), gj.ravel()], 1).astype(float)
+    pred = model(cells)
+    if image_size is not None:
+        ok = ((pred[:, 0] > -20) & (pred[:, 1] > -20) &
+              (pred[:, 0] < image_size[0] + 20) & (pred[:, 1] < image_size[1] + 20))
+        cells, pred = cells[ok], pred[ok]
+    return cells, pred
+
+
+def _fit_and_fill(pts, tree, det, ij, tol, image_size, shapes=None, rounds=4, f=None):
+    """Grid model (homography + radial lens distortion) over the grown set; re-predict every lattice
+    cell in view and snap to detections; refit; repeat."""
+    size = np.array(image_size if image_size is not None else pts.max(0) + pts.min(0), float)
+    centre, f = size / 2, (f if f else 0.55 * size.max())
+    model = None
+    for rnd in range(rounds):
+        # first round: straight homography only (the grown set may still hold a few bad labels);
+        # afterwards the lens distortion is fitted too, starting from the previous model
+        model = fit_grid_model(ij, pts[det], centre, f,
+                               H0=None if model is None else model.H,
+                               k0=(0.0, 0.0) if model is None else model.k, fit_k=rnd > 0)
+        if model is None:
+            return None
+        cells, pred = _cells_in_view(model, ij, image_size)
+        J = model.jacobian(cells)
+        loc = np.minimum(np.linalg.norm(J[:, :, 0], axis=1), np.linalg.norm(J[:, :, 1], axis=1))
         dist, q = tree.query(pred)
         good = dist < tol * loc
         # one detection per cell, one cell per detection (keep the closest)
@@ -217,16 +314,24 @@ def _fit_and_fill(pts, tree, det, ij, tol, image_size, shapes=None, rounds=3):
         for c, qq, dd in zip(cells[good], q[good], dist[good]):
             if qq not in best or dd < best[qq][1]:
                 best[qq] = (c, dd)
+        if len(best) < 6:
+            return None
         det = np.array(list(best.keys()))
         ij = np.array([best[k][0] for k in det], float)
+    model = fit_grid_model(ij, pts[det], centre, f, H0=model.H, k0=model.k)
     if shapes is not None:
-        Hm, _ = cv2.findHomography(ij, pts[det], 0)
-        det, ij, _ = _prune_shapes(det, ij, Hm, shapes)
+        det, ij, _ = _prune_shapes(det, ij, model, shapes)
     if len(det) < 6:
         return None
-    Hm, _ = cv2.findHomography(ij, pts[det], 0)
-    res = np.linalg.norm(cv2.perspectiveTransform(ij[None], Hm)[0] - pts[det], axis=1)
-    return Lattice(ij.astype(int), pts[det], det, Hm, float(np.sqrt((res ** 2).mean())))
+    model = fit_grid_model(ij, pts[det], centre, f, H0=model.H, k0=model.k)
+    res = np.linalg.norm(model(ij) - pts[det], axis=1)
+    # cells the model puts inside the image (with a hole's margin) that no detection claimed
+    cells, pred = _cells_in_view(model, ij, image_size, margin=6)
+    have = {tuple(c) for c in ij.astype(int)}
+    inside = ((pred[:, 0] > 15) & (pred[:, 1] > 15) &
+              (pred[:, 0] < size[0] - 15) & (pred[:, 1] < size[1] - 15))
+    missing = np.array([c for c, ok in zip(cells.astype(int), inside) if ok and tuple(c) not in have]).reshape(-1, 2)
+    return Lattice(ij.astype(int), pts[det], det, model.H, float(np.sqrt((res ** 2).mean())), model, missing)
 
 
 def _ellipse_cov(axes, angle_deg):
@@ -239,19 +344,26 @@ def _ellipse_cov(axes, angle_deg):
     return R @ D @ np.swapaxes(R, -1, -2)
 
 
-def _prune_shapes(det, ij, Hm, shapes, max_dev=0.2):
-    """Every hole is the same circle on the board, so its image is (to first order) the homography's
-    local Jacobian J applied to one common radius: covariance s * J J^T. Drop detections whose ellipse
-    is not that shape -- partly hidden behind the i1 chain, merged with a shadow, cut by an edge."""
+def _prune_shapes(det, ij, model, shapes, max_dev=0.25, radius=2.01):
+    """Drop detections whose ellipse doesn't match their lattice neighbours' -- partly hidden behind the
+    i1 chain, merged with a shadow, cut by an edge.
+
+    Compared LOCALLY (against the median ellipse of the matched holes within `radius` cells), not
+    against one global "flat circle seen through the grid model": a real hole is a cylinder, and away
+    from the optical axis the camera sees down its wall, so the dark ellipse changes shape smoothly across
+    the frame (plus defocus and chamfers) in a way a flat-disc model doesn't predict -- on real frames that
+    rejected most of the outer holes.  A smooth change passes; a single odd hole still stands out.
+    `model` is unused (kept for the call signature)."""
     axes, angles = shapes
     C = _ellipse_cov(axes[det], angles[det])
-    p0 = cv2.perspectiveTransform(ij[None], Hm)[0]
-    Ji = cv2.perspectiveTransform((ij + [1e-3, 0])[None], Hm)[0] - p0
-    Jj = cv2.perspectiveTransform((ij + [0, 1e-3])[None], Hm)[0] - p0
-    J = np.stack([Ji, Jj], -1) / 1e-3
-    JJ = J @ np.swapaxes(J, -1, -2)
-    s = np.median(np.trace(C, axis1=1, axis2=2) / np.trace(JJ, axis1=1, axis2=2))
-    dev = np.linalg.norm(C - s * JJ, axis=(1, 2)) / np.linalg.norm(s * JJ, axis=(1, 2))
+    tree = cKDTree(ij)
+    dev = np.zeros(len(det))
+    for n in range(len(det)):
+        nb = [m for m in tree.query_ball_point(ij[n], radius) if m != n]
+        if len(nb) < 3:
+            continue                                     # too isolated to judge: keep
+        Cm = np.median(C[nb], axis=0)
+        dev[n] = np.linalg.norm(C[n] - Cm) / np.linalg.norm(Cm)
     keep = dev < max_dev
     return det[keep], ij[keep], dev
 
