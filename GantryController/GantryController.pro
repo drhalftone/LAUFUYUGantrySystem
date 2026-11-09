@@ -12,6 +12,7 @@
 
 QT       += core gui widgets opengl openglwidgets
 CONFIG   += c++17
+CONFIG   += no_batch          # nmake batch rules otherwise compile ../FuyuRailController/main.cpp in place of ours
 TEMPLATE  = app
 DEFINES  += NOMINMAX          # pylon pulls in windows.h; keep its min/max macros away from std::min/max
 TARGET    = GantryController
@@ -24,6 +25,10 @@ simulate: DEFINES += FUYU_SIMULATE
 
 HEADERS += \
     laugantrymainwindow.h \
+    lauplatenmosaic.h \
+    lauimageinspectdialog.h \
+    lauplatenoverlay.h \
+    laurailpredictor.h \
     $$CAMERA_DIR/lauholegrid.h \
     $$CAMERA_DIR/laubreadboardcalibration.h \
     $$CAMERA_DIR/laubaslergrabber.h \
@@ -34,6 +39,9 @@ HEADERS += \
 SOURCES += \
     main.cpp \
     laugantrymainwindow.cpp \
+    lauplatenmosaic.cpp \
+    lauimageinspectdialog.cpp \
+    lauplatenoverlay.cpp \
     $$CAMERA_DIR/lauholegrid.cpp \
     $$CAMERA_DIR/laubreadboardcalibration.cpp \
     $$CAMERA_DIR/laubaslergrabber.cpp \

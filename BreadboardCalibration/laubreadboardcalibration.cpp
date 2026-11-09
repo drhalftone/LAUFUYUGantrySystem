@@ -363,6 +363,37 @@ LAUBreadboardCalibrationResult LAUBreadboardCalibration::calibrate(const cv::Mat
 }
 
 // =============================================================================================== save
+bool LAUBreadboardCalibration::boardFootprint(const LAUBreadboardCalibrationResult &R, double *acrossMM, double *alongMM)
+{
+    if (!R.ok || R.heightMM <= 0.0) {
+        return false;
+    }
+    const double W = R.imageSize.width - 1, H = R.imageSize.height - 1;
+    const std::vector<cv::Point2d> corners{ { 0, 0 }, { W, 0 }, { 0, H }, { W, H } };
+    std::vector<cv::Point2d> rays;
+    cv::undistortPoints(corners, rays, cv::Mat(R.K), cv::Mat(1, 5, CV_64F, const_cast<double *>(R.dist)));
+
+    const double tilt = R.tiltDeg * CV_PI / 180.0;
+    double nearAcross = 0.0, nearestDepth = 1e12, lowest = 1e12, highest = -1e12;
+    for (const cv::Point2d &ray : rays) {
+        const double denominator = std::cos(tilt) + ray.y * std::sin(tilt);
+        if (denominator <= 0.05) {
+            return false;                                       // this corner looks at the horizon, not the board
+        }
+        const double depth = R.heightMM / denominator;          // along the optical axis, to the board
+        const double reach = depth * (std::sin(tilt) - ray.y * std::cos(tilt));
+        lowest = std::min(lowest, reach);
+        highest = std::max(highest, reach);
+        if (depth < nearestDepth) {
+            nearestDepth = depth;
+            nearAcross = 2.0 * depth * std::abs(ray.x);
+        }
+    }
+    *acrossMM = nearAcross;
+    *alongMM = highest - lowest;
+    return true;
+}
+
 bool LAUBreadboardCalibration::save(const LAUBreadboardCalibrationResult &R, const QString &folder, QString *error)
 {
     QDir dir(folder);

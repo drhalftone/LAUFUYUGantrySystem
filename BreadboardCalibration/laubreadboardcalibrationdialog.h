@@ -83,6 +83,11 @@ public:
     void beginScan();
     void endScan(const QString &message);
     void requestScanFrame();
+    const LAUBreadboardCalibrationResult &calibrationResult() const
+    {
+        return result;
+    }
+    void setGuides(const LAUViewOverlay &overlay);    // drawn over the video unless turned off on the menu
     void showMessage(const QString &text)
     {
         setStatus(text);
@@ -97,6 +102,7 @@ private slots:
     void onResult(LAUBreadboardCalibrationResult result);
     void onCalibrateClicked();
     void onOpenFolderClicked();
+    void onExportFrame();
     void onCameraError(QString message);
     void onLiveFinished(int code);
 
@@ -112,6 +118,9 @@ private:
     QLabel *camera = nullptr;
     QAction *calibrateAction = nullptr;
     QAction *folderAction = nullptr;
+    QAction *exportAction = nullptr;
+    QAction *guidesAction = nullptr;
+    LAUViewOverlay guides;
 
     LAUBaslerGrabber *grabber = nullptr;
     QThread calibrationThread;
@@ -130,6 +139,9 @@ private:
 
     void startLive();
     void requestLiveFrame();
+    void useLensInView();
+    void saveLens() const;
+    bool restoreLens();
     void applyResult(const LAUBreadboardCalibrationResult &r);    void showView();
     void setStatus(const QString &text);
 };

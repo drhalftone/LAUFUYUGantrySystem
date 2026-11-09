@@ -13,7 +13,12 @@
 #include <QJsonArray>
 #include <QMainWindow>
 #include <QProgressBar>
+#include <QThread>
 
+#include "lauplatenmosaic.h"
+#include "lauplatenoverlay.h"
+#include "laurailpredictor.h"
+#include <QElapsedTimer>
 #include "laubreadboardcalibrationdialog.h"
 #include "lauvelmexwidget.h"
 
@@ -47,8 +52,17 @@ class LAUGantryMainWindow : public QMainWindow
 
 public:
     explicit LAUGantryMainWindow(QWidget *parent = nullptr);
+    ~LAUGantryMainWindow() override;
+
+signals:
+    void emitMerge(LAUPlatenMosaicRequest request);
 
 private slots:
+    void onRailCount(int count, int dim);
+    void onRailMove(int target, double speed, double accel, int dim);
+    void onGuideTimer();
+    void onMergeProgress(QString text);
+    void onMergeFinished(LAUPlatenMosaicResult result);
     void onRailsEnabled(bool state);
     void onGoHome();
     void onHomeFinished(bool ok, QString message);
@@ -78,6 +92,26 @@ private:
     QString scanFolder;
     QJsonArray scanFrames;
 
+    // merging runs in its own thread so the live picture keeps moving
+    QThread mergeThread;
+    LAUPlatenMosaic *merger = nullptr;
+
+    // after a completed scan the rails go home while it merges; the window unlocks once both are done
+    bool returningHome = false;
+    bool merging = false;
+    QString wrapUpMessage, wrapUpNote, wrapUpImage;
+
+    void returnHomeAfterScan();
+    void wrapUp();
+    void startMerge(const QString &bareFolder);
+
+    // what should be on the platen at the rails' current position
+    LAUPlatenOverlay platenOverlay;
+    LAURailPredictor singleRail, pairRail;   // reports come twice a second; these fill in between, for drawing only
+    QElapsedTimer guideClock;
+    QTimer *guideTimer = nullptr;
+    void loadGuides();
+    void updateGuides();
     void moveToNextStop();
     void onScanMoveFinished(bool ok, const QString &message);
     bool saveScanFrame(const cv::Mat &raw16, double exposureMs);

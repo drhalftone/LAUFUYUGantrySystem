@@ -8,17 +8,28 @@
 #include <vector>
 #include <algorithm>
 #include <QDebug>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPainter>
 #include <QSurfaceFormat>
 #include <QVector2D>
 #include <QVector3D>
 #include <QVector4D>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/calib3d.hpp>
 
 namespace
 {
     const int SMALL_SCALE = 8;               // the neighbourhood blur runs at 1/8 scale; it is smooth anyway
     const int STATS_SCALE = 4;               // display percentiles come from every 4th pixel
+
+    const double MAX_VIEW_ZOOM = 40.0;       // times the size at which the whole picture fits
+    const double WHEEL_RATE = 1.0015;        // zoom per unit of wheel (one notch is 120 units)
+    const double VELOCITY_SMOOTHING_S = 0.05;
+    const double RELEASE_STALE_S = 0.08;     // held still this long before letting go: no coasting
+    const double FRICTION_PER_S = 3.5;
+    const double MIN_COAST_SPEED = 25.0;     // px per second
+    const int COAST_INTERVAL_MS = 16;
 
     const char *VERTEX_SOURCE = R"(#version 330 core
 out vec2 uv;
@@ -104,11 +115,17 @@ uniform int correcting;
 uniform vec4 cameraK;       // fx, fy, cx, cy of the lens
 uniform vec4 cameraNewK;    // the same of the corrected picture
 uniform vec3 radial;        // k1, k2, k3
+uniform vec4 view;          // picture place = view.xy + window place * view.zw, window place 0..1 from the top left
 out vec4 color;
 void main()
 {
     vec2 size = vec2(textureSize(raw, 0));
-    vec2 source = vec2(uv.x, 1.0 - uv.y) * size - 0.5;    // the frame's first row is the top of the screen
+    vec2 here = view.xy + vec2(uv.x, 1.0 - uv.y) * view.zw;    // the frame's first row is the top of the screen
+    if (here.x < 0.0 || here.y < 0.0 || here.x > 1.0 || here.y > 1.0) {
+        color = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    vec2 source = here * size - 0.5;
     if (correcting != 0) {
         vec2 ideal = (source - cameraNewK.zw) / cameraNewK.xy;
         float r2 = dot(ideal, ideal);
@@ -129,10 +146,16 @@ void main()
     const char *IMAGE_SOURCE = R"(#version 330 core
 in vec2 uv;
 uniform sampler2D picture;
+uniform vec4 view;
 out vec4 color;
 void main()
 {
-    color = vec4(texture(picture, vec2(uv.x, 1.0 - uv.y)).rgb, 1.0);
+    vec2 here = view.xy + vec2(uv.x, 1.0 - uv.y) * view.zw;
+    if (here.x < 0.0 || here.y < 0.0 || here.x > 1.0 || here.y > 1.0) {
+        color = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    color = vec4(texture(picture, here).rgb, 1.0);
 }
 )";
 
@@ -172,6 +195,11 @@ LAUImageView::LAUImageView(QWidget *parent) : QOpenGLWidget(parent)
     format.setVersion(3, 3);
     format.setProfile(QSurfaceFormat::CoreProfile);
     setFormat(format);
+
+    setCursor(Qt::OpenHandCursor);
+    coastTimer = new QTimer(this);
+    coastTimer->setInterval(COAST_INTERVAL_MS);
+    connect(coastTimer, &QTimer::timeout, this, &LAUImageView::onCoast);
 }
 
 LAUImageView::~LAUImageView()
@@ -217,12 +245,14 @@ void LAUImageView::setUndistortion(const cv::Matx33d &K, const double dist[5], c
     cameraK = K;
     cameraNewK = newK;
     std::copy(dist, dist + 5, cameraDist);
+    overlayDirty = true;
     update();
 }
 
 void LAUImageView::enableUndistortion(bool state)
 {
     correcting = state;
+    overlayDirty = true;
     update();
 }
 
@@ -364,18 +394,149 @@ void LAUImageView::processFrame()
     glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
 }
 
-void LAUImageView::fitViewport(const QSize &picture)
+QSize LAUImageView::pictureSize() const
+{
+    return showingFrame ? QSize(frame.cols, frame.rows) : image.size();
+}
+
+double LAUImageView::screenScale() const
+{
+    const QSize picture = pictureSize();
+    if (picture.isEmpty()) {
+        return 1.0;
+    }
+    return zoom * qMin(width() / (double)picture.width(), height() / (double)picture.height());
+}
+
+bool LAUImageView::clampCentre()
+{
+    const QSize picture = pictureSize();
+    if (picture.isEmpty()) {
+        return false;
+    }
+    const QPointF before = centre;
+    const double s = screenScale();
+    const double halfX = width() / (2.0 * s * picture.width()), halfY = height() / (2.0 * s * picture.height());
+    centre.setX(halfX >= 0.5 ? 0.5 : qBound(halfX, centre.x(), 1.0 - halfX));
+    centre.setY(halfY >= 0.5 ? 0.5 : qBound(halfY, centre.y(), 1.0 - halfY));
+    if (!qFuzzyCompare(1.0 + before.x(), 1.0 + centre.x())) {
+        velocity.setX(0.0);
+    }
+    if (!qFuzzyCompare(1.0 + before.y(), 1.0 + centre.y())) {
+        velocity.setY(0.0);
+    }
+    return centre != before;
+}
+
+void LAUImageView::setViewUniform(QOpenGLShaderProgram *program)
 {
     const qreal ratio = devicePixelRatioF();
-    const QSize device(qRound(width() * ratio), qRound(height() * ratio));
-    const QSize fitted = picture.scaled(device, Qt::KeepAspectRatio);
-    glViewport((device.width() - fitted.width()) / 2, (device.height() - fitted.height()) / 2, fitted.width(), fitted.height());
+    glViewport(0, 0, qRound(width() * ratio), qRound(height() * ratio));
+
+    clampCentre();                           // the window may have changed size
+    const QSize picture = pictureSize();
+    const double s = screenScale();
+    const double sizeX = width() / (s * picture.width()), sizeY = height() / (s * picture.height());
+    program->setUniformValue("view", QVector4D(centre.x() - sizeX / 2.0, centre.y() - sizeY / 2.0, sizeX, sizeY));
+}
+
+void LAUImageView::stopCoasting()
+{
+    coastTimer->stop();
+    velocity = QPointF();
+}
+
+void LAUImageView::wheelEvent(QWheelEvent *event)
+{
+    const QSize picture = pictureSize();
+    if (picture.isEmpty()) {
+        return;
+    }
+    stopCoasting();
+
+    // the picture point under the mouse stays under the mouse
+    const QPointF offset = event->position() - QPointF(width() / 2.0, height() / 2.0);
+    const double before = screenScale();
+    const QPointF under = centre + QPointF(offset.x() / (before * picture.width()), offset.y() / (before * picture.height()));
+    zoom = qBound(1.0, zoom * std::pow(WHEEL_RATE, event->angleDelta().y()), MAX_VIEW_ZOOM);
+    const double after = screenScale();
+    centre = under - QPointF(offset.x() / (after * picture.width()), offset.y() / (after * picture.height()));
+    clampCentre();
+    update();
+    event->accept();
+}
+
+void LAUImageView::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();                     // the right button belongs to the owner's menu
+        return;
+    }
+    stopCoasting();
+    dragging = true;
+    lastMouse = event->position();
+    moveClock.restart();
+    setCursor(Qt::ClosedHandCursor);
+}
+
+void LAUImageView::mouseMoveEvent(QMouseEvent *event)
+{
+    const QSize picture = pictureSize();
+    if (!dragging || picture.isEmpty()) {
+        return;
+    }
+    const QPointF delta = event->position() - lastMouse;
+    const double dt = qMax(moveClock.restart() / 1000.0, 0.001);
+    lastMouse = event->position();
+
+    const double blend = qMin(dt / VELOCITY_SMOOTHING_S, 1.0);
+    velocity = velocity * (1.0 - blend) + (delta / dt) * blend;
+    const double s = screenScale();
+    centre -= QPointF(delta.x() / (s * picture.width()), delta.y() / (s * picture.height()));
+    const QPointF held = velocity;           // reaching an edge mid-drag shouldn't change the throw
+    clampCentre();
+    velocity = held;
+    update();
+}
+
+void LAUImageView::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton || !dragging) {
+        event->ignore();
+        return;
+    }
+    dragging = false;
+    setCursor(Qt::OpenHandCursor);
+    if (moveClock.elapsed() / 1000.0 > RELEASE_STALE_S || std::hypot(velocity.x(), velocity.y()) < MIN_COAST_SPEED) {
+        velocity = QPointF();
+        return;
+    }
+    coastClock.restart();
+    coastTimer->start();
+}
+
+void LAUImageView::onCoast()
+{
+    const QSize picture = pictureSize();
+    if (picture.isEmpty()) {
+        stopCoasting();
+        return;
+    }
+    const double dt = qMax(coastClock.restart() / 1000.0, 0.001);
+    const double s = screenScale();
+    centre -= QPointF(velocity.x() * dt / (s * picture.width()), velocity.y() * dt / (s * picture.height()));
+    clampCentre();                           // zeroes the direction that ran into an edge
+    velocity *= std::exp(-FRICTION_PER_S * dt);
+    if (std::hypot(velocity.x(), velocity.y()) < MIN_COAST_SPEED) {
+        stopCoasting();
+    }
+    update();
 }
 
 void LAUImageView::drawFrame()
 {
-    fitViewport(QSize(rawSize.width, rawSize.height));
     frameProgram->bind();
+    setViewUniform(frameProgram);
     bindTexture(0, rawTexture);
     bindTexture(1, localFbo->texture());
     frameProgram->setUniformValue("raw", 0);
@@ -402,11 +563,87 @@ void LAUImageView::drawImage()
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         imageDirty = false;
     }
-    fitViewport(image.size());
     imageProgram->bind();
+    setViewUniform(imageProgram);
     bindTexture(0, imageTexture);
     imageProgram->setUniformValue("picture", 0);
     drawQuad();
+}
+
+void LAUImageView::setOverlay(const LAUViewOverlay &newOverlay)
+{
+    overlay = newOverlay;
+    overlayDirty = true;
+    update();
+}
+
+// the overlay arrives in raw camera pixels; the picture may be showing the lens-corrected frame
+void LAUImageView::prepareOverlay()
+{
+    overlayDirty = false;
+    shownOverlay = overlay;
+    if (!correcting) {
+        return;
+    }
+    const cv::Mat K(cameraK), newK(cameraNewK), dist(1, 5, CV_64F, cameraDist);
+    std::vector<cv::Point2d> raw, fixed;
+    for (LAUViewOverlayLayer &layer : shownOverlay.layers) {
+        for (QPolygonF &path : layer.paths) {
+            raw.resize(path.count());
+            for (int n = 0; n < path.count(); n++) {
+                raw[n] = cv::Point2d(path[n].x(), path[n].y());
+            }
+            cv::undistortPoints(raw, fixed, K, dist, cv::noArray(), newK);
+            for (int n = 0; n < path.count(); n++) {
+                path[n] = QPointF(fixed[n].x, fixed[n].y);
+            }
+        }
+    }
+}
+
+void LAUImageView::drawOverlay()
+{
+    if (overlay.layers.isEmpty()) {
+        return;
+    }
+    if (overlayDirty) {
+        prepareOverlay();
+    }
+    const QSize picture = pictureSize();
+    const double s = screenScale();
+    const QPointF middle(width() / 2.0, height() / 2.0);
+
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPolygonF window;
+    for (const LAUViewOverlayLayer &layer : shownOverlay.layers) {
+        p.setPen(QPen(layer.color, layer.width));
+        for (const QPolygonF &path : layer.paths) {
+            window.resize(path.count());
+            for (int n = 0; n < path.count(); n++) {
+                window[n] = middle + QPointF((path[n].x() + 0.5 - centre.x() * picture.width()) * s,
+                                             (path[n].y() + 0.5 - centre.y() * picture.height()) * s);
+            }
+            p.drawPolyline(window);
+        }
+    }
+
+    // the key, on a dark strip so it reads over any picture
+    const int lineHeight = p.fontMetrics().height() + 2;
+    int widest = 0;
+    for (const LAUViewOverlayLayer &layer : shownOverlay.layers) {
+        widest = qMax(widest, p.fontMetrics().horizontalAdvance(layer.label));
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.fillRect(QRect(6, 6, widest + 44, lineHeight * shownOverlay.layers.count() + 8), QColor(0, 0, 0, 170));
+    int y = 10;
+    for (const LAUViewOverlayLayer &layer : shownOverlay.layers) {
+        p.setPen(QPen(layer.color, 2.0));
+        p.drawLine(12, y + lineHeight / 2, 36, y + lineHeight / 2);
+        p.setPen(Qt::white);
+        p.drawText(QRect(42, y, widest + 4, lineHeight), Qt::AlignLeft | Qt::AlignVCenter, layer.label);
+        y += lineHeight;
+    }
 }
 
 void LAUImageView::paintGL()
@@ -434,6 +671,9 @@ void LAUImageView::paintGL()
         }
         vao.release();
         glUseProgram(0);
+        if (haveFrame) {
+            drawOverlay();
+        }
         return;
     }
 

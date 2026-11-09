@@ -12,20 +12,28 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QStandardPaths>
+
+#include "lauimageinspectdialog.h"
 #include <QVBoxLayout>
 #include <cmath>
 
 namespace
 {
-    // the same spacing as the scans the Python pipeline was proven on, across the full travel
-    const int SCAN_STOPS_X = 7;              // single rail, 610 mm: the light axis does the stepping
-    const int SCAN_STOPS_Y = 5;              // rail pair, 310 mm
+    // The number of stops comes from the calibrated view, so a different lens needs no change here: each step
+    // is at most this fraction of the view, which leaves room for the i1 cradle hiding part of every frame.
+    const double SCAN_MAX_STEP_OF_VIEW = 0.40;
     const int SCAN_SETTLE_MS = 500;
+    const int GUIDE_REDRAW_MS = 25;          // how often the guides move while a rail is moving
     const int SCAN_FRAME_TIMEOUT_MS = 15000;
     const double HALF_PITCH_MM = 12.7;
 
     // Evenly spaced stops.  A step that is a whole number of half hole-pitches would hide a wrong
     // direction from the Python calibration (see vision/scan_map.py), so nudge the step off them.
+    int stopsForTravel(double travelMM, double viewMM)
+    {
+        return qMax(2, (int)std::ceil(travelMM / (SCAN_MAX_STEP_OF_VIEW * viewMM)) + 1);
+    }
+
     QList<double> axisStops(double low, double high, int count)
     {
         double step = (high - low) / (count - 1);
@@ -135,6 +143,159 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     scanTimer = new QTimer(this);
     scanTimer->setSingleShot(true);
     connect(scanTimer, &QTimer::timeout, this, &LAUGantryMainWindow::onScanTimer);
+
+    qRegisterMetaType<LAUPlatenMosaicRequest>("LAUPlatenMosaicRequest");
+    qRegisterMetaType<LAUPlatenMosaicResult>("LAUPlatenMosaicResult");
+    merger = new LAUPlatenMosaic();
+    merger->moveToThread(&mergeThread);
+    connect(&mergeThread, &QThread::finished, merger, &QObject::deleteLater);
+    connect(this, &LAUGantryMainWindow::emitMerge, merger, &LAUPlatenMosaic::onMerge, Qt::QueuedConnection);
+    connect(merger, &LAUPlatenMosaic::emitProgress, this, &LAUGantryMainWindow::onMergeProgress, Qt::QueuedConnection);
+    connect(merger, &LAUPlatenMosaic::emitFinished, this, &LAUGantryMainWindow::onMergeFinished, Qt::QueuedConnection);
+    mergeThread.start();
+
+    connect(railWidget, &LAUMultiVelmexWidget::emitRailCount, this, &LAUGantryMainWindow::onRailCount);
+    connect(railWidget, &LAUMultiVelmexWidget::emitRailMove, this, &LAUGantryMainWindow::onRailMove);
+    guideClock.start();
+    guideTimer = new QTimer(this);
+    guideTimer->setInterval(GUIDE_REDRAW_MS);
+    connect(guideTimer, &QTimer::timeout, this, &LAUGantryMainWindow::onGuideTimer);
+    loadGuides();
+}
+
+void LAUGantryMainWindow::loadGuides()
+{
+    platenOverlay.load(QSettings().value(QString("LAUGantryMainWindow::bareScanFolder")).toString());
+    updateGuides();
+}
+
+void LAUGantryMainWindow::updateGuides()
+{
+    double xLow, xHigh, yLow, yHigh;
+    if (!platenOverlay.isValid() || !singleRail.isKnown() || !pairRail.isKnown() ||
+        !railWidget->scanRange(0, &xLow, &xHigh) || !railWidget->scanRange(2, &yLow, &yHigh)) {
+        cameraWidget->setGuides(LAUViewOverlay());      // without the rails' position there is nothing true to draw
+        return;
+    }
+    const double now = guideClock.elapsed() / 1000.0;
+    cameraWidget->setGuides(platenOverlay.build(pairRail.estimate(now), singleRail.estimate(now), xLow, xHigh, yLow, yHigh));
+}
+
+void LAUGantryMainWindow::onRailCount(int count, int dim)
+{
+    if (dim != 0 && dim != 2) {
+        return;
+    }
+    LAURailPredictor &rail = (dim == 0) ? singleRail : pairRail;
+    const double now = guideClock.elapsed() / 1000.0, mm = count / 1000.0;
+    const bool same = rail.isKnown() && !rail.isMoving() && rail.estimate(now) == mm;
+    rail.report(mm, now);
+    if (!same) {
+        updateGuides();
+    }
+}
+
+void LAUGantryMainWindow::onRailMove(int target, double speed, double accel, int dim)
+{
+    if (dim != 0 && dim != 2) {
+        return;
+    }
+    ((dim == 0) ? singleRail : pairRail).command(target / 1000.0, speed, accel, guideClock.elapsed() / 1000.0);
+    if (singleRail.isMoving() || pairRail.isMoving()) {
+        guideTimer->start();
+    }
+}
+
+void LAUGantryMainWindow::onGuideTimer()
+{
+    if (!singleRail.isMoving() && !pairRail.isMoving()) {
+        guideTimer->stop();
+    }
+    updateGuides();
+}
+
+LAUGantryMainWindow::~LAUGantryMainWindow()
+{
+    merger->cancel();
+    mergeThread.quit();
+    mergeThread.wait();
+}
+
+void LAUGantryMainWindow::startMerge(const QString &bareFolder)
+{
+    LAUPlatenMosaicRequest request;
+    request.scanFolder = scanFolder;
+    request.bareFolder = bareFolder;
+    if (!railWidget->scanRange(0, &request.sliderXLow, &request.sliderXHigh) ||
+        !railWidget->scanRange(2, &request.sliderYLow, &request.sliderYHigh)) {
+        wrapUpMessage = QString("The scan is saved in %1, but the sliders' travel isn't known, so it wasn't merged.").arg(QDir::toNativeSeparators(scanFolder));
+        wrapUp();
+        return;
+    }
+
+    merging = true;
+    cameraWidget->showMessage(QString("Merging the scan..."));
+    emit emitMerge(request);
+}
+
+void LAUGantryMainWindow::returnHomeAfterScan()
+{
+    scanning = false;
+    waitingForFrame = false;
+    scanTimer->stop();
+    if (homeDialog) {
+        homeDialog->finish();
+        homeDialog = nullptr;
+    }
+    wrapUpMessage.clear();
+    wrapUpNote.clear();
+    wrapUpImage.clear();
+
+    returningHome = true;
+    railWidget->goToHome();                  // can report back before it returns, if the move can't start
+    if (returningHome && railWidget->isHoming()) {
+        homeDialog = new LAUHomeDialog(this);
+        homeDialog->setWindowTitle(QString("Scan Complete"));
+        homeDialog->setMessage(QString("Scan complete. Returning the sliders to their home position..."));
+        connect(homeDialog, &LAUHomeDialog::emitAbort, this, &LAUGantryMainWindow::onAbort);
+        homeDialog->open();
+    } else if (returningHome) {
+        returningHome = false;
+        wrapUpNote = QString("\nThe sliders did not return to their home position.");
+    }
+}
+
+void LAUGantryMainWindow::wrapUp()
+{
+    if (merging || returningHome) {
+        return;
+    }
+    const QString image = wrapUpImage;
+    finishScan(wrapUpMessage + wrapUpNote);
+    loadGuides();                            // a new platen calibration may have just been saved
+    if (!image.isEmpty()) {
+        const QImage merged(image);
+        if (merged.isNull()) {
+            cameraWidget->showMessage(QString("Couldn't open the merged picture %1").arg(QDir::toNativeSeparators(image)));
+            return;
+        }
+        LAUImageInspectDialog *inspect = new LAUImageInspectDialog(merged, QString("Merged Platen"), this);
+        inspect->setAttribute(Qt::WA_DeleteOnClose);
+        inspect->show();
+    }
+}
+
+void LAUGantryMainWindow::onMergeProgress(QString text)
+{
+    cameraWidget->showMessage(text);
+}
+
+void LAUGantryMainWindow::onMergeFinished(LAUPlatenMosaicResult result)
+{
+    merging = false;
+    wrapUpMessage = result.ok ? QString("Merged. Results are in %1").arg(QDir::toNativeSeparators(result.folder)) : result.message;
+    wrapUpImage = result.ok ? result.gridImage : QString();
+    wrapUp();
 }
 
 void LAUGantryMainWindow::onAbort()
@@ -162,19 +323,28 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
         return;
     }
 
-    const int total = SCAN_STOPS_X * SCAN_STOPS_Y;
+    // the camera's mount fixes which way it faces: across the picture is the single rail (X), up it is the pair (Y)
+    double viewAcross, viewAlong;
+    if (!LAUBreadboardCalibration::boardFootprint(cameraWidget->calibrationResult(), &viewAcross, &viewAlong)) {
+        cameraWidget->showMessage(QString("The camera's view of the platen isn't known. Calibrate the camera first."));
+        return;
+    }
+    const int stopsX = stopsForTravel(xHigh - xLow, viewAcross);
+    const int stopsY = stopsForTravel(yHigh - yLow, viewAlong);
+    const int total = stopsX * stopsY;
     const QString title = withTarget ? QString("Scan Platen") : QString("Calibrate Platen");
     const QMessageBox::StandardButton answer = QMessageBox::warning(this, title,
         (withTarget ? QString("Place the target on the platen.") : QString("Clear everything off the platen: this pass needs to see all the holes.")) +
-        QString("\n\nThe sliders will travel across the whole platen and stop at %1 positions. Make sure nothing is in their way.").arg(total),
+        QString("\n\nThe camera sees %1 x %2 mm of the platen, so the sliders will stop at %3 positions (%4 x %5). Make sure nothing is in their way.")
+            .arg(viewAcross, 0, 'f', 0).arg(viewAlong, 0, 'f', 0).arg(total).arg(stopsX).arg(stopsY),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Ok) {
         return;
     }
 
     // back and forth along the single rail, stepping the heavy rail pair only between rows
-    const QList<double> xs = axisStops(xLow, xHigh, SCAN_STOPS_X);
-    const QList<double> ys = axisStops(yLow, yHigh, SCAN_STOPS_Y);
+    const QList<double> xs = axisStops(xLow, xHigh, stopsX);
+    const QList<double> ys = axisStops(yLow, yHigh, stopsY);
     scanStops.clear();
     for (int j = 0; j < ys.count(); j++) {
         for (int i = 0; i < xs.count(); i++) {
@@ -247,20 +417,22 @@ void LAUGantryMainWindow::onScanFrame(cv::Mat raw16, double exposureMs)
         return;
     }
 
-    const QString folder = QDir::toNativeSeparators(scanFolder);
+    returnHomeAfterScan();
+
     QSettings settings;
-    QString command;
     if (scanWithTarget) {
         const QString bare = settings.value(QString("LAUGantryMainWindow::bareScanFolder")).toString();
-        command = bare.isEmpty() ? QString("Run a bare platen scan too, then in vision: python mosaic.py \"%1\" --calib \"<bare scan>\\out\"").arg(folder)
-                                 : QString("Next, in vision: python mosaic.py \"%1\" --calib \"%2\\out\"").arg(folder, bare);
+        if (bare.isEmpty()) {
+            wrapUpMessage = QString("Scan saved in %1, but it can't be merged until the platen has been calibrated. Run Calibrate platen first.")
+                                .arg(QDir::toNativeSeparators(scanFolder));
+            wrapUp();
+            return;
+        }
+        startMerge(bare);
     } else {
-        settings.setValue(QString("LAUGantryMainWindow::bareScanFolder"), folder);
-        command = QString("Next, in vision: python scan_map.py \"%1\" --axes %2x,%3y").arg(folder)
-                      .arg(railWidget->homeDirection(2) == 1 ? QString("+") : QString("-"))
-                      .arg(railWidget->homeDirection(0) == 1 ? QString("+") : QString("-"));
+        settings.setValue(QString("LAUGantryMainWindow::bareScanFolder"), scanFolder);
+        startMerge(QString());
     }
-    finishScan(QString("Scan complete: %1 frames saved to %2\n%3").arg(scanStops.count()).arg(folder, command));
 }
 
 bool LAUGantryMainWindow::saveScanFrame(const cv::Mat &raw16, double exposureMs)
@@ -291,7 +463,7 @@ bool LAUGantryMainWindow::saveScanFrame(const cv::Mat &raw16, double exposureMs)
     QJsonObject scan;
     scan["image_size"] = QJsonArray{ raw16.cols, raw16.rows };
     scan["pixel_mm"] = LAUBreadboardCalibration::PIXEL_MM;
-    scan["focal_mm"] = LAUBreadboardCalibration::NOMINAL_FOCAL_MM;
+    scan["focal_mm"] = cameraWidget->calibrationResult().focalMM;      // the merge scales its hole search by this lens
     scan["carriage_axes"] = QString("carriage_mm = [rail pair (Y, SDK axis 2), single rail (X, SDK axis 0)]");
     scan["left_end"] = QJsonObject{ { "x_single_rail", railWidget->homeDirection(0) == 1 ? QString("motor") : QString("idler") },
                                     { "y_rail_pair", railWidget->homeDirection(2) == 1 ? QString("motor") : QString("idler") } };
@@ -335,6 +507,18 @@ void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
 {
     if (scanning) {
         onScanMoveFinished(ok, message);
+        return;
+    }
+    if (returningHome) {
+        returningHome = false;
+        if (homeDialog) {
+            homeDialog->finish();
+            homeDialog = nullptr;
+        }
+        if (!ok) {
+            wrapUpNote = QString("\nThe sliders did not return to their home position: %1").arg(message);
+        }
+        wrapUp();
         return;
     }
     if (homeDialog) {

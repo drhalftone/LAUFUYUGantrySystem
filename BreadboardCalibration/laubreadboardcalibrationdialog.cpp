@@ -6,11 +6,14 @@
 #include <QDir>
 #include <QUrl>
 #include <QDateTime>
+#include <QSettings>
+#include <QVariantList>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QDialogButtonBox>
 #include <QMessageBox>
+#include <QFileDialog>
 #include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QStandardPaths>
@@ -221,6 +224,10 @@ LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) 
     connect(folderAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onOpenFolderClicked);
     addAction(folderAction);
 
+    exportAction = new QAction(QString("Export frame to disk..."), this);
+    connect(exportAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onExportFrame);
+    addAction(exportAction);
+
     view = new LAUImageView();
     layout->addWidget(view, 1);
 
@@ -251,6 +258,10 @@ LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) 
         camera->setText(QString("Camera: %1").arg(name));
     });
     grabber->start();
+
+    if (restoreLens()) {
+        useLensInView();
+    }
 }
 
 LAUBreadboardCalibrationWidget::~LAUBreadboardCalibrationWidget()
@@ -382,6 +393,19 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     scanTargetAction->setEnabled(false);
     connect(scanTargetAction, &QAction::triggered, this, [this]() { emit emitScanRequested(true); });
     addAction(scanTargetAction);
+
+    guidesAction = new QAction(QString("Show platen guides"), this);
+    guidesAction->setCheckable(true);
+    guidesAction->setChecked(true);
+    connect(guidesAction, &QAction::toggled, this, [this](bool state) { view->setOverlay(state ? guides : LAUViewOverlay()); });
+    addAction(guidesAction);
+    addAction(exportAction);
+
+    if (result.ok) {                         // restored from the last session
+        scanBareAction->setEnabled(true);
+        scanTargetAction->setEnabled(true);
+        setStatus(result.message);
+    }
 }
 
 void LAUBreadboardCalibrationWidget::beginScan()
@@ -456,12 +480,8 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
         setStatus(result.message + QString("\nCouldn't save the results: %1").arg(err));
     }
 
-    // the same camera matrix as result.undistorted, so the live video lines up with it
-    const cv::Mat K(result.K);
-    const cv::Mat dist(1, 5, CV_64F, result.dist);
-    const cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, result.imageSize, 0);
-    view->setUndistortion(result.K, result.dist, cv::Matx33d(newK));
-    view->enableUndistortion(true);
+    saveLens();
+    useLensInView();
     showView();
     if (scanBareAction) {
         scanBareAction->setEnabled(true);
@@ -469,9 +489,116 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
     }
 }
 
+void LAUBreadboardCalibrationWidget::useLensInView()
+{
+    // the same camera matrix as result.undistorted, so the live video lines up with it
+    const cv::Mat K(result.K);
+    const cv::Mat dist(1, 5, CV_64F, result.dist);
+    const cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, result.imageSize, 0);
+    view->setUndistortion(result.K, result.dist, cv::Matx33d(newK));
+    view->enableUndistortion(true);
+}
+
+void LAUBreadboardCalibrationWidget::saveLens() const
+{
+    QVariantList k, d;
+    for (int n = 0; n < 9; n++) {
+        k << result.K.val[n];
+    }
+    for (int n = 0; n < 5; n++) {
+        d << result.dist[n];
+    }
+    QSettings settings;
+    settings.beginGroup(QString("LAUBreadboardCalibrationWidget"));
+    settings.setValue(QString("K"), k);
+    settings.setValue(QString("dist"), d);
+    settings.setValue(QString("imageWidth"), result.imageSize.width);
+    settings.setValue(QString("imageHeight"), result.imageSize.height);
+    settings.setValue(QString("focalMM"), result.focalMM);
+    settings.setValue(QString("tiltDeg"), result.tiltDeg);
+    settings.setValue(QString("heightMM"), result.heightMM);
+    settings.setValue(QString("rms"), result.rms);
+    settings.setValue(QString("savedFolder"), savedFolder);
+    settings.setValue(QString("calibratedAt"), QDateTime::currentDateTime().toString(QString("yyyy-MM-dd HH:mm")));
+}
+
+bool LAUBreadboardCalibrationWidget::restoreLens()
+{
+    QSettings settings;
+    settings.beginGroup(QString("LAUBreadboardCalibrationWidget"));
+    const QVariantList k = settings.value(QString("K")).toList();
+    const QVariantList d = settings.value(QString("dist")).toList();
+    const cv::Size size(settings.value(QString("imageWidth"), 0).toInt(), settings.value(QString("imageHeight"), 0).toInt());
+    const double heightMM = settings.value(QString("heightMM"), 0.0).toDouble();
+    if (k.count() != 9 || d.count() != 5 || size.width <= 0 || size.height <= 0 || heightMM <= 0.0 || k.at(0).toDouble() <= 0.0) {
+        return false;
+    }
+
+    for (int n = 0; n < 9; n++) {
+        result.K.val[n] = k.at(n).toDouble();
+    }
+    for (int n = 0; n < 5; n++) {
+        result.dist[n] = d.at(n).toDouble();
+    }
+    result.imageSize = size;
+    result.heightMM = heightMM;
+    result.focalMM = settings.value(QString("focalMM"), 0.0).toDouble();
+    result.tiltDeg = settings.value(QString("tiltDeg"), 0.0).toDouble();
+    result.rms = settings.value(QString("rms"), 0.0).toDouble();
+    result.ok = true;
+    result.message = QString("Using the saved lens calibration from %1 (focal length %2 mm). If the lens or camera has moved, right-click and calibrate again.")
+                         .arg(settings.value(QString("calibratedAt")).toString()).arg(result.focalMM, 0, 'f', 2);
+
+    savedFolder = settings.value(QString("savedFolder")).toString();
+    folderAction->setEnabled(!savedFolder.isEmpty());
+    setStatus(result.message);
+    return true;
+}
+
 void LAUBreadboardCalibrationWidget::showView()
 {
     view->setFrame(liveFrame);
+}
+
+void LAUBreadboardCalibrationWidget::setGuides(const LAUViewOverlay &overlay)
+{
+    guides = overlay;
+    if (guidesAction && guidesAction->isChecked()) {
+        view->setOverlay(guides);
+    }
+}
+
+void LAUBreadboardCalibrationWidget::onExportFrame()
+{
+    if (liveFrame.empty()) {
+        setStatus(QString("There is no camera frame to export yet."));
+        return;
+    }
+
+    // the frame as shown (levelled, and lens corrected once calibrated) at full resolution, whatever the zoom;
+    // taken now so the file holds the moment of the click, not the moment the file name is chosen
+    cv::Mat shown = LAUBreadboardCalibration::picture(liveFrame);
+    if (result.ok && result.imageSize == shown.size()) {
+        const cv::Mat K(result.K);
+        const cv::Mat dist(1, 5, CV_64F, result.dist);
+        cv::Mat corrected;
+        cv::undistort(shown, corrected, K, dist, cv::getOptimalNewCameraMatrix(K, dist, result.imageSize, 0));
+        shown = corrected;
+    }
+    const QImage picture = LAUBreadboardCalibration::toQImage(shown);
+
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString name = QString("frame_%1.png").arg(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")));
+    const QString path = QFileDialog::getSaveFileName(this, QString("Export Frame"), QDir(base).filePath(name),
+                                                      QString("PNG image (*.png);;TIFF image (*.tif *.tiff);;JPEG image (*.jpg *.jpeg)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (picture.save(path)) {
+        setStatus(QString("Frame saved to %1").arg(QDir::toNativeSeparators(path)));
+    } else {
+        QMessageBox::warning(this, QString("Export Frame"), QString("Couldn't save the frame to %1").arg(QDir::toNativeSeparators(path)));
+    }
 }
 
 void LAUBreadboardCalibrationWidget::onOpenFolderClicked()

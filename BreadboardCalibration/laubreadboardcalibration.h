@@ -73,6 +73,11 @@ public:
 
     static LAUBreadboardCalibrationResult calibrate(const cv::Mat &raw16, double exposureMs = 0.0);
 
+    // What the calibrated camera sees of the board, from the corners of the frame, lens distortion removed:
+    // acrossMM is the width of the frame's near edge (the narrow end of the tilted view) and alongMM its reach
+    // from near edge to far edge.  False if there is no valid calibration, or part of the view misses the board.
+    static bool boardFootprint(const LAUBreadboardCalibrationResult &result, double *acrossMM, double *alongMM);
+
     // Writes calibration.json (same keys as vision/calibrate_frame.py), report.txt and the pictures.
     static bool save(const LAUBreadboardCalibrationResult &result, const QString &folder, QString *error = nullptr);
 

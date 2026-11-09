@@ -352,6 +352,7 @@ private:
 signals:
     void emitConnected(bool state);
     void emitSliderPosition(int pos, int dim);
+    void emitMoveCommanded(int target, double speedMMPerSec, double accelMMPerSec2, int dim);
     void emitError(QString errorString);
     void emitWarning(QString warningString);                 // advisory only: does NOT disable the panels
     void emitCalibrationComplete(int left, int right, int dim);
@@ -898,6 +899,8 @@ signals:
     void emitTriggerScannerF(float pos, int n, int N);
     void emitHomeFinished(bool ok, QString message);
     void emitStopRails();
+    void emitRailCount(int count, int dim);     // EVERY POSITION THE CONTROLLER REPORTS, IN COUNTS (1000 PER MM)
+    void emitRailMove(int target, double speedMMPerSec, double accelMMPerSec2, int dim);   // A MOVE WAS JUST COMMANDED
 };
 
 /****************************************************************************************************************/

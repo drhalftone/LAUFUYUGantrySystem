@@ -371,6 +371,8 @@ LAUMultiVelmexWidget::LAUMultiVelmexWidget(QList<int> channels, QWidget *parent,
         connect(this, SIGNAL(emitSetVelocity(int,int)), controller, SLOT(onSetVelocity(int,int)));
         connect(controller, SIGNAL(emitError(QString)), this, SLOT(onError(QString)), Qt::QueuedConnection);
         connect(controller, SIGNAL(emitWarning(QString)), this, SLOT(onWarning(QString)), Qt::QueuedConnection);
+        connect(controller, SIGNAL(emitSliderPosition(int, int)), this, SIGNAL(emitRailCount(int, int)), Qt::QueuedConnection);
+        connect(controller, SIGNAL(emitMoveCommanded(int, double, double, int)), this, SIGNAL(emitRailMove(int, double, double, int)), Qt::QueuedConnection);
 
         controllerExistsFlag = true;
         for (int n = 0; n < channels.count(); n++) {
@@ -2962,6 +2964,7 @@ LAUVelmexController::Position LAUVelmexController::moveToPosition(int pos, int d
         }
         if (rc == 0) {
             lastCommanded[dim] = pos;
+            emit emitMoveCommanded(pos, (double)velocityMMPerSec[dim], FMC_DEFAULT_ACCEL, dim);
         } else {
             return (PositionNotReached);
         }
