@@ -2,6 +2,7 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 #include "lauimageinspectdialog.h"
+#include "laulastdirectory.h"
 
 #include <cmath>
 #include <QDir>
@@ -186,12 +187,13 @@ bool LAUImageInspectView::exportTo(const QString &path) const
 
 void LAUImageInspectView::onExport()
 {
-    const QString folder = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString folder = LAULastDirectory::get();
     const QString path = QFileDialog::getSaveFileName(this, QString("Export Image"), QDir(folder).filePath(QString("platen_mosaic.png")),
                                                       QString("PNG image (*.png);;TIFF image (*.tif *.tiff);;JPEG image (*.jpg *.jpeg)"));
     if (path.isEmpty()) {
         return;
     }
+    LAULastDirectory::rememberFile(path);
     if (!exportTo(path)) {
         QMessageBox::warning(this, QString("Export Image"), QString("Couldn't save the image to %1").arg(QDir::toNativeSeparators(path)));
     }

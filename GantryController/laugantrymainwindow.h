@@ -60,6 +60,7 @@ signals:
 private slots:
     void onRailCount(int count, int dim);
     void onRailMove(int target, double speed, double accel, int dim);
+    void onPrintTargetRequested();
     void onGuideTimer();
     void onMergeProgress(QString text);
     void onMergeFinished(LAUPlatenMosaicResult result);

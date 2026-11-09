@@ -107,6 +107,33 @@ bool LAUPlatenOverlay::load(const QString &bareFolder)
     return true;
 }
 
+bool LAUPlatenOverlay::reachSize(double singleLow, double singleHigh, double pairLow, double pairHigh, double *xMM, double *yMM) const
+{
+    if (!valid || !haveAperture) {
+        return false;
+    }
+    double lowX = 1e12, highX = -1e12, lowY = 1e12, highY = -1e12;
+    for (double pair : { pairLow, pairHigh }) {
+        for (double single : { singleLow, singleHigh }) {
+            const double bx = A0.x + ex[0] * pair + ey[0] * single, by = A0.y + ex[1] * pair + ey[1] * single;
+            lowX = qMin(lowX, bx);
+            highX = qMax(highX, bx);
+            lowY = qMin(lowY, by);
+            highY = qMax(highY, by);
+        }
+    }
+
+    // grown by the circle's radius, and no further than the platen itself.  Board X is the rail pair, board Y the single rail.
+    const double boardX = qMin(highX + APERTURE_RADIUS_MM, PITCH * (I0 + HOLES_PER_SIDE)) - qMax(lowX - APERTURE_RADIUS_MM, PITCH * I0);
+    const double boardY = qMin(highY + APERTURE_RADIUS_MM, PITCH * (J0 + HOLES_PER_SIDE)) - qMax(lowY - APERTURE_RADIUS_MM, PITCH * J0);
+    if (boardX <= 0.0 || boardY <= 0.0) {
+        return false;
+    }
+    *xMM = std::floor(boardY);
+    *yMM = std::floor(boardX);
+    return true;
+}
+
 LAUViewOverlay LAUPlatenOverlay::build(double pairMM, double singleMM, double singleLow, double singleHigh, double pairLow, double pairHigh) const
 {
     LAUViewOverlay overlay;

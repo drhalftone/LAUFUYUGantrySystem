@@ -19,7 +19,8 @@ TARGET    = GantryController
 
 CAMERA_DIR = $$PWD/../BreadboardCalibration
 RAILS_DIR  = $$PWD/../FuyuRailController
-INCLUDEPATH += $$CAMERA_DIR $$RAILS_DIR
+COLOR_DIR  = $$PWD/../ColorController
+INCLUDEPATH += $$CAMERA_DIR $$RAILS_DIR $$COLOR_DIR
 
 simulate: DEFINES += FUYU_SIMULATE
 
@@ -29,6 +30,8 @@ HEADERS += \
     lauimageinspectdialog.h \
     lauplatenoverlay.h \
     laurailpredictor.h \
+    lauprinttargetdialog.h \
+    $$COLOR_DIR/lauargyllrunner.h \
     $$CAMERA_DIR/lauholegrid.h \
     $$CAMERA_DIR/laubreadboardcalibration.h \
     $$CAMERA_DIR/laubaslergrabber.h \
@@ -42,6 +45,8 @@ SOURCES += \
     lauplatenmosaic.cpp \
     lauimageinspectdialog.cpp \
     lauplatenoverlay.cpp \
+    lauprinttargetdialog.cpp \
+    $$COLOR_DIR/lauargyllrunner.cpp \
     $$CAMERA_DIR/lauholegrid.cpp \
     $$CAMERA_DIR/laubreadboardcalibration.cpp \
     $$CAMERA_DIR/laubaslergrabber.cpp \

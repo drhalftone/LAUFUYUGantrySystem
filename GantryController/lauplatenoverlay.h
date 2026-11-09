@@ -25,6 +25,9 @@ public:
     }
 
     // pairMM, singleMM: the rails now.  The limits are the travel the i1 can use.
+    // The largest print the i1's circle can reach, along the gantry's X (single rail) and Y (rail pair), whole mm
+    bool reachSize(double singleLow, double singleHigh, double pairLow, double pairHigh, double *xMM, double *yMM) const;
+
     LAUViewOverlay build(double pairMM, double singleMM, double singleLow, double singleHigh, double pairLow, double pairHigh) const;
 
 private:

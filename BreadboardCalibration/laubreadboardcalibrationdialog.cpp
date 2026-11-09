@@ -2,6 +2,7 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 #include "laubreadboardcalibrationdialog.h"
+#include "laulastdirectory.h"
 
 #include <QDir>
 #include <QUrl>
@@ -399,6 +400,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     guidesAction->setChecked(true);
     connect(guidesAction, &QAction::toggled, this, [this](bool state) { view->setOverlay(state ? guides : LAUViewOverlay()); });
     addAction(guidesAction);
+
+    printTargetAction = new QAction(QString("Generate print target..."), this);
+    connect(printTargetAction, &QAction::triggered, this, [this]() { emit emitPrintTargetRequested(); });
+    addAction(printTargetAction);
     addAction(exportAction);
 
     if (result.ok) {                         // restored from the last session
@@ -587,13 +592,14 @@ void LAUBreadboardCalibrationWidget::onExportFrame()
     }
     const QImage picture = LAUBreadboardCalibration::toQImage(shown);
 
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString base = LAULastDirectory::get();
     const QString name = QString("frame_%1.png").arg(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")));
     const QString path = QFileDialog::getSaveFileName(this, QString("Export Frame"), QDir(base).filePath(name),
                                                       QString("PNG image (*.png);;TIFF image (*.tif *.tiff);;JPEG image (*.jpg *.jpeg)"));
     if (path.isEmpty()) {
         return;
     }
+    LAULastDirectory::rememberFile(path);
     if (picture.save(path)) {
         setStatus(QString("Frame saved to %1").arg(QDir::toNativeSeparators(path)));
     } else {

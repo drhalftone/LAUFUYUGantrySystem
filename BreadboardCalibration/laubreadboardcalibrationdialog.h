@@ -111,6 +111,7 @@ signals:
     void emitGoHome();
     void emitScanRequested(bool withTarget);
     void emitScanFrame(cv::Mat raw16, double exposureMs);
+    void emitPrintTargetRequested();
 
 private:
     LAUImageView *view = nullptr;
@@ -120,6 +121,7 @@ private:
     QAction *folderAction = nullptr;
     QAction *exportAction = nullptr;
     QAction *guidesAction = nullptr;
+    QAction *printTargetAction = nullptr;
     LAUViewOverlay guides;
 
     LAUBaslerGrabber *grabber = nullptr;

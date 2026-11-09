@@ -14,6 +14,7 @@
 #include <QStandardPaths>
 
 #include "lauimageinspectdialog.h"
+#include "lauprinttargetdialog.h"
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -156,6 +157,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
 
     connect(railWidget, &LAUMultiVelmexWidget::emitRailCount, this, &LAUGantryMainWindow::onRailCount);
     connect(railWidget, &LAUMultiVelmexWidget::emitRailMove, this, &LAUGantryMainWindow::onRailMove);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitPrintTargetRequested, this, &LAUGantryMainWindow::onPrintTargetRequested);
     guideClock.start();
     guideTimer = new QTimer(this);
     guideTimer->setInterval(GUIDE_REDRAW_MS);
@@ -204,6 +206,22 @@ void LAUGantryMainWindow::onRailMove(int target, double speed, double accel, int
     if (singleRail.isMoving() || pairRail.isMoving()) {
         guideTimer->start();
     }
+}
+
+void LAUGantryMainWindow::onPrintTargetRequested()
+{
+    double xLow, xHigh, yLow, yHigh, widthMM, heightMM;
+    if (!railWidget->scanRange(0, &xLow, &xHigh) || !railWidget->scanRange(2, &yLow, &yHigh)) {
+        cameraWidget->showMessage(QString("The sliders' travel isn't known. Press Calibrate on both sliders first."));
+        return;
+    }
+    if (!platenOverlay.reachSize(xLow, xHigh, yLow, yHigh, &widthMM, &heightMM)) {
+        cameraWidget->showMessage(QString("The i1's reach on the platen isn't known yet. Run Calibrate platen first."));
+        return;
+    }
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    LAUPrintTargetDialog dialog(widthMM, heightMM, QDir(documents).filePath(QString("GantryTargets")), this);
+    dialog.exec();
 }
 
 void LAUGantryMainWindow::onGuideTimer()
