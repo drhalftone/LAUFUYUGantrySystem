@@ -1293,7 +1293,7 @@ LAUVelmexWidget::LAUVelmexWidget(int dim, LAUVelmexController *obj, QWidget *par
         railString = QString("LAUVelmexWidget::Y");
         groupBox->setTitle("Y Controls:");
     } else if (dimension == 2) {
-        // On this machine SDK axis 2 (PU3/DR3) drives the Y cross-beam, so label it "Y".
+        // On this machine SDK axis 2 (PU3/DR3) drives the tied-together Y rail pair, so label it "Y".
         railString = QString("LAUVelmexWidget::Z");   // settings key kept as Z for continuity
         groupBox->setTitle("Y Controls:");
     } else if (dimension == 3) {
@@ -2240,7 +2240,7 @@ LAUVelmexSettingsDialog::LAUVelmexSettingsDialog(int dim, QWidget *parent) : QDi
     } else if (dim == 1) {
         this->setWindowTitle(QString("Y Axis Settings"));
     } else if (dim == 2) {
-        // SDK axis 2 (PU3/DR3) drives the Y cross-beam on this machine (see the "Y Controls" box).
+        // SDK axis 2 (PU3/DR3) drives the Y rail pair on this machine (see the "Y Controls" box).
         this->setWindowTitle(QString("Y Axis Settings"));
     } else {
         this->setWindowTitle(QString("Axis Settings"));
@@ -2988,11 +2988,233 @@ void LAUVelmexController::removeWidget(QWidget *widget)
     }
 }
 
+void LAUVelmexController::onStopRails()
+{
+    if (connectedFlag) {
+        for (int n = 0; n < channels.count(); n++) {
+            fmcStop(deviceID, channels.at(n), FMC_STOP_DECEL);
+        }
+        for (int n = 0; n < channels.count(); n++) {
+            const int ch = channels.at(n);
+            for (int i = 0; (i < 300) && (fmcCheckStop(deviceID, ch) != 1); i++) {
+                QThread::msleep(10);
+            }
+
+            // ADOPT WHERE THE RAIL HALTED AS ITS TARGET, MARKED AS ALREADY COMMANDED, OR THE POLL
+            // TIMER WOULD DRIVE IT ON TO THE OLD TARGET
+            if (updateMotorPosition(ch)) {
+                nextPosition[ch] = currentCount[ch];
+                lastCommanded[ch] = currentCount[ch];
+            }
+        }
+    }
+    emit emitStopComplete();
+}
+
 void LAUVelmexController::onUpdateUnits()
 {
     for (int n = 0; n < widgets.count(); n++) {
         reinterpret_cast<LAUVelmexWidget *>(widgets.at(n))->updateScaleFactor();
     }
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUVelmexWidget::showActualPosition(int count)
+{
+    positionSlider->blockSignals(true);
+    positionSpinBox->blockSignals(true);
+    positionSlider->setValue(count);
+    positionSpinBox->setValue(count * railStepsToUnitsScaleFactor);
+    positionSlider->blockSignals(false);
+    positionSpinBox->blockSignals(false);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+int LAUVelmexWidget::commandPosition(double pos)
+{
+    // setValue() IS A NO-OP WHEN THE SPIN BOX ALREADY SHOWS pos, BUT THE RAIL MAY NOT BE THERE
+    const double before = positionSpinBox->value();
+    positionSpinBox->setValue(pos);
+    if (positionSpinBox->value() == before) {
+        onPositionSpinBox_valueChanged(before);
+    }
+    return (qRound(positionSpinBox->value() / railStepsToUnitsScaleFactor));
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::goToHome()
+{
+    static const int HOME_AXIS_X = 0;
+    static const int HOME_AXIS_Y = 2;
+    static const double HOME_IDLER_MARGIN_MM = 5.0;
+
+    if (homingFlag) {
+        return;
+    }
+
+    LAUVelmexWidget *xAxis = nullptr;
+    LAUVelmexWidget *yAxis = nullptr;
+    for (int n = 0; n < widgets.count(); n++) {
+        if (widgets.at(n)->dim() == HOME_AXIS_X) {
+            xAxis = widgets.at(n);
+        } else if (widgets.at(n)->dim() == HOME_AXIS_Y) {
+            yAxis = widgets.at(n);
+        }
+    }
+
+    if (xAxis == nullptr || yAxis == nullptr || controller == nullptr || controller->isConnected() == false) {
+        finishHome(false, QString("The sliders aren't connected, so they can't move to their home position."));
+        return;
+    }
+    if (isMoving()) {
+        finishHome(false, QString("The sliders are still moving. Wait for them to stop and try again."));
+        return;
+    }
+
+    QSettings settings;
+    QStringList names;
+    for (LAUVelmexWidget *axis : { xAxis, yAxis }) {
+        const QString name = (axis == xAxis) ? QString("X") : QString("Y");
+        if (settings.value(QString("LAUVelmexController::axis%1::zeroValid").arg(axis->dim()), false).toBool() == false) {
+            names << name;
+        }
+        if (axis->isEnabled() == false || axis->QWidget::isEnabled() == false) {
+            finishHome(false, QString("The %1 axis is switched off or busy, so the sliders can't move to their home position.").arg(name));
+            return;
+        }
+    }
+    if (names.isEmpty() == false) {
+        finishHome(false, QString("Press Calibrate on the %1 slider first: without a valid zero point "
+                                  "the home position can't be trusted.").arg(names.join(QString(" and "))));
+        return;
+    }
+
+    const double margin = yAxis->unitsFromMM(HOME_IDLER_MARGIN_MM);
+    if (yAxis->maximum() - yAxis->minimum() <= 2.0 * margin) {
+        finishHome(false, QString("The Y axis travel is too short. Press Calibrate on the Y slider."));
+        return;
+    }
+
+    // COUNTS GROW AWAY FROM THE LEFT-END SWITCH, SO THE IDLER END IS 0 ONLY WHEN IT IS THE LEFT END
+    const double xTarget = (xAxis->minimum() + xAxis->maximum()) / 2.0;
+    const double yTarget = (controller->homeDirection(HOME_AXIS_Y) == 2) ? yAxis->minimum() + margin : yAxis->maximum() - margin;
+
+    // THE SPIN BOXES WOULD QUIETLY CLAMP THE MOVE TO THE LIMIT SLIDERS AND LEAVE THE RAIL SHORT OF HOME
+    if (xTarget < xAxis->left() || xTarget > xAxis->right()) {
+        finishHome(false, QString("The X limit sliders exclude the middle of its travel. Widen them and try again."));
+        return;
+    }
+    if (yTarget < yAxis->left() || yTarget > yAxis->right()) {
+        finishHome(false, QString("The Y limit sliders exclude the idler end. Widen them and try again."));
+        return;
+    }
+
+    // SPEED AS THE CONTROLLER WILL CLAMP IT; ALLOW A FULL-LENGTH MOVE ON THE SLOWER AXIS
+    double seconds = 0.0;
+    for (LAUVelmexWidget *axis : { xAxis, yAxis }) {
+        const double travelMM = (axis->maximum() - axis->minimum()) / axis->unitsFromMM(1.0);
+        seconds = qMax(seconds, travelMM / qBound(1.0, (double)axis->scanSpeed(), FMC_MAX_SPEED_MMPS));
+        emit emitSetVelocity(axis->dim(), axis->scanSpeed());
+    }
+
+    if (homeTimer == nullptr) {
+        homeTimer = new QTimer(this);
+        homeTimer->setSingleShot(true);
+        connect(this, SIGNAL(emitStopRails()), controller, SLOT(onStopRails()), Qt::QueuedConnection);
+        connect(controller, SIGNAL(emitStopComplete()), this, SLOT(onRailsStopped()), Qt::QueuedConnection);
+        connect(homeTimer, &QTimer::timeout, this, [this]() {
+            stopHome(QString("The sliders didn't reach their home position in time, so they were stopped. "
+                                      "Check that nothing is blocking them before trying again."));
+        });
+    }
+
+    homingFlag = true;
+    connect(controller, SIGNAL(emitSliderPosition(int, int)), this, SLOT(onHomePosition(int, int)), Qt::QueuedConnection);
+    homeTimer->start(qRound((seconds + 15.0) * 1000.0));
+
+    homeCounts.clear();
+    homeTargets.clear();
+    homeTargets[HOME_AXIS_X] = xAxis->commandPosition(xTarget);
+    homeTargets[HOME_AXIS_Y] = yAxis->commandPosition(yTarget);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::onHomePosition(int count, int dim)
+{
+    if (homingFlag == false) {
+        return;
+    }
+    homeCounts[dim] = count;
+    if (homeTargets.contains(dim) && qAbs(count - homeTargets.value(dim)) <= 10) {   // WITHIN 10 MICRONS
+        homeTargets.remove(dim);
+    }
+
+    // THE CONTROLLER REPORTS EVERY POLL, SO IF IT IS STILL BUSY NOW THE NEXT REPORT WILL LAND HERE AGAIN
+    if (homeStopping == false && homeTargets.isEmpty() && isMoving() == false) {
+        finishHome(true, QString());
+    }
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::abortHome()
+{
+    stopHome(QString("Aborted. The sliders stopped where they were and nothing was calibrated."));
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::stopHome(const QString &message)
+{
+    if (homingFlag == false || homeStopping) {
+        return;
+    }
+    homeStopping = true;
+    homeStopMessage = message;
+    homeTimer->stop();
+    emit emitStopRails();
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::onRailsStopped()
+{
+    if (homeStopping == false) {
+        return;
+    }
+
+    // THE SLIDERS STILL SHOW THE HOME TARGET; PUT THEM WHERE THE RAILS REALLY HALTED
+    for (int n = 0; n < widgets.count(); n++) {
+        if (homeCounts.contains(widgets.at(n)->dim())) {
+            widgets.at(n)->showActualPosition(homeCounts.value(widgets.at(n)->dim()));
+        }
+    }
+    finishHome(false, homeStopMessage);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::finishHome(bool ok, const QString &message)
+{
+    if (homingFlag) {
+        homingFlag = false;
+        homeStopping = false;
+        homeTimer->stop();
+        disconnect(controller, SIGNAL(emitSliderPosition(int, int)), this, SLOT(onHomePosition(int, int)));
+    }
+    emit emitHomeFinished(ok, message);
 }
 
 /****************************************************************************************************************/

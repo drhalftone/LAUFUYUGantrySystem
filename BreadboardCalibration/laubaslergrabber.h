@@ -6,8 +6,8 @@
 // with the exposure adjusting itself continuously (the brightest 0.5% kept just under clipping, damped so
 // it doesn't flicker).  Port of vision/live_clahe.py's camera side.
 //
-// Runs its own grab loop in a QThread.  Emits a levelled preview for the screen (~15/s), and on request an
-// average of several frames (less noise for the sub-pixel hole centres) as the raw CV_16U frame.
+// Runs its own grab loop in a QThread.  Emits raw CV_16U frames for the screen (levelled there, in a shader,
+// at up to ~60/s), and on request an average of several frames (less noise for the sub-pixel hole centres).
 //
 #ifndef LAUBASLERGRABBER_H
 #define LAUBASLERGRABBER_H
@@ -34,6 +34,12 @@ public:
         wait();
     }
 
+    // the receiver has taken the last emitFrame; until then new frames are skipped, not queued up
+    void frameDone()
+    {
+        framePending = false;
+    }
+
     // ask for the average of the next n frames (delivered by emitAveragedFrame)
     void requestAverage(int n = 8)
     {
@@ -46,9 +52,10 @@ protected:
 private:
     std::atomic<bool> stopFlag{ false };
     std::atomic<int> averageRequest{ 0 };
+    std::atomic<bool> framePending{ false };
 
 signals:
-    void emitPreview(QImage image, double exposureMs);
+    void emitFrame(cv::Mat raw16, double exposureMs);
     void emitAveragedFrame(cv::Mat raw16, double exposureMs);
     void emitCameraName(QString name);
     void emitError(QString message);

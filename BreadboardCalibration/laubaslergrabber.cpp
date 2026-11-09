@@ -2,8 +2,8 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 #include "laubaslergrabber.h"
-#include "laubreadboardcalibration.h"
 
+#ifdef ENABLEPYLON
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -95,10 +95,9 @@ void LAUBaslerGrabber::run()
                 adjustExposure(cam, raw);                    // a new exposure takes a frame or two to show
             }
 
-            if (previewClock.elapsed() >= 66) {              // ~15 previews per second is plenty
+            if (previewClock.elapsed() >= 16 && !framePending.exchange(true)) {    // about one per screen refresh
                 previewClock.restart();
-                emit emitPreview(LAUBreadboardCalibration::toQImage(LAUBreadboardCalibration::picture(raw)),
-                                 cam.ExposureTime.GetValue() / 1000.0);
+                emit emitFrame(raw.clone(), cam.ExposureTime.GetValue() / 1000.0);
             }
         }
         cam.StopGrabbing();
@@ -107,3 +106,10 @@ void LAUBaslerGrabber::run()
         emit emitError(QString("Camera problem: %1").arg(e.GetDescription()));
     }
 }
+#else
+// built without the pylon SDK: the UI still runs, it just never gets a frame
+void LAUBaslerGrabber::run()
+{
+    emit emitError(QString("No camera support: this program was built without the Basler pylon SDK."));
+}
+#endif

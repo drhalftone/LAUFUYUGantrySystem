@@ -1,8 +1,8 @@
 #-------------------------------------------------------------------------------
 # FuyuRailController.pro
 #
-# Qt GUI application for driving the FUYU FMC4030 motion controller (dual-X gantry
-# + Y beam).  It REUSES the LAU3DVideoRecorder Velmex widget classes verbatim
+# Qt GUI application for driving the FUYU FMC4030 motion controller (H gantry: single
+# X rail + tied-together Y rail pair).  It REUSES the LAU3DVideoRecorder Velmex widget classes verbatim
 # (lauvelmexwidget.*) and swaps only the controller: LAUVelmexController is
 # reimplemented to drive the FMC4030 over Ethernet instead of a serial VXM.
 #

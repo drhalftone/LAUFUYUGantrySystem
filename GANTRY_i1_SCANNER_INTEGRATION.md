@@ -51,7 +51,7 @@ emitTriggerScanner(float pos, int n, int N)   // n = current point, N = total
 **at each point.** That signal is precisely where the i1Pro measurement fires. We
 do not have to write the motion loop — it exists and is already poll-settled
 (`FMC4030_Jog_Single_Axis` then poll `FMC4030_Check_Axis_Is_Stop` on a 500 ms
-timer). The gantry is built with axes `{0, 2}` = **X gantry + Y beam**, which is
+timer). The gantry is built with axes `{0, 2}` = **X single rail + Y rail pair**, which is
 the 2-D plane we need.
 
 ### 1.3 The i1Pro measurement logic already exists

@@ -5,26 +5,175 @@
 
 #include <QDir>
 #include <QUrl>
-#include <QPainter>
 #include <QDateTime>
+#include <QPushButton>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QDialogButtonBox>
+#include <QMessageBox>
 #include <QVBoxLayout>
 #include <QDesktopServices>
 #include <QStandardPaths>
+#include <opencv2/calib3d.hpp>
 
-void LAUImageView::paintEvent(QPaintEvent *)
+namespace
 {
-    QPainter p(this);
-    p.fillRect(rect(), Qt::black);
-    if (image.isNull()) {
-        p.setPen(Qt::gray);
-        p.drawText(rect(), Qt::AlignCenter, QString("Waiting for the camera..."));
+    // what the live dialog tracks, and how much it may change over the last few frames and still count as steady
+    struct LAULiveParameter
+    {
+        const char *name;
+        const char *unit;
+        int decimals;
+        double steadyChange;
+    };
+    const LAULiveParameter LIVE_PARAMETERS[] = { { "Focal length", " mm", 3, 0.02 },
+                                                 { "k1", "", 4, 0.005 },
+                                                 { "k2", "", 4, 0.01 },
+                                                 { "Tilt", "°", 2, 0.1 },
+                                                 { "Height", " mm", 1, 1.0 } };
+}
+
+LAULiveCalibrationDialog::LAULiveCalibrationDialog(QWidget *parent) : QDialog(parent)
+{
+    setWindowTitle(QString("Live Calibration"));
+    setWindowFlags(windowFlags() | Qt::WindowMaximizeButtonHint);
+    setModal(true);
+    resize(1120, 860);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setSpacing(8);
+
+    view = new LAUImageView();
+    layout->addWidget(view, 1);
+
+    QGridLayout *grid = new QGridLayout();
+    grid->setHorizontalSpacing(24);
+    grid->addWidget(new QLabel(QString("Now")), 1, 0);
+    grid->addWidget(new QLabel(QString("Change, last %1 frames").arg((int)HistoryLength)), 2, 0);
+    for (int n = 0; n < ParameterCount; n++) {
+        QLabel *name = new QLabel(QString::fromUtf8(LIVE_PARAMETERS[n].name));
+        name->setAlignment(Qt::AlignRight);
+        nowLabels[n] = new QLabel(QString("—"));
+        nowLabels[n]->setAlignment(Qt::AlignRight);
+        changeLabels[n] = new QLabel(QString("—"));
+        changeLabels[n]->setAlignment(Qt::AlignRight);
+        grid->addWidget(name, 0, n + 1);
+        grid->addWidget(nowLabels[n], 1, n + 1);
+        grid->addWidget(changeLabels[n], 2, n + 1);
+    }
+    layout->addLayout(grid);
+
+    verdict = new QLabel();
+    verdict->setWordWrap(true);
+    QFont f = verdict->font();
+    f.setPointSize(f.pointSize() + 3);
+    verdict->setFont(f);
+    layout->addWidget(verdict);
+    setVerdict(QString("Looking for the breadboard's holes..."), QString("gray"));
+
+    QLabel *hint = new QLabel(QString("Right-click the picture to change what it shows."));
+    hint->setStyleSheet(QString("color: gray;"));
+    layout->addWidget(hint);
+
+    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    okButton = buttons->button(QDialogButtonBox::Ok);
+    okButton->setText(QString("OK - lock in this calibration"));
+    okButton->setEnabled(false);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    setContextMenuPolicy(Qt::ActionsContextMenu);
+    viewActions = new QActionGroup(this);
+    const QStringList names = { QString("Live camera"), QString("Holes found"), QString("Lens corrected"),
+                                QString("Lines into the distance"), QString("Vanishing point") };
+    for (int n = 0; n < names.count(); n++) {
+        QAction *a = new QAction(names.at(n), this);
+        a->setCheckable(true);
+        a->setData(n);
+        viewActions->addAction(a);
+        addAction(a);
+    }
+    viewActions->actions().at(ViewHoles)->setChecked(true);
+    connect(viewActions, &QActionGroup::triggered, this, &LAULiveCalibrationDialog::showView);
+}
+
+void LAULiveCalibrationDialog::setVerdict(const QString &text, const QString &color)
+{
+    verdict->setText(text);
+    verdict->setStyleSheet(QString("color: %1;").arg(color));
+}
+
+void LAULiveCalibrationDialog::onFrame(cv::Mat raw16)
+{
+    liveFrame = raw16;
+    if (viewActions->checkedAction()->data().toInt() == ViewLive || !lastGood.ok) {
+        view->setFrame(liveFrame);
+    }
+}
+
+void LAULiveCalibrationDialog::onResult(LAUBreadboardCalibrationResult r)
+{
+    if (!r.ok) {
+        history.clear();                     // steady means steady in a row
+        for (int n = 0; n < ParameterCount; n++) {
+            nowLabels[n]->setText(QString("—"));
+            changeLabels[n]->setText(QString("—"));
+            changeLabels[n]->setStyleSheet(QString());
+        }
+        setVerdict(r.message + (lastGood.ok ? QString(" OK will lock in the last valid calibration.") : QString()), QString("#c62828"));
         return;
     }
-    const QSize s = image.size().scaled(size(), Qt::KeepAspectRatio);
-    const QRect r(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
-    p.setRenderHint(QPainter::SmoothPixmapTransform);
-    p.drawImage(r, image);
+
+    lastGood = r;
+    okButton->setEnabled(true);
+    history.append(QVector<double>({ r.focalMM, r.dist[0], r.dist[1], r.tiltDeg, r.heightMM }));
+    if (history.count() > HistoryLength) {
+        history.removeFirst();
+    }
+
+    bool steady = history.count() >= SteadyFrames;
+    for (int n = 0; n < ParameterCount; n++) {
+        double lowest = history.first().at(n);
+        double highest = lowest;
+        for (const QVector<double> &frame : history) {
+            lowest = qMin(lowest, frame.at(n));
+            highest = qMax(highest, frame.at(n));
+        }
+        const LAULiveParameter &p = LIVE_PARAMETERS[n];
+        const double change = highest - lowest;
+        const bool withinLimit = change <= p.steadyChange;
+        steady = steady && withinLimit;
+        nowLabels[n]->setText(QString::number(history.last().at(n), 'f', p.decimals) + QString::fromUtf8(p.unit));
+        changeLabels[n]->setText(QString::number(change, 'f', p.decimals) + QString::fromUtf8(p.unit));
+        changeLabels[n]->setStyleSheet(QString("color: %1;").arg(withinLimit ? QString("#2e7d32") : QString("#c62828")));
+    }
+
+    const QString quality = QString("%1 holes, accuracy %2 px.").arg(r.holesUsed).arg(r.rms, 0, 'f', 2);
+    if (history.count() < SteadyFrames) {
+        setVerdict(QString("Measuring... %1").arg(quality), QString("gray"));
+    } else if (steady) {
+        setVerdict(QString("Steady. %1 Press OK to lock it in.").arg(quality), QString("#2e7d32"));
+    } else {
+        setVerdict(QString("Still changing from frame to frame. %1 Check that nothing is moving.").arg(quality), QString("#ef6c00"));
+    }
+    showView();
+}
+
+void LAULiveCalibrationDialog::showView()
+{
+    const int id = viewActions->checkedAction()->data().toInt();
+    if (id == ViewLive || !lastGood.ok) {
+        view->setFrame(liveFrame);
+    } else if (id == ViewHoles) {
+        view->setImage(lastGood.holes);
+    } else if (id == ViewCorrected) {
+        view->setImage(lastGood.undistorted);
+    } else if (id == ViewLines) {
+        view->setImage(lastGood.lines);
+    } else {
+        view->setImage(lastGood.vanishing);
+    }
 }
 
 LAUBreadboardCalibrationDialog::LAUBreadboardCalibrationDialog(QWidget *parent) : QDialog(parent)
@@ -36,23 +185,54 @@ LAUBreadboardCalibrationDialog::LAUBreadboardCalibrationDialog(QWidget *parent) 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(8);
+    layout->addWidget(new LAUBreadboardCalibrationWidget(), 1);
+
+    QHBoxLayout *buttons = new QHBoxLayout();
+    QPushButton *closeButton = new QPushButton(QString("Close"));
+    closeButton->setMinimumHeight(44);
+    connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
+    buttons->addStretch();
+    buttons->addWidget(closeButton);
+    layout->addLayout(buttons);
+}
+
+LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) : QWidget(parent)
+{
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
+
+    // every command is on the right-click menu
+    setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    calibrateAction = new QAction(QString("Calibrate"), this);
+    calibrateAction->setEnabled(false);
+    connect(calibrateAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onCalibrateClicked);
+    addAction(calibrateAction);
+
+    folderAction = new QAction(QString("Open results folder"), this);
+    folderAction->setEnabled(false);
+    connect(folderAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onOpenFolderClicked);
+    addAction(folderAction);
+
+    QAction *separator = new QAction(this);
+    separator->setSeparator(true);
+    addAction(separator);
 
     // which picture to show
-    QHBoxLayout *views = new QHBoxLayout();
-    viewButtons = new QButtonGroup(this);
-    const QStringList names = { QString("Live camera"), QString("Holes found"), QString("Lens corrected"),
+    viewActions = new QActionGroup(this);
+    const QStringList names = { QString("Live camera"), QString("Live lens corrected"), QString("Holes found"), QString("Lens corrected"),
                                 QString("Lines into the distance"), QString("Vanishing point") };
     for (int n = 0; n < names.count(); n++) {
-        QPushButton *b = new QPushButton(names.at(n));
-        b->setCheckable(true);
-        b->setEnabled(n == ViewLive);
-        b->setMinimumHeight(32);
-        viewButtons->addButton(b, n);
-        views->addWidget(b);
+        QAction *a = new QAction(names.at(n), this);
+        a->setCheckable(true);
+        a->setEnabled(n == ViewLive);
+        a->setData(n);
+        viewActions->addAction(a);
+        addAction(a);
     }
-    viewButtons->button(ViewLive)->setChecked(true);
-    connect(viewButtons, &QButtonGroup::idClicked, this, &LAUBreadboardCalibrationDialog::onViewChanged);
-    layout->addLayout(views);
+    viewActions->actions().at(ViewLive)->setChecked(true);
+    connect(viewActions, &QActionGroup::triggered, this, &LAUBreadboardCalibrationWidget::showView);
 
     view = new LAUImageView();
     layout->addWidget(view, 1);
@@ -61,103 +241,172 @@ LAUBreadboardCalibrationDialog::LAUBreadboardCalibrationDialog(QWidget *parent) 
     camera->setStyleSheet(QString("color: gray;"));
     layout->addWidget(camera);
 
-    status = new QLabel(QString("Point the camera at the breadboard and press Calibrate."));
+    status = new QLabel(QString("Point the camera at the breadboard, then right-click the picture and choose Calibrate."));
     status->setWordWrap(true);
     QFont f = status->font();
     f.setPointSize(f.pointSize() + 3);
     status->setFont(f);
     layout->addWidget(status);
 
-    QHBoxLayout *buttons = new QHBoxLayout();
-    calibrateButton = new QPushButton(QString("Calibrate"));
-    calibrateButton->setMinimumSize(180, 44);
-    QFont bf = calibrateButton->font();
-    bf.setPointSize(bf.pointSize() + 3);
-    bf.setBold(true);
-    calibrateButton->setFont(bf);
-    calibrateButton->setEnabled(false);
-    connect(calibrateButton, &QPushButton::clicked, this, &LAUBreadboardCalibrationDialog::onCalibrateClicked);
-    folderButton = new QPushButton(QString("Open results folder"));
-    folderButton->setMinimumHeight(44);
-    folderButton->setEnabled(false);
-    connect(folderButton, &QPushButton::clicked, this, &LAUBreadboardCalibrationDialog::onOpenFolderClicked);
-    QPushButton *closeButton = new QPushButton(QString("Close"));
-    closeButton->setMinimumHeight(44);
-    connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
-    buttons->addWidget(calibrateButton);
-    buttons->addWidget(folderButton);
-    buttons->addStretch();
-    buttons->addWidget(closeButton);
-    layout->addLayout(buttons);
-
     // calibration runs in its own thread so the live picture keeps moving
     calibration = new LAUBreadboardCalibration();
     calibration->moveToThread(&calibrationThread);
     connect(&calibrationThread, &QThread::finished, calibration, &QObject::deleteLater);
-    connect(this, &LAUBreadboardCalibrationDialog::emitCalibrate, calibration, &LAUBreadboardCalibration::onCalibrate, Qt::QueuedConnection);
-    connect(calibration, &LAUBreadboardCalibration::emitResult, this, &LAUBreadboardCalibrationDialog::onResult, Qt::QueuedConnection);
+    connect(this, &LAUBreadboardCalibrationWidget::emitCalibrate, calibration, &LAUBreadboardCalibration::onCalibrate, Qt::QueuedConnection);
+    connect(calibration, &LAUBreadboardCalibration::emitResult, this, &LAUBreadboardCalibrationWidget::onResult, Qt::QueuedConnection);
     calibrationThread.start();
 
     grabber = new LAUBaslerGrabber(this);
-    connect(grabber, &LAUBaslerGrabber::emitPreview, this, &LAUBreadboardCalibrationDialog::onPreview, Qt::QueuedConnection);
-    connect(grabber, &LAUBaslerGrabber::emitAveragedFrame, this, &LAUBreadboardCalibrationDialog::onAveragedFrame, Qt::QueuedConnection);
-    connect(grabber, &LAUBaslerGrabber::emitError, this, &LAUBreadboardCalibrationDialog::onCameraError, Qt::QueuedConnection);
+    connect(grabber, &LAUBaslerGrabber::emitFrame, this, &LAUBreadboardCalibrationWidget::onFrame, Qt::QueuedConnection);
+    connect(grabber, &LAUBaslerGrabber::emitAveragedFrame, this, &LAUBreadboardCalibrationWidget::onAveragedFrame, Qt::QueuedConnection);
+    connect(grabber, &LAUBaslerGrabber::emitError, this, &LAUBreadboardCalibrationWidget::onCameraError, Qt::QueuedConnection);
     connect(grabber, &LAUBaslerGrabber::emitCameraName, this, [this](QString name) {
         camera->setText(QString("Camera: %1").arg(name));
     });
     grabber->start();
 }
 
-LAUBreadboardCalibrationDialog::~LAUBreadboardCalibrationDialog()
+LAUBreadboardCalibrationWidget::~LAUBreadboardCalibrationWidget()
 {
     grabber->stop();
     calibrationThread.quit();
     calibrationThread.wait();
 }
 
-void LAUBreadboardCalibrationDialog::setStatus(const QString &text)
+void LAUBreadboardCalibrationWidget::setStatus(const QString &text)
 {
     status->setText(text);
 }
 
-void LAUBreadboardCalibrationDialog::onPreview(QImage image, double exposureMs)
+void LAUBreadboardCalibrationWidget::onFrame(cv::Mat raw16, double exposureMs)
 {
-    liveImage = image;
+    liveFrame = raw16;
+    if (liveDialog) {
+        liveDialog->onFrame(raw16);
+    }
     if (!busy) {
-        calibrateButton->setEnabled(true);
+        calibrateAction->setEnabled(true);
     }
     camera->setText(camera->text().section(QString("   "), 0, 0) + QString("   exposure %1 ms").arg(exposureMs, 0, 'f', 1));
-    if (viewButtons->checkedId() == ViewLive) {
-        view->setImage(liveImage);
+    // the main picture rests behind the live dialog: the GPU only needs to do one of them
+    const int id = viewActions->checkedAction()->data().toInt();
+    if (!liveDialog && (id == ViewLive || id == ViewLiveCorrected)) {
+        showView();
     }
+    grabber->frameDone();
 }
 
-void LAUBreadboardCalibrationDialog::onCameraError(QString message)
+void LAUBreadboardCalibrationWidget::onCameraError(QString message)
 {
+    if (liveDialog) {
+        liveDialog->reject();
+    }
+    busy = false;
     camera->setText(message);
     setStatus(QString("The camera isn't available. Check its USB cable, and that no other program is using it, "
                       "then reopen this window."));
-    calibrateButton->setEnabled(false);
+    calibrateAction->setEnabled(false);
 }
 
-void LAUBreadboardCalibrationDialog::onCalibrateClicked()
+void LAUBreadboardCalibrationWidget::onCalibrateClicked()
 {
+    const QMessageBox::StandardButton answer = QMessageBox::warning(this, QString("Calibrate"),
+        QString("Calibration requires the sliders to be in their home position:\n\n"
+                "    X axis in the middle of its travel\n"
+                "    Y axis at the idler end\n\n") +
+        (homeMoveFlag ? QString("Press OK to move them there now. Make sure nothing is in their way.")
+                      : QString("Press OK once they are there.")),
+        QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
+
+    // the camera may have dropped out while the warning was up
+    if (answer != QMessageBox::Ok || !calibrateAction->isEnabled()) {
+        return;
+    }
+
     busy = true;
-    calibrateButton->setEnabled(false);
+    calibrateAction->setEnabled(false);
+    if (homeMoveFlag) {
+        setStatus(QString("Moving the sliders to their home position..."));
+        emit emitGoHome();
+    } else {
+        startCapture();
+    }
+}
+
+void LAUBreadboardCalibrationWidget::onHomeFinished(bool ok, QString message)
+{
+    if (!busy) {
+        return;
+    }
+    if (!ok) {
+        busy = false;
+        calibrateAction->setEnabled(true);
+        setStatus(message);
+        return;
+    }
+    startLive();
+}
+
+void LAUBreadboardCalibrationWidget::startLive()
+{
+    setStatus(QString("Checking the calibration on the live picture..."));
+    liveDialog = new LAULiveCalibrationDialog(this);
+    connect(liveDialog, &QDialog::finished, this, &LAUBreadboardCalibrationWidget::onLiveFinished);
+    liveDialog->open();
+    requestLiveFrame();
+}
+
+void LAUBreadboardCalibrationWidget::requestLiveFrame()
+{
+    liveInFlight = true;
+    grabber->requestAverage(8);
+}
+
+void LAUBreadboardCalibrationWidget::onLiveFinished(int code)
+{
+    const LAUBreadboardCalibrationResult r = liveDialog->lockedResult();
+    liveDialog->deleteLater();
+    liveDialog = nullptr;
+    if (code == QDialog::Accepted && r.ok) {
+        applyResult(r);
+    } else {
+        busy = false;
+        calibrateAction->setEnabled(true);
+        setStatus(QString("Calibration cancelled. Nothing was saved."));
+    }
+}
+
+void LAUBreadboardCalibrationWidget::startCapture()
+{
     setStatus(QString("Hold still — taking the pictures..."));
     grabber->requestAverage(8);
 }
 
-void LAUBreadboardCalibrationDialog::onAveragedFrame(cv::Mat raw16, double exposureMs)
+void LAUBreadboardCalibrationWidget::onAveragedFrame(cv::Mat raw16, double exposureMs)
 {
-    setStatus(QString("Finding the holes and measuring the lens..."));
+    if (!liveInFlight) {
+        setStatus(QString("Finding the holes and measuring the lens..."));
+    }
     emit emitCalibrate(raw16, exposureMs);
 }
 
-void LAUBreadboardCalibrationDialog::onResult(LAUBreadboardCalibrationResult r)
+void LAUBreadboardCalibrationWidget::onResult(LAUBreadboardCalibrationResult r)
+{
+    if (liveInFlight) {
+        liveInFlight = false;
+        if (liveDialog) {                    // otherwise it came back after the dialog closed: drop it
+            liveDialog->onResult(r);
+            requestLiveFrame();
+        }
+        return;
+    }
+    applyResult(r);
+}
+
+void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationResult &r)
 {
     busy = false;
-    calibrateButton->setEnabled(true);
+    calibrateAction->setEnabled(true);
     if (!r.ok) {
         setStatus(r.message);
         return;
@@ -168,26 +417,32 @@ void LAUBreadboardCalibrationDialog::onResult(LAUBreadboardCalibrationResult r)
     QString err;
     if (LAUBreadboardCalibration::save(result, folder, &err)) {
         savedFolder = folder;
-        folderButton->setEnabled(true);
+        folderAction->setEnabled(true);
         setStatus(result.message + QString("\nSaved to %1").arg(QDir::toNativeSeparators(folder)));
     } else {
         setStatus(result.message + QString("\nCouldn't save the results: %1").arg(err));
     }
-    for (int n = ViewHoles; n <= ViewVanishing; n++) {
-        viewButtons->button(n)->setEnabled(true);
+
+    // the same camera matrix as result.undistorted, so the live video lines up with it
+    const cv::Mat K(result.K);
+    const cv::Mat dist(1, 5, CV_64F, result.dist);
+    const cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, result.imageSize, 0);
+    view->setUndistortion(result.K, result.dist, cv::Matx33d(newK));
+
+    for (int n = ViewLiveCorrected; n <= ViewVanishing; n++) {
+        viewActions->actions().at(n)->setEnabled(true);
     }
-    viewButtons->button(ViewCorrected)->setChecked(true);
+    viewActions->actions().at(ViewLiveCorrected)->setChecked(true);
     showView();
 }
 
-void LAUBreadboardCalibrationDialog::onViewChanged(int)
+void LAUBreadboardCalibrationWidget::showView()
 {
-    showView();
-}
-
-void LAUBreadboardCalibrationDialog::showView()
-{
-    switch (viewButtons->checkedId()) {
+    switch (viewActions->checkedAction()->data().toInt()) {
+    case ViewLiveCorrected:
+        view->enableUndistortion(true);
+        view->setFrame(liveFrame);
+        break;
     case ViewHoles:
         view->setImage(result.holes);
         break;
@@ -201,11 +456,12 @@ void LAUBreadboardCalibrationDialog::showView()
         view->setImage(result.vanishing);
         break;
     default:
-        view->setImage(liveImage);
+        view->enableUndistortion(false);
+        view->setFrame(liveFrame);
     }
 }
 
-void LAUBreadboardCalibrationDialog::onOpenFolderClicked()
+void LAUBreadboardCalibrationWidget::onOpenFolderClicked()
 {
     if (!savedFolder.isEmpty()) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(savedFolder));

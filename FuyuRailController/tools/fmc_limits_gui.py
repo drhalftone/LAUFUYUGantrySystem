@@ -12,8 +12,8 @@ import ctypes, sys, time, tkinter as tk
 from fmc_limits import DLL, IP, PORT, ID, status
 
 TILES = (  # (row, col, input, side, bit, label)
-    (0, 0, "LN1", "N", 0, "X gantry −\n(idler end)"),
-    (0, 1, "LP1", "P", 0, "X gantry +\n(motor end)"),
+    (0, 0, "LN1", "N", 0, "X −\n(idler end)"),
+    (0, 1, "LP1", "P", 0, "X +\n(motor end)"),
     (1, 0, "LN3", "N", 2, "Y −\n(idler end)"),
     (1, 1, "LP3", "P", 2, "Y +\n(motor end)"),
     (2, 0, "LN2", "N", 1, "axis 2 −\n(unused)"),

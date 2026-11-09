@@ -12,7 +12,7 @@
 #                    the runtime DLLs are on the PATH from the pylon install).
 #-------------------------------------------------------------------------------
 
-QT       += core gui widgets
+QT       += core gui widgets opengl openglwidgets
 CONFIG   += c++17
 TEMPLATE  = app
 DEFINES  += NOMINMAX          # pylon pulls in windows.h; keep its min/max macros away from std::min/max
@@ -22,6 +22,7 @@ HEADERS += \
     lauholegrid.h \
     laubreadboardcalibration.h \
     laubaslergrabber.h \
+    lauglimageview.h \
     laubreadboardcalibrationdialog.h
 
 SOURCES += \
@@ -29,6 +30,7 @@ SOURCES += \
     lauholegrid.cpp \
     laubreadboardcalibration.cpp \
     laubaslergrabber.cpp \
+    lauglimageview.cpp \
     laubreadboardcalibrationdialog.cpp
 
 win32 {
@@ -37,9 +39,18 @@ win32 {
     OPENCV_BIN = C:/usr/OpenCV/x64/vc17/bin
     PYLON_DEV  = "C:/Program Files/Basler/pylon 8/Development"
 
-    INCLUDEPATH += $$OPENCV_INC $$quote($$PYLON_DEV/include)
+    INCLUDEPATH += $$OPENCV_INC
     DEPENDPATH  += $$OPENCV_INC
-    LIBS        += -L$$OPENCV_LIB -L$$quote($$PYLON_DEV/lib/x64)
+    LIBS        += -L$$OPENCV_LIB
+
+    # without the SDK the UI still builds and runs, the camera panel just reports it has no camera
+    exists("$$PYLON_DEV/include/pylon/PylonIncludes.h") {
+        DEFINES     += ENABLEPYLON
+        INCLUDEPATH += $$quote($$PYLON_DEV/include)
+        LIBS        += -L$$quote($$PYLON_DEV/lib/x64)
+    } else {
+        message("pylon SDK not found: building BreadboardCalibration without camera support.")
+    }
 
     CONFIG(debug, debug|release) {
         CV_SUFFIX = 490d

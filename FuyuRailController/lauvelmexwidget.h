@@ -52,6 +52,8 @@
 #include <QDialogButtonBox>
 #include <QListWidget>
 #include <QPointer>
+#include <QTimer>
+#include <QMap>
 
 #ifdef ENABLEPROSILICAFPGA
 #define VELMEXSCANNERNUMBEROFSCANSTEPS 64
@@ -219,6 +221,7 @@ public:
 
 public slots:
     void onStart();
+    void onStopRails();    // STOPS EVERY AXIS WHERE IT IS, THEN emitStopComplete()
     void onFinish();
     void onUpdateUnits();
     void onCalibrateSlide(int dim = 0);
@@ -353,6 +356,7 @@ signals:
     void emitWarning(QString warningString);                 // advisory only: does NOT disable the panels
     void emitCalibrationComplete(int left, int right, int dim);
     void emitScanComplete();
+    void emitStopComplete();
     void emitLimitStatus(int limitN, int limitP, bool ok);   // bit 0 = axis 0 (LN1/LP1) ... bit 2 = axis 2
 };
 
@@ -397,6 +401,19 @@ public:
         // WE ARE NOT MOVING IF THE COUNTER IS ZERO
         return(LAUVelmexController::velmexControllerIsWaitingWhileBusy);
     }
+
+    // Length in the units the spin boxes are showing (one count = 1 micron)
+    double unitsFromMM(double mm) const
+    {
+        return (mm * 1000.0 * railStepsToUnitsScaleFactor);
+    }
+
+    // Sends the rail to pos (in spin box units) even if the spin box already shows pos, and returns
+    // the target in controller counts.
+    int commandPosition(double pos);
+
+    // Puts the slider and spin box on the rail's real position without commanding a move
+    void showActualPosition(int count);
 
     int dim() const
     {
@@ -654,6 +671,16 @@ public:
     ~LAUMultiVelmexWidget();
 
     void connectToController();
+
+    // Moves the rails to where the camera is calibrated: X (single rail, SDK axis 0) at the middle of
+    // its travel, Y (rail pair, SDK axis 2) 5 mm short of its idler-end switch.  Always answers with
+    // emitHomeFinished(), including when it refuses to move.
+    void goToHome();
+    void abortHome();      // STOPS THE RAILS; emitHomeFinished() FOLLOWS ONCE THEY HAVE HALTED
+    bool isHoming() const
+    {
+        return (homingFlag);
+    }
     bool isControllerStarted() const
     {
         return (controllerStartedFlag);
@@ -828,8 +855,21 @@ private:
     LAUVelmexController *controller;
     QProgressDialog *progressDialog;
 
+    bool homingFlag = false;
+    QMap<int, int> homeTargets;             // axes still on their way, axis -> target in counts
+    QMap<int, int> homeCounts;              // last position each axis reported, axis -> counts
+    QTimer *homeTimer = nullptr;
+    bool homeStopping = false;
+    QString homeStopMessage;
+    void stopHome(const QString &message);
+    void finishHome(bool ok, const QString &message);
+
     void initiateScanning();
     void completeScanning(bool centerRailsFlag);
+
+private slots:
+    void onHomePosition(int count, int dim);   // LIVE POSITION FROM THE CONTROLLER WHILE GOING HOME
+    void onRailsStopped();
 
 signals:
     void emitSetVelocity(int dim);
@@ -841,6 +881,8 @@ signals:
     void emitTriggerScannerD(float pos, int n, int N);
     void emitTriggerScannerE(float pos, int n, int N);
     void emitTriggerScannerF(float pos, int n, int N);
+    void emitHomeFinished(bool ok, QString message);
+    void emitStopRails();
 };
 
 /****************************************************************************************************************/

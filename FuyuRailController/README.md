@@ -1,7 +1,7 @@
 # FuyuRailController
 
 A small Qt Widgets application for driving the **FUYU FMC4030** three-axis motion
-controller that runs the dual-X gantry (two X rails + a Y cross-beam).
+controller that runs the H gantry (a single X rail + a tied-together pair of Y rails).
 
 Its defining design choice: it **reuses the Velmex widget classes** from
 `LAU3DVideoRecorder` *verbatim* and only **swaps the controller**. The Velmex GUI
@@ -28,7 +28,7 @@ nmake            # (Windows/MSVC)   or  make / jom
 
 Verified to build clean with **Qt 6.9.3, MSVC 2022 (64-bit)**.
 
-You'll see one checkable group box per axis ("X gantry Controls:", "Y beam Controls:"),
+You'll see one checkable group box per axis ("X Controls:", "Y Controls:"),
 each with Left-Limit / Slider-Position / Right-Limit rows and Calibrate / Center / Scan
 buttons, plus a `?` settings dialog. In simulation each axis eases toward its commanded
 target and the limit switches are emulated, so you can exercise the whole UI.
@@ -122,13 +122,13 @@ applies on a first run — if a stale address was saved, correct it in the `?` d
 ## Axis mapping
 
 The FMC4030 SDK numbers axes `0 = X (PU1)`, `1 = Y (PU2)`, `2 = Z (PU3)`. On this gantry both
-X rails share **one** controller axis (a single PU/DR signal), so:
+Y rails share **one** controller axis (a single PU/DR signal), so:
 
 | App axis | SDK index | Physical |
 |----------|-----------|----------|
-| X gantry | 0 | both X rails (shared signal) |
+| X        | 0 | the single rail of the H |
 | (unused) | 1 | — |
-| Y beam   | 2 | cross-beam carriage |
+| Y        | 2 | the tied-together rail pair (shared signal) |
 
 `main.cpp` creates the panel with `LAUMultiVelmexWidget({0, 2})`.
 

@@ -22,8 +22,8 @@ int main(int argc, char *argv[])
     }
 
     // The Velmex multi-axis widget, now driven by the FMC4030-backed LAUVelmexController.
-    //   FMC4030 SDK axis 0 = X gantry (both rails share one controller axis)
-    //   FMC4030 SDK axis 2 = Y cross-beam
+    //   FMC4030 SDK axis 0 = X, the single rail of the H
+    //   FMC4030 SDK axis 2 = Y, the tied-together rail pair (both rails share one controller axis)
     QList<int> axes;
     axes << 0 << 2;
 
