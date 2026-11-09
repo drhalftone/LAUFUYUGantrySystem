@@ -34,6 +34,12 @@ public:
         wait();
     }
 
+    // off holds the exposure where it is, so the frames of a scan are comparable for the flat-field
+    void setAutoExposure(bool state)
+    {
+        autoExposure = state;
+    }
+
     // the receiver has taken the last emitFrame; until then new frames are skipped, not queued up
     void frameDone()
     {
@@ -53,6 +59,7 @@ private:
     std::atomic<bool> stopFlag{ false };
     std::atomic<int> averageRequest{ 0 };
     std::atomic<bool> framePending{ false };
+    std::atomic<bool> autoExposure{ true };
 
 signals:
     void emitFrame(cv::Mat raw16, double exposureMs);

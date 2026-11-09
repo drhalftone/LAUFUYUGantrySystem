@@ -69,7 +69,7 @@ if __name__ == "__main__":
     frames = d["frames"]
     calib_pos = {tuple(p) for p in calib["carriage_mm"]}
     missing = [f["carriage_mm"] for f in frames if tuple(f["carriage_mm"]) not in calib_pos]
-    log(f"{len(frames)} frames; calibration from {cfold.relative_to(HERE)} "
+    log(f"{len(frames)} frames; calibration from {cfold} "
         f"({len(calib_pos)} positions, reprojection RMS {calib['reprojection_rms_px']:.2f} px)")
     if missing:
         log(f"  note: {len(missing)} positions not in the calibration scan (fine -- the carriage model covers them)")

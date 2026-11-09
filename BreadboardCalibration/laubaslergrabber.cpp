@@ -91,7 +91,7 @@ void LAUBaslerGrabber::run()
                     emit emitAveragedFrame(out, cam.ExposureTime.GetValue() / 1000.0);
                     averaging = 0;
                 }
-            } else if (++frame % 3 == 0) {
+            } else if (autoExposure && ++frame % 3 == 0) {
                 adjustExposure(cam, raw);                    // a new exposure takes a frame or two to show
             }
 

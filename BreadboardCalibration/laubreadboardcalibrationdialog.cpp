@@ -205,6 +205,12 @@ LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) 
     // every command is on the right-click menu
     setContextMenuPolicy(Qt::ActionsContextMenu);
 
+    // plain text items: without this the Windows style reserves an empty icon column on the left
+    setStyleSheet(QString("QMenu { background: palette(window); border: 1px solid palette(mid); padding: 4px; }"
+                          "QMenu::item { padding: 6px 24px 6px 12px; color: palette(window-text); }"
+                          "QMenu::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
+                          "QMenu::item:disabled { color: palette(mid); }"));
+
     calibrateAction = new QAction(QString("Calibrate"), this);
     calibrateAction->setEnabled(false);
     connect(calibrateAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onCalibrateClicked);
@@ -214,25 +220,6 @@ LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) 
     folderAction->setEnabled(false);
     connect(folderAction, &QAction::triggered, this, &LAUBreadboardCalibrationWidget::onOpenFolderClicked);
     addAction(folderAction);
-
-    QAction *separator = new QAction(this);
-    separator->setSeparator(true);
-    addAction(separator);
-
-    // which picture to show
-    viewActions = new QActionGroup(this);
-    const QStringList names = { QString("Live camera"), QString("Live lens corrected"), QString("Holes found"), QString("Lens corrected"),
-                                QString("Lines into the distance"), QString("Vanishing point") };
-    for (int n = 0; n < names.count(); n++) {
-        QAction *a = new QAction(names.at(n), this);
-        a->setCheckable(true);
-        a->setEnabled(n == ViewLive);
-        a->setData(n);
-        viewActions->addAction(a);
-        addAction(a);
-    }
-    viewActions->actions().at(ViewLive)->setChecked(true);
-    connect(viewActions, &QActionGroup::triggered, this, &LAUBreadboardCalibrationWidget::showView);
 
     view = new LAUImageView();
     layout->addWidget(view, 1);
@@ -289,8 +276,7 @@ void LAUBreadboardCalibrationWidget::onFrame(cv::Mat raw16, double exposureMs)
     }
     camera->setText(camera->text().section(QString("   "), 0, 0) + QString("   exposure %1 ms").arg(exposureMs, 0, 'f', 1));
     // the main picture rests behind the live dialog: the GPU only needs to do one of them
-    const int id = viewActions->checkedAction()->data().toInt();
-    if (!liveDialog && (id == ViewLive || id == ViewLiveCorrected)) {
+    if (!liveDialog) {
         showView();
     }
     grabber->frameDone();
@@ -329,7 +315,7 @@ void LAUBreadboardCalibrationWidget::onCalibrateClicked()
         setStatus(QString("Moving the sliders to their home position..."));
         emit emitGoHome();
     } else {
-        startCapture();
+        startLive();
     }
 }
 
@@ -376,14 +362,61 @@ void LAUBreadboardCalibrationWidget::onLiveFinished(int code)
     }
 }
 
-void LAUBreadboardCalibrationWidget::startCapture()
+void LAUBreadboardCalibrationWidget::enablePlatenScan()
 {
-    setStatus(QString("Hold still — taking the pictures..."));
+    // the gantry window's menu is just its three jobs; the picture follows them by itself
+    for (QAction *action : actions()) {
+        if (action != calibrateAction) {
+            removeAction(action);
+        }
+    }
+    calibrateAction->setText(QString("Calibrate camera"));
+    setStatus(QString("Point the camera at the breadboard, then right-click the picture and choose Calibrate camera."));
+
+    scanBareAction = new QAction(QString("Calibrate platen"), this);
+    scanBareAction->setEnabled(false);
+    connect(scanBareAction, &QAction::triggered, this, [this]() { emit emitScanRequested(false); });
+    addAction(scanBareAction);
+
+    scanTargetAction = new QAction(QString("Scan platen"), this);
+    scanTargetAction->setEnabled(false);
+    connect(scanTargetAction, &QAction::triggered, this, [this]() { emit emitScanRequested(true); });
+    addAction(scanTargetAction);
+}
+
+void LAUBreadboardCalibrationWidget::beginScan()
+{
+    busy = true;
+    calibrateAction->setEnabled(false);
+    scanBareAction->setEnabled(false);
+    scanTargetAction->setEnabled(false);
+    grabber->setAutoExposure(false);
+}
+
+void LAUBreadboardCalibrationWidget::endScan(const QString &message)
+{
+    busy = false;
+    scanFrameRequested = false;
+    grabber->setAutoExposure(true);
+    calibrateAction->setEnabled(true);
+    scanBareAction->setEnabled(true);
+    scanTargetAction->setEnabled(true);
+    setStatus(message);
+}
+
+void LAUBreadboardCalibrationWidget::requestScanFrame()
+{
+    scanFrameRequested = true;
     grabber->requestAverage(8);
 }
 
 void LAUBreadboardCalibrationWidget::onAveragedFrame(cv::Mat raw16, double exposureMs)
 {
+    if (scanFrameRequested) {
+        scanFrameRequested = false;
+        emit emitScanFrame(raw16, exposureMs);
+        return;
+    }
     if (!liveInFlight) {
         setStatus(QString("Finding the holes and measuring the lens..."));
     }
@@ -428,37 +461,17 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
     const cv::Mat dist(1, 5, CV_64F, result.dist);
     const cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, result.imageSize, 0);
     view->setUndistortion(result.K, result.dist, cv::Matx33d(newK));
-
-    for (int n = ViewLiveCorrected; n <= ViewVanishing; n++) {
-        viewActions->actions().at(n)->setEnabled(true);
-    }
-    viewActions->actions().at(ViewLiveCorrected)->setChecked(true);
+    view->enableUndistortion(true);
     showView();
+    if (scanBareAction) {
+        scanBareAction->setEnabled(true);
+        scanTargetAction->setEnabled(true);
+    }
 }
 
 void LAUBreadboardCalibrationWidget::showView()
 {
-    switch (viewActions->checkedAction()->data().toInt()) {
-    case ViewLiveCorrected:
-        view->enableUndistortion(true);
-        view->setFrame(liveFrame);
-        break;
-    case ViewHoles:
-        view->setImage(result.holes);
-        break;
-    case ViewCorrected:
-        view->setImage(result.undistorted);
-        break;
-    case ViewLines:
-        view->setImage(result.lines);
-        break;
-    case ViewVanishing:
-        view->setImage(result.vanishing);
-        break;
-    default:
-        view->enableUndistortion(false);
-        view->setFrame(liveFrame);
-    }
+    view->setFrame(liveFrame);
 }
 
 void LAUBreadboardCalibrationWidget::onOpenFolderClicked()

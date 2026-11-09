@@ -10,7 +10,9 @@
 #define LAUGANTRYMAINWINDOW_H
 
 #include <QGroupBox>
+#include <QJsonArray>
 #include <QMainWindow>
+#include <QProgressBar>
 
 #include "laubreadboardcalibrationdialog.h"
 #include "lauvelmexwidget.h"
@@ -24,6 +26,8 @@ public:
     explicit LAUHomeDialog(QWidget *parent = nullptr);
 
     void finish();
+    void setMessage(const QString &text);
+    void setProgress(int value, int maximum);
 
 public slots:
     void reject() override;                  // Abort, Esc and the title bar's X all stop the rails
@@ -33,6 +37,7 @@ signals:
 
 private:
     QLabel *label = nullptr;
+    QProgressBar *bar = nullptr;
     QPushButton *abortButton = nullptr;
 };
 
@@ -47,12 +52,37 @@ private slots:
     void onRailsEnabled(bool state);
     void onGoHome();
     void onHomeFinished(bool ok, QString message);
+    void onScanRequested(bool withTarget);
+    void onScanFrame(cv::Mat raw16, double exposureMs);
+    void onScanTimer();
 
 private:
     LAUBreadboardCalibrationWidget *cameraWidget = nullptr;
     LAUMultiVelmexWidget *railWidget = nullptr;
     QGroupBox *railBox = nullptr;
     LAUHomeDialog *homeDialog = nullptr;
+
+    // platen scan: stop at each position, let the rails settle, save one averaged frame
+    struct ScanStop
+    {
+        double xMM, yMM;
+    };
+    QList<ScanStop> scanStops;
+    int scanIndex = 0;
+    bool scanning = false;
+    bool scanWithTarget = false;
+    bool scanAborted = false;
+    bool waitingForFrame = false;
+    QTimer *scanTimer = nullptr;
+    QString scanBase;                        // scans go in a time-stamped folder under this
+    QString scanFolder;
+    QJsonArray scanFrames;
+
+    void moveToNextStop();
+    void onScanMoveFinished(bool ok, const QString &message);
+    bool saveScanFrame(const cv::Mat &raw16, double exposureMs);
+    void finishScan(const QString &message);
+    void onAbort();
 };
 
 #endif // LAUGANTRYMAINWINDOW_H

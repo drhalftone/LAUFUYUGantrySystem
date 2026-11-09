@@ -2,8 +2,8 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 //
-// LAUBreadboardCalibrationWidget -- the live (levelled) camera picture; Calibrate and the choice of which
-// result to look at are on its right-click menu.  Every successful calibration is saved automatically to
+// LAUBreadboardCalibrationWidget -- the live (levelled) camera picture, lens corrected once calibrated, with
+// Calibrate on its right-click menu.  Every calibration locked in with the live dialog is saved to
 // Documents/BreadboardCalibration/<date_time>/ in the same format as vision/calibrate_frame.py.
 // LAUBreadboardCalibrationDialog -- the same widget as a standalone dialog with a Close button.
 //
@@ -77,6 +77,17 @@ public:
         homeMoveFlag = state;
     }
 
+    // Adds the platen scan commands to the right-click menu, available once the camera is calibrated.
+    // The owner moves the rails; each requestScanFrame() is answered by emitScanFrame().
+    void enablePlatenScan();
+    void beginScan();
+    void endScan(const QString &message);
+    void requestScanFrame();
+    void showMessage(const QString &text)
+    {
+        setStatus(text);
+    }
+
 public slots:
     void onHomeFinished(bool ok, QString message);
 
@@ -92,16 +103,15 @@ private slots:
 signals:
     void emitCalibrate(cv::Mat raw16, double exposureMs);
     void emitGoHome();
+    void emitScanRequested(bool withTarget);
+    void emitScanFrame(cv::Mat raw16, double exposureMs);
 
 private:
-    enum View { ViewLive, ViewLiveCorrected, ViewHoles, ViewCorrected, ViewLines, ViewVanishing };
-
     LAUImageView *view = nullptr;
     QLabel *status = nullptr;
     QLabel *camera = nullptr;
     QAction *calibrateAction = nullptr;
     QAction *folderAction = nullptr;
-    QActionGroup *viewActions = nullptr;
 
     LAUBaslerGrabber *grabber = nullptr;
     QThread calibrationThread;
@@ -112,10 +122,12 @@ private:
     QString savedFolder;
     bool busy = false;
     bool homeMoveFlag = false;
+    bool scanFrameRequested = false;
+    QAction *scanBareAction = nullptr;
+    QAction *scanTargetAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
 
-    void startCapture();
     void startLive();
     void requestLiveFrame();
     void applyResult(const LAUBreadboardCalibrationResult &r);    void showView();

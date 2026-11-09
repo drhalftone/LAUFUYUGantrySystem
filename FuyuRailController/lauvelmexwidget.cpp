@@ -3050,6 +3050,39 @@ int LAUVelmexWidget::commandPosition(double pos)
 /****************************************************************************************************************/
 void LAUMultiVelmexWidget::goToHome()
 {
+    startMove(false, 0.0, 0.0);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::moveRails(double xMM, double yMM)
+{
+    startMove(true, xMM, yMM);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+bool LAUMultiVelmexWidget::scanRange(int dim, double *lowMM, double *highMM) const
+{
+    for (int n = 0; n < widgets.count(); n++) {
+        LAUVelmexWidget *axis = widgets.at(n);
+        if (axis->dim() == dim) {
+            const double perMM = axis->unitsFromMM(1.0);
+            *lowMM = qMax(axis->left(), axis->minimum() + 5.0 * perMM) / perMM;
+            *highMM = qMin(axis->right(), axis->maximum() - 5.0 * perMM) / perMM;
+            return (*highMM > *lowMM);
+        }
+    }
+    return (false);
+}
+
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+/****************************************************************************************************************/
+void LAUMultiVelmexWidget::startMove(bool useTarget, double xMM, double yMM)
+{
     static const int HOME_AXIS_X = 0;
     static const int HOME_AXIS_Y = 2;
     static const double HOME_IDLER_MARGIN_MM = 5.0;
@@ -3069,7 +3102,7 @@ void LAUMultiVelmexWidget::goToHome()
     }
 
     if (xAxis == nullptr || yAxis == nullptr || controller == nullptr || controller->isConnected() == false) {
-        finishHome(false, QString("The sliders aren't connected, so they can't move to their home position."));
+        finishHome(false, QString("The sliders aren't connected, so they can't move."));
         return;
     }
     if (isMoving()) {
@@ -3084,14 +3117,15 @@ void LAUMultiVelmexWidget::goToHome()
         if (settings.value(QString("LAUVelmexController::axis%1::zeroValid").arg(axis->dim()), false).toBool() == false) {
             names << name;
         }
-        if (axis->isEnabled() == false || axis->QWidget::isEnabled() == false) {
-            finishHome(false, QString("The %1 axis is switched off or busy, so the sliders can't move to their home position.").arg(name));
+        // isEnabledTo: busy means this axis itself, not an owner locking the panel during a scan
+        if (axis->isEnabled() == false || axis->isEnabledTo(this) == false) {
+            finishHome(false, QString("The %1 axis is switched off or busy, so the sliders can't move.").arg(name));
             return;
         }
     }
     if (names.isEmpty() == false) {
         finishHome(false, QString("Press Calibrate on the %1 slider first: without a valid zero point "
-                                  "the home position can't be trusted.").arg(names.join(QString(" and "))));
+                                  "slider positions can't be trusted.").arg(names.join(QString(" and "))));
         return;
     }
 
@@ -3102,8 +3136,9 @@ void LAUMultiVelmexWidget::goToHome()
     }
 
     // COUNTS GROW AWAY FROM THE LEFT-END SWITCH, SO THE IDLER END IS 0 ONLY WHEN IT IS THE LEFT END
-    const double xTarget = (xAxis->minimum() + xAxis->maximum()) / 2.0;
-    const double yTarget = (controller->homeDirection(HOME_AXIS_Y) == 2) ? yAxis->minimum() + margin : yAxis->maximum() - margin;
+    const double xTarget = useTarget ? xAxis->unitsFromMM(xMM) : (xAxis->minimum() + xAxis->maximum()) / 2.0;
+    const double yTarget = useTarget ? yAxis->unitsFromMM(yMM)
+                                     : ((controller->homeDirection(HOME_AXIS_Y) == 2) ? yAxis->minimum() + margin : yAxis->maximum() - margin);
 
     // THE SPIN BOXES WOULD QUIETLY CLAMP THE MOVE TO THE LIMIT SLIDERS AND LEAVE THE RAIL SHORT OF HOME
     if (xTarget < xAxis->left() || xTarget > xAxis->right()) {
@@ -3129,7 +3164,7 @@ void LAUMultiVelmexWidget::goToHome()
         connect(this, SIGNAL(emitStopRails()), controller, SLOT(onStopRails()), Qt::QueuedConnection);
         connect(controller, SIGNAL(emitStopComplete()), this, SLOT(onRailsStopped()), Qt::QueuedConnection);
         connect(homeTimer, &QTimer::timeout, this, [this]() {
-            stopHome(QString("The sliders didn't reach their home position in time, so they were stopped. "
+            stopHome(QString("The sliders didn't reach their target in time, so they were stopped. "
                                       "Check that nothing is blocking them before trying again."));
         });
     }

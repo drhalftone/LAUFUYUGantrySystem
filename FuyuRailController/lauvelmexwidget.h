@@ -677,6 +677,20 @@ public:
     // emitHomeFinished(), including when it refuses to move.
     void goToHome();
     void abortHome();      // STOPS THE RAILS; emitHomeFinished() FOLLOWS ONCE THEY HAVE HALTED
+
+    // The same move with an explicit target, in mm from each axis's zero; answers with emitHomeFinished()
+    void moveRails(double xMM, double yMM);
+
+    // Where this axis may be sent, in mm: its limit sliders, kept 5 mm clear of both end switches
+    bool scanRange(int dim, double *lowMM, double *highMM) const;
+    double reportedMM(int dim) const         // WHERE THE LAST MOVE ACTUALLY ENDED
+    {
+        return (homeCounts.value(dim) / 1000.0);
+    }
+    int homeDirection(int dim) const
+    {
+        return (controller ? controller->homeDirection(dim) : 2);
+    }
     bool isHoming() const
     {
         return (homingFlag);
@@ -862,6 +876,7 @@ private:
     bool homeStopping = false;
     QString homeStopMessage;
     void stopHome(const QString &message);
+    void startMove(bool useTarget, double xMM, double yMM);
     void finishHome(bool ok, const QString &message);
 
     void initiateScanning();
