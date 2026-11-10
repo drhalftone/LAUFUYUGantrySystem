@@ -31,6 +31,8 @@ HEADERS += \
     lauplatenoverlay.h \
     laurailpredictor.h \
     lauprinttargetdialog.h \
+    lautargetfinder.h \
+    lauprinttarget.h \
     $$COLOR_DIR/lauargyllrunner.h \
     $$CAMERA_DIR/lauholegrid.h \
     $$CAMERA_DIR/laubreadboardcalibration.h \
@@ -46,6 +48,8 @@ SOURCES += \
     lauimageinspectdialog.cpp \
     lauplatenoverlay.cpp \
     lauprinttargetdialog.cpp \
+    lautargetfinder.cpp \
+    lauprinttarget.cpp \
     $$COLOR_DIR/lauargyllrunner.cpp \
     $$CAMERA_DIR/lauholegrid.cpp \
     $$CAMERA_DIR/laubreadboardcalibration.cpp \

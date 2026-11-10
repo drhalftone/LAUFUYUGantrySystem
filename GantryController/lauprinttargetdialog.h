@@ -4,7 +4,8 @@
 //
 // LAUPrintTargetDialog -- asks how large a print target to make, no larger than the area the i1's measuring circle
 // can reach, then has ArgyllCMS make it: targen chooses the CMYK patch values and printtarg lays them out on the
-// page.  The result is one CMYK TIFF to print, carrying the .ti1 and .ti2 needed for profiling in its XMP metadata.
+// page.  The result is one CMYK TIFF to print, carrying in its XMP metadata the .ti1 and .ti2 needed for profiling
+// and the .cht that says where every patch is on the page (read back by LAUPrintTarget).
 //
 // printtarg says how many patches fit a page but only after being run, so it is run once on a few patches to find
 // out, then targen makes that many and printtarg lays them out for real.
@@ -38,8 +39,10 @@ public:
 
     static bool turnTiffQuarter(const QString &tiffPath, QString *error = nullptr);
 
-    // Puts the .ti1 and .ti2 inside the TIFF, in its XMP metadata, so the target is one file
-    static bool embedChartData(const QString &tiffPath, const QString &ti1Path, const QString &ti2Path, QString *error = nullptr);
+    // Puts the .ti1, .ti2 and .cht inside the TIFF, in its XMP metadata, so the target is one file.  turned says the
+    // TIFF was given a quarter turn after printtarg wrote the .cht; pageW x pageH is the TIFF's size now, in mm.
+    static bool embedChartData(const QString &tiffPath, const QString &ti1Path, const QString &ti2Path, const QString &chtPath,
+                               bool turned, double pageWidthMM, double pageHeightMM, QString *error = nullptr);
 
 public slots:
     void onGenerate();

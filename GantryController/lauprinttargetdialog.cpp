@@ -40,7 +40,7 @@ namespace
     const int TIFF_ENTRY_BYTES = 12;
     const int TIFF_TAG_XMP = 700;
     const int TIFF_TYPE_BYTE = 1;
-    const QString CHART_NAMESPACE = QStringLiteral("urn:lau:gantry-print-target:1");   // the elements <lau:ti1> and <lau:ti2>
+    const QString CHART_NAMESPACE = QStringLiteral("urn:lau:gantry-print-target:1");   // <lau:ti1> <lau:ti2> <lau:cht> ...: see LAUPrintTarget
 
     int firstNumber(const QString &text, const QString &pattern)
     {
@@ -172,7 +172,8 @@ QStringList LAUPrintTargetDialog::printtargArguments(const QString &name) const
                            QString("-M"), QString::number(PAGE_MARGIN_MM, 'f', 0),
                            QString("-t"), QString::number(dpiBox->currentData().toInt()),
                            QString("-C"),
-                           QString("-P") };           // no limit on strip length: the gantry isn't a hand-held ruler
+                           QString("-P"),             // no limit on strip length: the gantry isn't a hand-held ruler
+                           QString("-s") };           // a .cht: where every patch is on the page, in mm
     if (modeBox->currentData().toBool()) {
         arguments << QString("-n");               // stop and go: no spacers between the patches
     }
@@ -245,7 +246,7 @@ void LAUPrintTargetDialog::onToolFinished(QString tool, bool success)
     if (step == ProbePrinttarg) {
         perPage = firstNumber(toolOutput, QString("patches per page = (\\d+)"));
         perRow = firstNumber(toolOutput, QString("patches per row = (\\d+)"));
-        for (const QString &suffix : { QString(".ti1"), QString(".ti2"), QString(".tif") }) {
+        for (const QString &suffix : { QString(".ti1"), QString(".ti2"), QString(".tif"), QString(".cht") }) {
             QFile::remove(QDir(folder).filePath(QString("probe") + suffix));
         }
         if (perPage < FEWEST_PATCHES || perRow <= 0) {
@@ -290,13 +291,15 @@ void LAUPrintTargetDialog::onToolFinished(QString tool, bool success)
         return;
     }
     QString embedError;
-    if (widthBox->value() > heightBox->value() && !turnTiffQuarter(tiff, &embedError)) {
+    const bool turned = widthBox->value() > heightBox->value();
+    if (turned && !turnTiffQuarter(tiff, &embedError)) {
         finish(false, QString("Couldn't turn the TIFF: %1").arg(embedError));
         return;
     }
 
     const QString working = QDir(folder).filePath(QString("target"));
-    if (!embedChartData(tiff, working + QString(".ti1"), working + QString(".ti2"), &embedError)) {
+    if (!embedChartData(tiff, working + QString(".ti1"), working + QString(".ti2"), working + QString(".cht"), turned,
+                        widthBox->value(), heightBox->value(), &embedError)) {
         finish(false, QString("Couldn't put the chart data in the TIFF: %1").arg(embedError));
         return;
     }
@@ -433,7 +436,8 @@ bool LAUPrintTargetDialog::turnTiffQuarter(const QString &tiffPath, QString *err
 
 // Adds an XMP packet (TIFF tag 700) holding the two files, by appending the packet and a new copy of the image's tag
 // directory and pointing the header at it.  Nothing already in the file moves, so the pixels are untouched.
-bool LAUPrintTargetDialog::embedChartData(const QString &tiffPath, const QString &ti1Path, const QString &ti2Path, QString *error)
+bool LAUPrintTargetDialog::embedChartData(const QString &tiffPath, const QString &ti1Path, const QString &ti2Path, const QString &chtPath,
+                                          bool turned, double pageWidthMM, double pageHeightMM, QString *error)
 {
     const auto fail = [error](const QString &text) {
         if (error) {
@@ -441,12 +445,14 @@ bool LAUPrintTargetDialog::embedChartData(const QString &tiffPath, const QString
         }
         return false;
     };
-    QFile ti1(ti1Path), ti2(ti2Path), file(tiffPath);
-    if (!ti1.open(QIODevice::ReadOnly) || !ti2.open(QIODevice::ReadOnly)) {
-        return fail(QString("the .ti1 or .ti2 couldn't be read"));
+    QFile ti1(ti1Path), ti2(ti2Path), cht(chtPath), file(tiffPath);
+    if (!ti1.open(QIODevice::ReadOnly) || !ti2.open(QIODevice::ReadOnly) || !cht.open(QIODevice::ReadOnly)) {
+        return fail(QString("the .ti1, .ti2 or .cht couldn't be read"));
     }
     const QString escapedTi1 = QString::fromLatin1(ti1.readAll()).toHtmlEscaped();
     const QString escapedTi2 = QString::fromLatin1(ti2.readAll()).toHtmlEscaped();
+    const QString escapedCht = QString::fromLatin1(cht.readAll()).toHtmlEscaped();
+    const QString page = QString("%1 %2").arg(pageWidthMM, 0, 'f', 3).arg(pageHeightMM, 0, 'f', 3);
     if (!file.open(QIODevice::ReadWrite)) {
         return fail(file.errorString());
     }
@@ -483,8 +489,9 @@ bool LAUPrintTargetDialog::embedChartData(const QString &tiffPath, const QString
     const QByteArray packet = QString("<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
                                       "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
                                       "<rdf:Description rdf:about=\"\" xmlns:lau=\"%1\">\n<lau:ti1>%2</lau:ti1>\n<lau:ti2>%3</lau:ti2>\n"
+                                      "<lau:cht>%4</lau:cht>\n<lau:turned>%5</lau:turned>\n<lau:page_mm>%6</lau:page_mm>\n"
                                       "</rdf:Description></rdf:RDF></x:xmpmeta>\n<?xpacket end=\"r\"?>")
-                                  .arg(CHART_NAMESPACE, escapedTi1, escapedTi2).toUtf8();
+                                  .arg(CHART_NAMESPACE, escapedTi1, escapedTi2, escapedCht, turned ? QString("1") : QString("0"), page).toUtf8();
 
     // TIFF offsets must be even, and tags must stay in ascending order
     qint64 packetAt = file.size();
