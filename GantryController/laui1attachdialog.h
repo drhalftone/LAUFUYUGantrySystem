@@ -13,11 +13,35 @@
 
 #include <vector>
 #include <QDialog>
+#include <QString>
 #include <opencv2/core.hpp>
 
 class QLabel;
 class QPushButton;
 class LAUImageView;
+
+// Is the i1 off the carriage?  Compares the live picture with the empty cradle that Calibrate platen recorded
+// (cradle_reference.png, over the pixels in cradle_steady.png) when it found the aperture, which it can only do
+// with the cradle empty.  By correlation, so the camera's exposure doesn't matter; by brightness where the cradle
+// is too plain to correlate.
+class LAUCradleCheck
+{
+public:
+    bool load(const QString &bareScanFolder);    // false: no recording yet, so no check
+    bool isLoaded() const
+    {
+        return !samples.empty();
+    }
+
+    // false when there's nothing to compare (no recording, or no frame of the right size)
+    bool compare(const cv::Mat &raw16, double *similarity, bool *empty) const;
+
+private:
+    std::vector<int> samples;                    // pixel offsets of the steady cradle
+    std::vector<double> values;                  // their empty-cradle grey, 0..255
+    cv::Size size;
+    double meanValue = 0.0, deviation = 0.0;
+};
 
 class LAUi1AttachDialog : public QDialog
 {

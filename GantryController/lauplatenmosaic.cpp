@@ -381,6 +381,40 @@ namespace
     }
 
     // illumination x vignetting x board finish, with the holes closed over; median across the scan, 1 at its median
+    // The empty cradle, so a later scan can tell whether the i1 is still on the carriage: each pixel's median over the
+    // scan, kept only where it hardly varies.  That is the cradle itself, fixed to the camera; the board seen through
+    // its window changes from frame to frame and is left out.
+    void cradleReference(const std::vector<Frame> &frames, const cv::Mat &mask, cv::Mat *reference, cv::Mat *steady)
+    {
+        const int STEP = 2;
+        const double STEADY_GREY = 3.0;      // median absolute deviation over the scan, 8-bit grey
+        *reference = cv::Mat::zeros(mask.size(), CV_8U);
+        *steady = cv::Mat::zeros(mask.size(), CV_8U);
+        if (frames.size() < 4) {
+            return;
+        }
+        std::vector<double> v(frames.size());
+        for (int r = 0; r < mask.rows; r += STEP) {
+            for (int c = 0; c < mask.cols; c += STEP) {
+                if (!mask.at<uchar>(r, c)) {
+                    continue;
+                }
+                for (size_t k = 0; k < frames.size(); k++) {
+                    v[k] = frames[k].gray.at<uchar>(r, c);
+                }
+                const double median = medianOf(v);
+                std::vector<double> deviation(v.size());
+                for (size_t k = 0; k < v.size(); k++) {
+                    deviation[k] = std::abs(v[k] - median);
+                }
+                if (medianOf(deviation) <= STEADY_GREY) {
+                    reference->at<uchar>(r, c) = (uchar)std::lround(median);
+                    steady->at<uchar>(r, c) = 255;
+                }
+            }
+        }
+    }
+
     cv::Mat flatField(const std::vector<Frame> &frames)
     {
         const int N = (int)frames.size();
@@ -1054,6 +1088,15 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
         QFile cal(out.filePath(QString("calibration.json")));
         saved = cal.open(QIODevice::WriteOnly | QIODevice::Truncate) && cal.write(QJsonDocument(calibration).toJson()) > 0 && saved;
         saved = writeGray(mask, out.filePath(QString("mask.png"))) && saved;
+
+        // the aperture was seen through the plate's hole, so the cradle was empty: remember how that looked
+        if (apertureOk) {
+            cv::Mat reference, steady;
+            cradleReference(all, mask, &reference, &steady);
+            saved = writeGray(reference, out.filePath(QString("cradle_reference.png"))) && saved;
+            saved = writeGray(steady, out.filePath(QString("cradle_steady.png"))) && saved;
+            report << QString("empty cradle recorded: %1 steady pixels").arg(cv::countNonZero(steady));
+        }
         cv::Mat flat16;
         flat.convertTo(flat16, CV_16U, 32768.0);
         saved = QImage(flat16.data, flat16.cols, flat16.rows, (int)flat16.step, QImage::Format_Grayscale16).save(out.filePath(QString("flat.png"))) && saved;

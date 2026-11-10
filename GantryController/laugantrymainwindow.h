@@ -135,6 +135,9 @@ private:
     LAUi1Worker *i1 = nullptr;
     class LAUArgyllRunner *argyll = nullptr;
 
+    cv::Mat lastLiveFrame;
+    bool cradleIsClear(const QString &title);    // false if the user cancels; warns while the i1 looks attached
+
     void setUpMeasuring();                   // these in laugantrymeasure.cpp
     void locateTarget(const QString &mosaicFolder);
     void startI1();

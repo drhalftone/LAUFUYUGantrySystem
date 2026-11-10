@@ -382,10 +382,14 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
     }
 
     const QString title = withTarget ? QString("Scan Target") : QString("Calibrate Platen");
+    if (!cradleIsClear(title)) {
+        return;
+    }
     const QMessageBox::StandardButton answer = QMessageBox::warning(this, title,
         (withTarget ? QString("Take the i1 Pro off the carriage and place the printed target on the platen. The camera finds its %1 patches first; "
                               "the i1 measures them after.").arg(measureTarget.patches.count())
-                    : QString("Clear everything off the platen: this pass needs to see all the holes.")) +
+                    : QString("Clear everything off the platen and take the i1 Pro off the carriage: this pass needs to see all the holes, "
+                              "and it finds where the i1 measures by looking through the plate's hole.")) +
         QString("\n\nThe camera sees %1 x %2 mm of the platen, so the sliders will stop at %3 positions (%4 x %5). Make sure nothing is in their way.")
             .arg(viewAcross, 0, 'f', 0).arg(viewAlong, 0, 'f', 0).arg(total).arg(stopsX).arg(stopsY),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);

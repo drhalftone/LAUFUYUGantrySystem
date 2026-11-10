@@ -50,6 +50,40 @@ void LAUGantryMainWindow::setUpMeasuring()
     connect(measureTimer, &QTimer::timeout, this, &LAUGantryMainWindow::onMeasureTimer);
     argyll = new LAUArgyllRunner(this);
     connect(argyll, &LAUArgyllRunner::finished, this, &LAUGantryMainWindow::onSpec2cieFinished);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, this, [this](cv::Mat frame) { lastLiveFrame = frame; });
+}
+
+// Before a scan: the camera looks at the cradle and, if the i1 seems to be in it, says so until it's taken off
+bool LAUGantryMainWindow::cradleIsClear(const QString &title)
+{
+    LAUCradleCheck check;
+    if (!check.load(QSettings().value(QString("LAUGantryMainWindow::bareScanFolder")).toString())) {
+        return true;                         // no empty cradle recorded yet: the prompt's wording is all there is
+    }
+    while (true) {
+        double similarity = 0.0;
+        bool empty = true;
+        if (!check.compare(lastLiveFrame, &similarity, &empty) || empty) {
+            return true;
+        }
+        QMessageBox box(QMessageBox::Warning, title,
+                        QString("The camera sees something in the i1's cradle (it matches the empty cradle only %1%). "
+                                "Take the i1 Pro off the carriage before scanning: the camera needs a clear view past the cradle, "
+                                "and Calibrate platen finds where the i1 measures by looking through the plate's hole.")
+                            .arg(std::max(similarity, 0.0) * 100.0, 0, 'f', 0),
+                        QMessageBox::NoButton, this);
+        QPushButton *again = box.addButton(QString("Check again"), QMessageBox::AcceptRole);
+        QPushButton *anyway = box.addButton(QString("Scan anyway"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(again);
+        box.exec();
+        if (box.clickedButton() == anyway) {
+            return true;
+        }
+        if (box.clickedButton() != again) {
+            return false;
+        }
+    }
 }
 
 // The camera's pass is merged: find the patches in the picture, confirm them with the user, and turn each into rails

@@ -5,6 +5,8 @@
 #include "lauglimageview.h"
 
 #include <cmath>
+#include <QDir>
+#include <QImage>
 #include <QLabel>
 #include <QPushButton>
 #include <QMessageBox>
@@ -19,6 +21,73 @@ namespace
     const double STEADY_CHANGE = 0.03;           // and from the frame before by less than this
     const int STEADY_FRAMES = 8;                 // for this many frames in a row
     const int SAMPLE_STEP = 4;
+
+    // LAUCradleCheck
+    const int MIN_CRADLE_PIXELS = 200;
+    const double EMPTY_SIMILARITY = 0.7;         // correlation with the empty cradle at least this: the i1 is off
+    const double PLAIN_DEVIATION = 4.0;          // a cradle this plain (grey levels) is judged by brightness instead
+    const double PLAIN_CHANGE = 0.5;             // ... and counts as occupied if its brightness moved this much
+}
+
+bool LAUCradleCheck::load(const QString &bareScanFolder)
+{
+    samples.clear();
+    values.clear();
+    const QDir mosaic(QDir(bareScanFolder).filePath(QString("mosaic")));
+    const QImage reference = QImage(mosaic.filePath(QString("cradle_reference.png"))).convertToFormat(QImage::Format_Grayscale8);
+    const QImage steady = QImage(mosaic.filePath(QString("cradle_steady.png"))).convertToFormat(QImage::Format_Grayscale8);
+    if (reference.isNull() || steady.isNull() || reference.size() != steady.size()) {
+        return false;
+    }
+    size = cv::Size(reference.width(), reference.height());
+    for (int r = 0; r < reference.height(); r++) {
+        const uchar *keep = steady.constScanLine(r), *grey = reference.constScanLine(r);
+        for (int c = 0; c < reference.width(); c++) {
+            if (keep[c]) {
+                samples.push_back(r * reference.width() + c);
+                values.push_back(grey[c]);
+            }
+        }
+    }
+    if ((int)samples.size() < MIN_CRADLE_PIXELS) {
+        samples.clear();
+        values.clear();
+        return false;
+    }
+    double sum = 0.0, squares = 0.0;
+    for (double v : values) {
+        sum += v;
+        squares += v * v;
+    }
+    meanValue = sum / values.size();
+    deviation = std::sqrt(std::max(squares / values.size() - meanValue * meanValue, 0.0));
+    return true;
+}
+
+bool LAUCradleCheck::compare(const cv::Mat &raw16, double *similarity, bool *empty) const
+{
+    if (samples.empty() || raw16.empty() || raw16.type() != CV_16UC1 || raw16.size() != size) {
+        return false;
+    }
+    const quint16 *pixels = raw16.ptr<quint16>(0);
+    double sum = 0.0, squares = 0.0, cross = 0.0;
+    for (size_t k = 0; k < samples.size(); k++) {
+        const double v = pixels[samples[k]] / 4.0;        // Mono10 to the 8-bit grey the scan saved
+        sum += v;
+        squares += v * v;
+        cross += v * values[k];
+    }
+    const double n = (double)samples.size(), mean = sum / n;
+    const double liveDeviation = std::sqrt(std::max(squares / n - mean * mean, 0.0));
+    if (deviation < PLAIN_DEVIATION) {
+        // too plain to correlate: compare its brightness
+        *similarity = 1.0 - std::abs(mean - meanValue) / std::max(meanValue, 8.0);
+        *empty = *similarity >= 1.0 - PLAIN_CHANGE;
+        return true;
+    }
+    *similarity = (liveDeviation < 1e-6) ? 0.0 : (cross / n - mean * meanValue) / (liveDeviation * deviation);
+    *empty = *similarity >= EMPTY_SIMILARITY;
+    return true;
 }
 
 LAUi1AttachDialog::LAUi1AttachDialog(const cv::Mat &cradle, QWidget *parent) : QDialog(parent)
