@@ -15,6 +15,9 @@
 
 #include "lauimageinspectdialog.h"
 #include "lauprinttargetdialog.h"
+#include "laulastdirectory.h"
+#include <QFileInfo>
+#include <QFileDialog>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -155,6 +158,8 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     connect(merger, &LAUPlatenMosaic::emitFinished, this, &LAUGantryMainWindow::onMergeFinished, Qt::QueuedConnection);
     mergeThread.start();
 
+    setUpMeasuring();                        // laugantrymeasure.cpp
+
     connect(railWidget, &LAUMultiVelmexWidget::emitRailCount, this, &LAUGantryMainWindow::onRailCount);
     connect(railWidget, &LAUMultiVelmexWidget::emitRailMove, this, &LAUGantryMainWindow::onRailMove);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitPrintTargetRequested, this, &LAUGantryMainWindow::onPrintTargetRequested);
@@ -237,6 +242,8 @@ LAUGantryMainWindow::~LAUGantryMainWindow()
     merger->cancel();
     mergeThread.quit();
     mergeThread.wait();
+    i1Thread.quit();                         // waits out a reading in progress, a few seconds at most
+    i1Thread.wait();
 }
 
 void LAUGantryMainWindow::startMerge(const QString &bareFolder)
@@ -288,9 +295,13 @@ void LAUGantryMainWindow::wrapUp()
     if (merging || returningHome) {
         return;
     }
-    const QString image = wrapUpImage;
+    const QString image = wrapUpImage, folder = wrapUpFolder;
     finishScan(wrapUpMessage + wrapUpNote);
     loadGuides();                            // a new platen calibration may have just been saved
+    if (scanWithTarget && measureTarget.isValid() && !folder.isEmpty()) {
+        locateTarget(folder);                // the camera's pass is done: on to the patches
+        return;
+    }
     if (!image.isEmpty()) {
         const QImage merged(image);
         if (merged.isNull()) {
@@ -313,6 +324,7 @@ void LAUGantryMainWindow::onMergeFinished(LAUPlatenMosaicResult result)
     merging = false;
     wrapUpMessage = result.ok ? QString("Merged. Results are in %1").arg(QDir::toNativeSeparators(result.folder)) : result.message;
     wrapUpImage = result.ok ? result.gridImage : QString();
+    wrapUpFolder = result.ok ? result.folder : QString();
     wrapUp();
 }
 
@@ -350,9 +362,30 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
     const int stopsX = stopsForTravel(xHigh - xLow, viewAcross);
     const int stopsY = stopsForTravel(yHigh - yLow, viewAlong);
     const int total = stopsX * stopsY;
-    const QString title = withTarget ? QString("Scan Platen") : QString("Calibrate Platen");
+
+    // a target to measure is chosen first, so a target that can't be used is turned away before the scan
+    wrapUpFolder.clear();
+    if (withTarget) {
+        const QString path = QFileDialog::getOpenFileName(this, QString("Which Printed Target Is on the Platen?"), LAULastDirectory::get(),
+                                                          QString("Print target (*.tif *.tiff)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        LAULastDirectory::rememberFile(path);
+        LAUPrintTarget target;
+        if (!target.load(path)) {
+            cameraWidget->showMessage(QString("Can't measure %1: %2").arg(QFileInfo(path).fileName(), target.error()));
+            return;
+        }
+        measureTarget = target;
+        measureName = QFileInfo(path).completeBaseName();
+    }
+
+    const QString title = withTarget ? QString("Scan Target") : QString("Calibrate Platen");
     const QMessageBox::StandardButton answer = QMessageBox::warning(this, title,
-        (withTarget ? QString("Place the target on the platen.") : QString("Clear everything off the platen: this pass needs to see all the holes.")) +
+        (withTarget ? QString("Take the i1 Pro off the carriage and place the printed target on the platen. The camera finds its %1 patches first; "
+                              "the i1 measures them after.").arg(measureTarget.patches.count())
+                    : QString("Clear everything off the platen: this pass needs to see all the holes.")) +
         QString("\n\nThe camera sees %1 x %2 mm of the platen, so the sliders will stop at %3 positions (%4 x %5). Make sure nothing is in their way.")
             .arg(viewAcross, 0, 'f', 0).arg(viewAlong, 0, 'f', 0).arg(total).arg(stopsX).arg(stopsY),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
@@ -523,6 +556,10 @@ void LAUGantryMainWindow::onGoHome()
 
 void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
 {
+    if (measuring) {
+        onPatchMoveFinished(ok, message);
+        return;
+    }
     if (scanning) {
         onScanMoveFinished(ok, message);
         return;

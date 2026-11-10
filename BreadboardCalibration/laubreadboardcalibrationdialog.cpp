@@ -291,6 +291,7 @@ void LAUBreadboardCalibrationWidget::onFrame(cv::Mat raw16, double exposureMs)
     if (!liveDialog) {
         showView();
     }
+    emit emitLiveFrame(raw16);
     grabber->frameDone();
 }
 
@@ -390,7 +391,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     connect(scanBareAction, &QAction::triggered, this, [this]() { emit emitScanRequested(false); });
     addAction(scanBareAction);
 
-    scanTargetAction = new QAction(QString("Scan platen"), this);
+    scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
     connect(scanTargetAction, &QAction::triggered, this, [this]() { emit emitScanRequested(true); });
     addAction(scanTargetAction);

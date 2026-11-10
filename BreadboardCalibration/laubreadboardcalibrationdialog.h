@@ -112,6 +112,7 @@ signals:
     void emitScanRequested(bool withTarget);
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
+    void emitLiveFrame(cv::Mat raw16);       // every frame shown, for whoever else wants to watch
 
 private:
     LAUImageView *view = nullptr;

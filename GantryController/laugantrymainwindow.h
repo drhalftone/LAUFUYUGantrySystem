@@ -6,6 +6,11 @@
 // rail sliders in a group box below it.  The camera starts by itself; the sliders' group box is checkable
 // and the first time it is ticked the user confirms the FMC4030's address and the rails connect.
 //
+// Scan target measures a printed target in two passes: the camera scans the platen with the target on it and the
+// merged picture gives every patch's place (LAUTargetFinder, LAUPlatenGeometry); then, the i1 Pro calibrated on
+// its white tile and seen in its cradle by the camera, the rails stop on each patch for an i1 reading, and the
+// spectra go into a .ti3 with XYZ added by Argyll's spec2cie.
+//
 #ifndef LAUGANTRYMAINWINDOW_H
 #define LAUGANTRYMAINWINDOW_H
 
@@ -17,6 +22,8 @@
 
 #include "lauplatenmosaic.h"
 #include "lauplatenoverlay.h"
+#include "lauprinttarget.h"
+#include "laui1worker.h"
 #include "laurailpredictor.h"
 #include <QElapsedTimer>
 #include "laubreadboardcalibrationdialog.h"
@@ -56,6 +63,8 @@ public:
 
 signals:
     void emitMerge(LAUPlatenMosaicRequest request);
+    void emitI1Start();
+    void emitI1Measure(int index);
 
 private slots:
     void onRailCount(int count, int dim);
@@ -70,6 +79,10 @@ private slots:
     void onScanRequested(bool withTarget);
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
+    void onI1Ready(bool ok, QString message, int serial);
+    void onI1Reading(int index, QVector<double> reflectance, QString error);
+    void onMeasureTimer();
+    void onSpec2cieFinished(QString tool, bool success);
 
 private:
     LAUBreadboardCalibrationWidget *cameraWidget = nullptr;
@@ -100,7 +113,36 @@ private:
     // after a completed scan the rails go home while it merges; the window unlocks once both are done
     bool returningHome = false;
     bool merging = false;
-    QString wrapUpMessage, wrapUpNote, wrapUpImage;
+    QString wrapUpMessage, wrapUpNote, wrapUpImage, wrapUpFolder;
+
+    // measuring a target with the i1, after the camera has found its patches
+    struct PatchStop
+    {
+        int patch;                           // into measureTarget.patches
+        double singleMM, pairMM;
+    };
+    LAUPrintTarget measureTarget;
+    QList<PatchStop> patchStops;
+    QVector<QVector<double>> readings;      // by patch; empty until measured
+    int patchIndex = 0;
+    bool measuring = false;
+    bool measureAborting = false;
+    bool waitingForReading = false;
+    int i1Serial = 0;
+    QString measureFolder, measureName;
+    QTimer *measureTimer = nullptr;
+    QThread i1Thread;
+    LAUi1Worker *i1 = nullptr;
+    class LAUArgyllRunner *argyll = nullptr;
+
+    void setUpMeasuring();                   // these in laugantrymeasure.cpp
+    void locateTarget(const QString &mosaicFolder);
+    void startI1();
+    void moveToNextPatch();
+    void onPatchMoveFinished(bool ok, const QString &message);
+    bool writeSpectral(const QString &path) const;
+    void endMeasure(const QString &message);
+    void onMeasureAbort();
 
     void returnHomeAfterScan();
     void wrapUp();

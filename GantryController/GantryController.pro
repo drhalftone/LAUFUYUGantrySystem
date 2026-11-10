@@ -33,6 +33,9 @@ HEADERS += \
     lauprinttargetdialog.h \
     lautargetfinder.h \
     lauprinttarget.h \
+    laui1worker.h \
+    laui1attachdialog.h \
+    $$COLOR_DIR/laui1prousb.h \
     $$COLOR_DIR/lauargyllrunner.h \
     $$CAMERA_DIR/lauholegrid.h \
     $$CAMERA_DIR/laubreadboardcalibration.h \
@@ -44,12 +47,16 @@ HEADERS += \
 SOURCES += \
     main.cpp \
     laugantrymainwindow.cpp \
+    laugantrymeasure.cpp \
     lauplatenmosaic.cpp \
     lauimageinspectdialog.cpp \
     lauplatenoverlay.cpp \
     lauprinttargetdialog.cpp \
     lautargetfinder.cpp \
     lauprinttarget.cpp \
+    laui1worker.cpp \
+    laui1attachdialog.cpp \
+    $$COLOR_DIR/laui1prousb.cpp \
     $$COLOR_DIR/lauargyllrunner.cpp \
     $$CAMERA_DIR/lauholegrid.cpp \
     $$CAMERA_DIR/laubreadboardcalibration.cpp \
