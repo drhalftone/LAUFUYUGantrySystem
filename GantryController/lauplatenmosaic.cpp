@@ -640,6 +640,85 @@ namespace
     }
 }
 
+bool LAUPlatenGeometry::railsFor(const cv::Point2d &board, double *singleMM, double *pairMM) const
+{
+    const double a = ex[0], b = ey[0], c = ex[1], d = ey[1], det = a * d - b * c;
+    if (!railsValid || std::abs(det) < 1e-9) {
+        return false;
+    }
+    const double px = board.x - A0.x, py = board.y - A0.y;
+    *pairMM = (d * px - b * py) / det;
+    *singleMM = (a * py - c * px) / det;
+    return true;
+}
+
+cv::Point2d LAUPlatenGeometry::boardOf(const cv::Point2d &picture) const
+{
+    const cv::Matx23d &M = pictureToBoard;
+    return cv::Point2d(M(0, 0) * picture.x + M(0, 1) * picture.y + M(0, 2), M(1, 0) * picture.x + M(1, 1) * picture.y + M(1, 2));
+}
+
+cv::Point2d LAUPlatenGeometry::pictureOf(const cv::Point2d &board) const
+{
+    cv::Matx23d inverse;
+    cv::invertAffineTransform(pictureToBoard, inverse);
+    return cv::Point2d(inverse(0, 0) * board.x + inverse(0, 1) * board.y + inverse(0, 2), inverse(1, 0) * board.x + inverse(1, 1) * board.y + inverse(1, 2));
+}
+
+bool LAUPlatenGeometry::save(const QString &mosaicFolder) const
+{
+    const cv::Matx23d &M = pictureToBoard;
+    QJsonObject o;
+    o["picture_to_board_mm"] = QJsonArray{ QJsonArray{ M(0, 0), M(0, 1), M(0, 2) }, QJsonArray{ M(1, 0), M(1, 1), M(1, 2) } };
+    if (railsValid) {
+        o["rails"] = QJsonObject{ { "A0_mm", QJsonArray{ A0.x, A0.y } }, { "ex", QJsonArray{ ex[0], ex[1] } }, { "ey", QJsonArray{ ey[0], ey[1] } },
+                                  { "single_mm", QJsonArray{ singleLow, singleHigh } }, { "pair_mm", QJsonArray{ pairLow, pairHigh } } };
+    }
+    QFile file(QDir(mosaicFolder).filePath(QString("platen_mosaic.json")));
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(QJsonDocument(o).toJson()) > 0;
+}
+
+bool LAUPlatenGeometry::load(const QString &mosaicFolder, QString *error)
+{
+    QFile file(QDir(mosaicFolder).filePath(QString("platen_mosaic.json")));
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error = QString("There's no platen_mosaic.json in %1: merge the scan again.").arg(QDir::toNativeSeparators(mosaicFolder));
+        }
+        return false;
+    }
+    const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+    const QJsonArray m = o["picture_to_board_mm"].toArray();
+    if (m.count() != 2 || m[0].toArray().count() != 3 || m[1].toArray().count() != 3) {
+        if (error) {
+            *error = QString("platen_mosaic.json in %1 is damaged.").arg(QDir::toNativeSeparators(mosaicFolder));
+        }
+        return false;
+    }
+    for (int r = 0; r < 2; r++) {
+        for (int c = 0; c < 3; c++) {
+            pictureToBoard(r, c) = m[r].toArray()[c].toDouble();
+        }
+    }
+    const QJsonObject rails = o["rails"].toObject();
+    railsValid = !rails.isEmpty();
+    if (railsValid) {
+        const auto pair = [&rails](const char *key) {
+            const QJsonArray a = rails[QString(key)].toArray();
+            return cv::Vec2d(a[0].toDouble(), a[1].toDouble());
+        };
+        const cv::Vec2d a0 = pair("A0_mm"), single = pair("single_mm"), pairRange = pair("pair_mm");
+        A0 = cv::Point2d(a0[0], a0[1]);
+        ex = pair("ex");
+        ey = pair("ey");
+        singleLow = single[0];
+        singleHigh = single[1];
+        pairLow = pairRange[0];
+        pairHigh = pairRange[1];
+    }
+    return true;
+}
+
 LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req)
 {
     using LAUHoleGrid::Detections;
@@ -892,7 +971,15 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
     }
     QStringList inches{ QString("x_in,y_in,board_x_mm,board_y_mm,confirmed_dark") };
     QStringList sliders{ QString("x_in,y_in,slider_x_mm,slider_y_mm,reachable") };
-    const double a = cam.ex[0], b = cam.ey[0], c = cam.ex[1], d = cam.ey[1], det = a * d - b * c;
+    LAUPlatenGeometry geometry;
+    geometry.railsValid = apertureOk;
+    geometry.A0 = A0;
+    geometry.ex = cv::Vec2d(cam.ex[0], cam.ex[1]);
+    geometry.ey = cv::Vec2d(cam.ey[0], cam.ey[1]);
+    geometry.singleLow = req.sliderXLow;
+    geometry.singleHigh = req.sliderXHigh;
+    geometry.pairLow = req.sliderYLow;
+    geometry.pairHigh = req.sliderYHigh;
     int reachable = 0;
     for (int Y = 0; Y < nY; Y++) {
         for (int X = 0; X < nX; X++) {
@@ -900,10 +987,9 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
             const double bx = EDGE + PITCH * L.x, by = EDGE + PITCH * L.y;
             const bool hole = L.x < columns && L.y < columns && real[L.y][L.x];
             inches << QString("%1,%2,%3,%4,%5").arg(X).arg(Y).arg(bx, 0, 'f', 2).arg(by, 0, 'f', 2).arg(hole ? 1 : 0);
-            if (apertureOk) {
-                const double px = bx - A0.x, py = by - A0.y;
-                const double pair = (d * px - b * py) / det, single = (a * py - c * px) / det;
-                const bool ok = single >= req.sliderXLow && single <= req.sliderXHigh && pair >= req.sliderYLow && pair <= req.sliderYHigh;
+            double single = 0.0, pair = 0.0;
+            if (geometry.railsFor(cv::Point2d(bx, by), &single, &pair)) {
+                const bool ok = geometry.reachable(single, pair);
                 reachable += ok;
                 sliders << QString("%1,%2,%3,%4,%5").arg(X).arg(Y).arg(single, 0, 'f', 3).arg(pair, 0, 'f', 3).arg(ok ? 1 : 0);
             }
@@ -931,8 +1017,14 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
     const int x1 = std::min(std::max(origin.x, far.x) + margin, image.cols), y1 = std::min(std::max(origin.y, far.y) + margin, image.rows);
     const cv::Rect crop(x0, y0, x1 - x0, y1 - y0);
 
+    // the saved picture's pixel (u, v) undoes the crop, the flips and the transpose: board map pixel, then board mm
+    const double su = flipX ? -1.0 : 1.0, ou = flipX ? ny - 1 - x0 : x0;
+    const double sv = flipY ? -1.0 : 1.0, ov = flipY ? nx - 1 - y0 : y0;
+    geometry.pictureToBoard = cv::Matx23d(0.0, MM * sv, MM * (ov + 0.5), MM * su, 0.0, MM * (ou + 0.5));
+
     result.gridImage = out.filePath(QString("platen_mosaic_grid.png"));
     bool saved = writeGray(turned(crop), out.filePath(QString("platen_mosaic.png")));
+    saved = geometry.save(out.absolutePath()) && saved;
     saved = writeColor(image(crop), result.gridImage) && saved;
     saved = writeText(out.filePath(QString("holes_inches.csv")), inches.join(QChar('\n')) + QChar('\n')) && saved;
     if (apertureOk) {
