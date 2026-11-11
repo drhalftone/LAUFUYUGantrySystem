@@ -486,6 +486,10 @@ void LAUGantryMainWindow::onScanTimer()
 
 void LAUGantryMainWindow::onScanFrame(cv::Mat raw16, double exposureMs)
 {
+    if (tuning) {
+        onTuneFrame(raw16);
+        return;
+    }
     if (!scanning || !waitingForFrame) {
         return;
     }

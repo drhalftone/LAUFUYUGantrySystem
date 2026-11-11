@@ -25,6 +25,7 @@
 #include "lauprinttarget.h"
 #include "laui1worker.h"
 #include "laurailpredictor.h"
+#include "lauholeview.h"
 #include <QElapsedTimer>
 #include "laubreadboardcalibrationdialog.h"
 #include "lauvelmexwidget.h"
@@ -164,7 +165,24 @@ private:
         double single = 0.0, pair = 0.0;                 // where the rails are, or were when it was confirmed
         bool reachable = false;
         bool confirmed = false;
+        cv::Point2d inset;                               // plain paper 12 mm in from both edges, to see the hole on
+        double insetSingle = 0.0, insetPair = 0.0;
+        bool insetReachable = false;
+        bool automatic = false;                          // centred by the camera, not by hand
+        QString note;                                    // why the camera couldn't, if it couldn't
+        double missMM = -1.0;                            // the camera's last measured miss before the final step
+        int moves = 0;
     };
+    enum TuneStage { TuneToInset, TuneToCorner, TuneManual };
+    TuneStage tuneStage = TuneManual;
+    bool tuneWaitingFrame = false;
+    QTimer *tuneTimer = nullptr;
+    LAUHoleView holeView;
+    QList<cv::Point2d> tuneApertures;        // the hole, rails at zero, each time it was seen this session
+    cv::Mat tuneWindow;                      // the paper seen through the hole
+    void onTuneTimer();
+    void onTuneFrame(const cv::Mat &raw16);
+    void tuneByHand(const QString &reason);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;
     bool tuning = false;

@@ -2,10 +2,15 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 //
-// Fine-tune page corners: the rails put the i1 holder's hole over each corner of the page found by the last scan,
-// the user nudges them until the corner sits in the middle of the hole and confirms it, and the rails' positions at
-// the confirmed corners give a correction from the model's rail positions to the true ones.  It is saved with that
-// scan's platen_mosaic.json, so LAUPlatenGeometry::railsFor applies it to every point of that picture.
+// Fine-tune page corners: the rails put the i1 holder's hole over each corner of the page found by the last scan
+// and centre the corner in it, and the rails' positions at the centred corners give a correction from the model's
+// rail positions to the true ones.  It is saved with that scan's platen_mosaic.json, so LAUPlatenGeometry::railsFor
+// applies it to every point of that picture.
+//
+// The camera does the centring (LAUHoleView).  For each corner the rails first stop over plain paper 12 mm in from
+// both edges, where the hole shows only paper, and the bright disc says exactly where the hole is.  Then, over the
+// corner, the two paper edges seen through the hole give the corner, and the rails move by the miss until it is
+// under TOLERANCE_MM.  When the camera can't do it, the dialog's arrows let the user centre that corner by hand.
 //
 #include "laugantrymainwindow.h"
 #include "laucornertunedialog.h"
@@ -14,17 +19,30 @@
 #include <complex>
 #include <QDir>
 #include <QFile>
+#include <QTimer>
 #include <QDateTime>
+#include <QSettings>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QJsonDocument>
+#include <QImage>
 
 namespace
 {
     const double LARGE_NUDGE_MM = 5.0;       // more than this at a corner suggests the wrong corner was centred
+    const double INSET_MM = 12.0;            // where the hole is seen on plain paper, in from both edges
+    const double TOLERANCE_MM = 0.05;        // a corner this close to the hole's centre is centred
+    const int MAX_MOVES = 5;
+    const int SETTLE_MS = 500;
+    const int FRAME_TIMEOUT_MS = 15000;
+
+    cv::Point2d unit(const cv::Point2d &v)
+    {
+        return v * (1.0 / std::max(cv::norm(v), 1e-12));
+    }
 }
 
 void LAUGantryMainWindow::onCornerTuneRequested()
@@ -65,20 +83,28 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         QMessageBox::warning(this, title, error.isEmpty() ? QString("Scan %1 doesn't know where the i1's hole is: run Calibrate platen with the i1 off, then scan the page again.").arg(scanName) : error);
         return;
     }
+    holeView.load(QSettings().value(QString("LAUGantryMainWindow::bareScanFolder")).toString());
 
     // as the merged picture shows them: page.json lists them clockwise from the picture's top-left
     const QStringList names{ QString("top-left"), QString("top-right"), QString("bottom-right"), QString("bottom-left") };
+    std::vector<cv::Point2d> P;
+    for (int k = 0; k < 4; k++) {
+        P.emplace_back(corners[k].toArray().at(0).toDouble(), corners[k].toArray().at(1).toDouble());
+    }
     tuneCorners.clear();
     QStringList unreachable;
     for (int k = 0; k < 4; k++) {
         TuneCorner c;
         c.name = names[k];
-        c.board = cv::Point2d(corners[k].toArray().at(0).toDouble(), corners[k].toArray().at(1).toDouble());
+        c.board = P[k];
         tuneGeometry.railsFor(c.board, &c.plannedSingle, &c.plannedPair, false);
         tuneGeometry.railsFor(c.board, &c.startSingle, &c.startPair, true);
         c.single = c.startSingle;
         c.pair = c.startPair;
         c.reachable = tuneGeometry.reachable(c.startSingle, c.startPair);
+        c.inset = P[k] + unit(P[(k + 1) % 4] - P[k]) * INSET_MM + unit(P[(k + 3) % 4] - P[k]) * INSET_MM;
+        tuneGeometry.railsFor(c.inset, &c.insetSingle, &c.insetPair, true);
+        c.insetReachable = tuneGeometry.reachable(c.insetSingle, c.insetPair);
         if (!c.reachable) {
             unreachable << c.name;
         }
@@ -89,11 +115,13 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         return;
     }
 
-    QString text = QString("The sliders will put the i1's hole over each corner of the %1 x %2 mm page found in scan %3, one corner at a time.\n\n"
-                           "Before starting, take the i1 Pro out of its holder so the camera sees the paper through the hole, and don't move the page.\n\n"
-                           "At each corner, zoom the live picture on the hole and use the arrows to move the paper until its corner is in the middle "
-                           "of the hole. Then press Centered to go on to the next corner.")
+    QString text = QString("The sliders will put the i1's hole over each corner of the %1 x %2 mm page found in scan %3, and the camera will "
+                           "centre each corner in the hole through it.\n\n"
+                           "Before starting, take the i1 Pro out of its holder so the camera sees the paper through the hole, and don't move the page.")
                        .arg(page["width_mm"].toDouble(), 0, 'f', 1).arg(page["length_mm"].toDouble(), 0, 'f', 1).arg(scanName);
+    if (!holeView.isValid()) {
+        text += QString("\n\nThe platen calibration can't be read, so you'll centre each corner by hand with the arrows.");
+    }
     if (!unreachable.isEmpty()) {
         text += QString("\n\nOut of the i1's reach, so skipped: the %1 corner%2.").arg(unreachable.join(QString(", "))).arg(unreachable.count() > 1 ? "s" : "");
     }
@@ -101,9 +129,17 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         return;
     }
 
+    if (!tuneTimer) {
+        tuneTimer = new QTimer(this);
+        tuneTimer->setSingleShot(true);
+        connect(tuneTimer, &QTimer::timeout, this, &LAUGantryMainWindow::onTuneTimer);
+    }
     tuning = true;
     tuneCancelling = false;
+    tuneWaitingFrame = false;
     tuneIndex = -1;
+    tuneApertures.clear();
+    tuneWindow.release();
     cameraWidget->lockScanActions(true);
     railBox->setEnabled(false);              // the dialog's arrows move the sliders now
     tuneDialog = new LAUCornerTuneDialog(this);
@@ -129,10 +165,20 @@ void LAUGantryMainWindow::nextTuneCorner()
 
 void LAUGantryMainWindow::goToTuneCorner()
 {
-    const TuneCorner &c = tuneCorners[tuneIndex];
+    TuneCorner &c = tuneCorners[tuneIndex];
     tuneDialog->setBusy(true);
-    tuneDialog->setMessage(QString("Moving the hole to the page's %1 corner...").arg(c.name));
     tuneDialog->setNudge(QString());
+    c.single = c.startSingle;
+    c.pair = c.startPair;
+    c.moves = 0;
+    if (holeView.isValid() && c.insetReachable) {
+        tuneStage = TuneToInset;
+        tuneDialog->setMessage(QString("The page's %1 corner: finding the hole on plain paper next to it...").arg(c.name));
+        railWidget->moveRails(c.insetSingle, c.insetPair);
+        return;
+    }
+    tuneStage = (holeView.isValid() && !tuneApertures.isEmpty()) ? TuneToCorner : TuneManual;
+    tuneDialog->setMessage(QString("Moving the hole to the page's %1 corner...").arg(c.name));
     railWidget->moveRails(c.single, c.pair);  // answers with emitHomeFinished -> onTuneMoveFinished
 }
 
@@ -147,8 +193,16 @@ void LAUGantryMainWindow::onTuneMoveFinished(bool ok, const QString &message)
         return;
     }
     TuneCorner &c = tuneCorners[tuneIndex];
+    if (tuneStage == TuneToInset) {
+        tuneTimer->start(SETTLE_MS);         // then a frame of the hole on plain paper
+        return;
+    }
     c.single = railWidget->reportedMM(0);
     c.pair = railWidget->reportedMM(2);
+    if (tuneStage == TuneToCorner) {
+        tuneTimer->start(SETTLE_MS);         // then a frame of the corner
+        return;
+    }
 
     int number = 0, total = 0;
     for (int k = 0; k < tuneCorners.count(); k++) {
@@ -158,19 +212,143 @@ void LAUGantryMainWindow::onTuneMoveFinished(bool ok, const QString &message)
         }
     }
     tuneDialog->setBusy(false);
-    tuneDialog->setMessage(QString("<b>Corner %1 of %2: the page's %3 corner.</b><br><br>In the live picture, the corner of the paper should be "
+    tuneDialog->setMessage(QString("<b>Corner %1 of %2: the page's %3 corner.</b><br><br>%4In the live picture, the corner of the paper should be "
                                    "in the middle of the i1's hole. Use the arrows to move the paper until it is, then press <b>Centered</b>.")
-                               .arg(number).arg(total).arg(c.name));
+                               .arg(number).arg(total).arg(c.name)
+                               .arg(c.note.isEmpty() ? QString() : QString("The camera couldn't centre it: %1<br><br>").arg(c.note.toHtmlEscaped())));
     const double ds = c.single - c.startSingle, dp = c.pair - c.startPair;
     tuneDialog->setNudge((std::abs(ds) < 0.005 && std::abs(dp) < 0.005)
                              ? QString("Not nudged yet.")
                              : QString("Nudged so far:\nsingle rail %1 mm\nrail pair %2 mm").arg(ds, 0, 'f', 2).arg(dp, 0, 'f', 2));
 }
 
+// settled: ask for an averaged frame, or the camera has gone quiet
+void LAUGantryMainWindow::onTuneTimer()
+{
+    if (!tuning) {
+        return;
+    }
+    if (tuneWaitingFrame) {
+        tuneWaitingFrame = false;
+        tuneByHand(QString("the camera stopped delivering frames."));
+        return;
+    }
+    tuneWaitingFrame = true;
+    tuneTimer->start(FRAME_TIMEOUT_MS);
+    cameraWidget->requestScanFrame();
+}
+
+void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
+{
+    if (!tuning || !tuneWaitingFrame) {
+        return;
+    }
+    tuneWaitingFrame = false;
+    tuneTimer->stop();
+    if (tuneCancelling) {
+        endTune(QString("Fine-tuning the page corners was cancelled. Nothing was changed."));
+        return;
+    }
+    cv::Mat gray;
+    raw16.convertTo(gray, CV_8U, 0.25);      // Mono10 -> 8 bits, as the scans are saved
+    TuneCorner &c = tuneCorners[tuneIndex];
+    const QString checkPath = QDir(tuneFolder).filePath(QString("corner_tune_%1%2.png").arg(c.name).arg(tuneStage == TuneToInset ? "_hole" : ""));
+
+    if (tuneStage == TuneToInset) {
+        const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
+        cv::Point2d aperture = holeView.calibratedAperture();
+        if (!tuneApertures.isEmpty()) {
+            aperture = cv::Point2d(0, 0);
+            for (const cv::Point2d &a : tuneApertures) {
+                aperture += a * (1.0 / tuneApertures.count());
+            }
+        }
+        LAUHoleView::Hole hole;
+        QString why;
+        cv::Mat check;
+        if (holeView.findHole(gray, pair, single, aperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single, &hole, &why, &check)) {
+            tuneApertures << hole.aperture;
+            tuneWindow = hole.window;
+        } else {
+            c.note = QString("the hole wasn't clear on the paper next to the corner (%1)").arg(why);
+        }
+        if (!check.empty()) {
+            QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
+        }
+        if (tuneApertures.isEmpty()) {
+            tuneStage = TuneManual;
+        } else {
+            tuneStage = TuneToCorner;
+            tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole...").arg(c.name));
+        }
+        railWidget->moveRails(c.single, c.pair);
+        return;
+    }
+
+    // over the corner: where the hole is now, from where it was seen, and where the corner is
+    cv::Point2d aperture(0, 0);
+    for (const cv::Point2d &a : tuneApertures) {
+        aperture += a * (1.0 / tuneApertures.count());
+    }
+    const double pair = c.pair, single = c.single;   // reported where the move ended
+    const cv::Point2d hole = aperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single;
+    const int k = tuneIndex;
+    const cv::Point2d along1 = tuneCorners[(k + 1) % 4].board - c.board, along2 = tuneCorners[(k + 3) % 4].board - c.board;
+    LAUHoleView::Corner found;
+    QString why;
+    cv::Mat check;
+    const bool ok = holeView.findCorner(gray, pair, single, hole, tuneWindow, c.board, along1, along2, &found, &why, &check);
+    if (!check.empty()) {
+        QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
+    }
+    if (!ok) {
+        tuneByHand(why);
+        return;
+    }
+
+    // the rails' move that puts the hole's centre on the corner: ex * dPair + ey * dSingle = miss
+    const cv::Point2d miss = found.at - hole;
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    const double det = ax.x * ay.y - ay.x * ax.y;
+    const double dPair = (miss.x * ay.y - ay.x * miss.y) / det, dSingle = (ax.x * miss.y - miss.x * ax.y) / det;
+    c.missMM = cv::norm(miss);
+    if (c.missMM < TOLERANCE_MM || c.moves >= MAX_MOVES) {
+        // centred: the last small miss is added to where the rails are rather than moved
+        c.single += dSingle;
+        c.pair += dPair;
+        c.automatic = true;
+        c.confirmed = true;
+        nextTuneCorner();
+        return;
+    }
+    if (!tuneGeometry.reachable(c.single + dSingle, c.pair + dPair)) {
+        tuneByHand(QString("centring it would take the sliders past the i1's travel."));
+        return;
+    }
+    c.moves++;
+    tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole. It was %2 mm off; move %3...")
+                               .arg(c.name).arg(c.missMM, 0, 'f', 2).arg(c.moves));
+    railWidget->moveRails(c.single + dSingle, c.pair + dPair);
+}
+
+// the camera couldn't: the dialog's arrows for this corner
+void LAUGantryMainWindow::tuneByHand(const QString &reason)
+{
+    TuneCorner &c = tuneCorners[tuneIndex];
+    c.note = reason;
+    const bool overCorner = (tuneStage != TuneToInset);
+    tuneStage = TuneManual;
+    if (overCorner) {
+        onTuneMoveFinished(true, QString()); // shows the corner's message with the arrows enabled
+    } else {
+        railWidget->moveRails(c.single, c.pair);   // still beside it, over plain paper
+    }
+}
+
 // Each arrow moves the paper that way in the live picture by the chosen step, measured on the paper
 void LAUGantryMainWindow::onTuneNudge(int right, int down)
 {
-    if (!tuning || railWidget->isHoming()) {
+    if (!tuning || tuneStage != TuneManual || railWidget->isHoming()) {
         return;
     }
     TuneCorner &c = tuneCorners[tuneIndex];
@@ -204,16 +382,17 @@ void LAUGantryMainWindow::onTuneNudge(int right, int down)
 
 void LAUGantryMainWindow::onTuneCentered()
 {
-    if (!tuning || railWidget->isHoming()) {
+    if (!tuning || tuneStage != TuneManual || railWidget->isHoming()) {
         return;
     }
     tuneCorners[tuneIndex].confirmed = true;
+    tuneCorners[tuneIndex].automatic = false;
     nextTuneCorner();
 }
 
 void LAUGantryMainWindow::onTuneSkip()
 {
-    if (!tuning || railWidget->isHoming()) {
+    if (!tuning || tuneStage != TuneManual || railWidget->isHoming()) {
         return;
     }
     tuneCorners[tuneIndex].confirmed = false;
@@ -231,10 +410,14 @@ void LAUGantryMainWindow::onTuneCancel()
         railWidget->abortHome();             // onTuneMoveFinished ends it once they have stopped
         return;
     }
+    if (tuneWaitingFrame) {
+        tuneCancelling = true;               // onTuneFrame ends it when the frame comes in
+        return;
+    }
     endTune(QString("Fine-tuning the page corners was cancelled. Nothing was changed."));
 }
 
-// The correction: from the model's rail positions to the confirmed ones.  Four or three corners give an affine map
+// The correction: from the model's rail positions to the centred ones.  Four or three corners give an affine map
 // (offset, scale along each rail, skew), two a similarity (offset, turn, scale), one an offset.
 void LAUGantryMainWindow::finishTune()
 {
@@ -246,7 +429,7 @@ void LAUGantryMainWindow::finishTune()
         }
     }
     if (used.isEmpty()) {
-        endTune(QString("No corner was confirmed, so nothing was changed."));
+        endTune(QString("No corner was centred, so nothing was changed."));
         return;
     }
 
@@ -289,8 +472,11 @@ void LAUGantryMainWindow::finishTune()
         o["started_single_pair_mm"] = QJsonArray{ c.startSingle, c.startPair };
         o["reachable"] = c.reachable;
         o["confirmed"] = c.confirmed;
+        if (!c.note.isEmpty()) {
+            o["camera_note"] = c.note;
+        }
         if (!c.confirmed) {
-            rows += QString("<tr><td>%1</td><td colspan=2>%2</td></tr>").arg(c.name, c.reachable ? QString("skipped") : QString("out of reach"));
+            rows += QString("<tr><td>%1</td><td colspan=3>%2</td></tr>").arg(c.name, c.reachable ? QString("skipped") : QString("out of reach"));
             json.append(o);
             continue;
         }
@@ -301,17 +487,40 @@ void LAUGantryMainWindow::finishTune()
         worstNudge = std::max(worstNudge, nudge);
         worstLeft = std::max(worstLeft, left);
         o["centred_single_pair_mm"] = QJsonArray{ c.single, c.pair };
+        o["centred_by"] = c.automatic ? QString("camera") : QString("hand");
+        if (c.automatic) {
+            o["camera_moves"] = c.moves;
+            o["camera_last_miss_mm"] = c.missMM;
+        }
         o["nudge_mm"] = nudge;
         o["left_after_fit_mm"] = left;
         json.append(o);
-        rows += QString("<tr><td>%1</td><td align=right>%2 mm</td><td align=right>%3 mm</td></tr>").arg(c.name).arg(nudge, 0, 'f', 2).arg(left, 0, 'f', 2);
+        rows += QString("<tr><td>%1</td><td>%2</td><td align=right>%3 mm</td><td align=right>%4 mm</td></tr>")
+                    .arg(c.name, c.automatic ? QString("camera") : QString("by hand")).arg(nudge, 0, 'f', 2).arg(left, 0, 'f', 2);
     }
     const QString scanName = QFileInfo(QFileInfo(tuneFolder).absolutePath()).fileName();
-    QString text = QString("<p>%1 of %2 corners centred.</p><table cellspacing=6><tr><th align=left>Corner</th><th>Nudged by</th><th>Left after the fit</th></tr>%3</table>")
+    QString text = QString("<p>%1 of %2 corners centred.</p><table cellspacing=6><tr><th align=left>Corner</th><th align=left>Centred</th>"
+                           "<th>Moved by</th><th>Left after the fit</th></tr>%3</table>")
                        .arg(used.count()).arg(tuneCorners.count()).arg(rows);
+    QJsonArray apertures;
+    if (!tuneApertures.isEmpty()) {
+        cv::Point2d mean(0, 0);
+        for (const cv::Point2d &a : tuneApertures) {
+            mean += a * (1.0 / tuneApertures.count());
+            apertures.append(QJsonArray{ a.x, a.y });
+        }
+        double spread = 0.0;
+        for (const cv::Point2d &a : tuneApertures) {
+            spread = std::max(spread, cv::norm(a - mean));
+        }
+        text += QString("<p>The hole was seen %1 time%2, within %3 mm, and sits %4 mm from where the platen calibration has it.</p>")
+                    .arg(tuneApertures.count()).arg(tuneApertures.count() > 1 ? "s" : "").arg(spread, 0, 'f', 2)
+                    .arg(cv::norm(mean - holeView.calibratedAperture()), 0, 'f', 2);
+    }
     if (worstNudge > LARGE_NUDGE_MM) {
         text += QString("<p><b>One corner needed more than %1 mm.</b> Check that the page's own corner was centred, not another mark.</p>").arg(LARGE_NUDGE_MM, 0, 'f', 0);
     }
+    text += QString("<p>The camera's views of each corner are saved as corner_tune_*.png in %1.</p>").arg(QDir::toNativeSeparators(tuneFolder).toHtmlEscaped());
     text += QString("<p>Save this correction with scan %1? Points taken from its picture will then use it.</p>").arg(scanName);
 
     QMessageBox box(QMessageBox::Question, QString("Fine-tune Page Corners"), text, QMessageBox::NoButton, this);
@@ -329,13 +538,15 @@ void LAUGantryMainWindow::finishTune()
     QJsonObject record;
     record["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     record["corners"] = json;
+    record["hole_seen_at_rails_zero_mm"] = apertures;
+    record["calibrated_hole_at_rails_zero_mm"] = QJsonArray{ holeView.calibratedAperture().x, holeView.calibratedAperture().y };
     record["fix_single_pair"] = QJsonArray{ QJsonArray{ F(0, 0), F(0, 1), F(0, 2) }, QJsonArray{ F(1, 0), F(1, 1), F(1, 2) } };
     record["fit"] = (used.count() >= 3) ? QString("affine") : (used.count() == 2) ? QString("similarity") : QString("offset");
     record["worst_nudge_mm"] = worstNudge;
     record["worst_left_after_fit_mm"] = worstLeft;
     QFile out(QDir(tuneFolder).filePath(QString("corner_tune.json")));
     const bool saved = tuneGeometry.save(tuneFolder) && out.open(QIODevice::WriteOnly | QIODevice::Truncate) && out.write(QJsonDocument(record).toJson()) > 0;
-    endTune(saved ? QString("Saved the page-corner correction with %1: corners needed up to %2 mm, %3 mm left after the fit.")
+    endTune(saved ? QString("Saved the page-corner correction with %1: corners moved by up to %2 mm, %3 mm left after the fit.")
                         .arg(QDir::toNativeSeparators(tuneFolder)).arg(worstNudge, 0, 'f', 2).arg(worstLeft, 0, 'f', 2)
                   : QString("Couldn't save the page-corner correction in %1").arg(QDir::toNativeSeparators(tuneFolder)));
 }
@@ -344,6 +555,10 @@ void LAUGantryMainWindow::endTune(const QString &message)
 {
     tuning = false;
     tuneCancelling = false;
+    tuneWaitingFrame = false;
+    if (tuneTimer) {
+        tuneTimer->stop();
+    }
     if (tuneDialog) {
         tuneDialog->deleteLater();
         tuneDialog = nullptr;
