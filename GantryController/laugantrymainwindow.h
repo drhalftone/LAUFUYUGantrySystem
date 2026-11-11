@@ -190,7 +190,8 @@ private:
     bool tuning = false;
     bool tuneCancelling = false;
     QString tuneFolder;                      // the page's <scan>/mosaic
-    LAUPlatenGeometry tuneGeometry;
+    LAUPlatenGeometry tuneGeometry;          // its travel replaced by the limit sliders' while tuning
+    double tuneSavedTravel[4] = { 0, 0, 0, 0 };   // the scan's own travel, put back before it is saved
     class LAUCornerTuneDialog *tuneDialog = nullptr;
     void goToTuneCorner();
     void onTuneMoveFinished(bool ok, const QString &message);

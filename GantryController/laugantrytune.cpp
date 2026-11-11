@@ -95,6 +95,22 @@ void LAUGantryMainWindow::onCornerTuneRequested()
     }
     holeView.load(QSettings().value(QString("LAUGantryMainWindow::bareScanFolder")).toString());
 
+    // the travel is wherever the limit sliders are now, without the scans' 5 mm margin from the end switches: a corner
+    // at the edge of the platen may need it, and the sliders only move between them anyway
+    tuneSavedTravel[0] = tuneGeometry.singleLow;
+    tuneSavedTravel[1] = tuneGeometry.singleHigh;
+    tuneSavedTravel[2] = tuneGeometry.pairLow;
+    tuneSavedTravel[3] = tuneGeometry.pairHigh;
+    double low = 0.0, high = 0.0;
+    if (railWidget->limitRange(0, &low, &high)) {
+        tuneGeometry.singleLow = low;
+        tuneGeometry.singleHigh = high;
+    }
+    if (railWidget->limitRange(2, &low, &high)) {
+        tuneGeometry.pairLow = low;
+        tuneGeometry.pairHigh = high;
+    }
+
     // as the merged picture shows them: page.json lists them clockwise from the picture's top-left
     const QStringList names{ QString("top-left"), QString("top-right"), QString("bottom-right"), QString("bottom-left") };
     std::vector<cv::Point2d> P;
@@ -664,6 +680,10 @@ void LAUGantryMainWindow::finishTune()
     }
 
     tuneGeometry.railsFix = F;
+    tuneGeometry.singleLow = tuneSavedTravel[0];
+    tuneGeometry.singleHigh = tuneSavedTravel[1];
+    tuneGeometry.pairLow = tuneSavedTravel[2];
+    tuneGeometry.pairHigh = tuneSavedTravel[3];
     QJsonObject record;
     record["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     record["corners"] = json;

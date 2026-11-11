@@ -3081,6 +3081,20 @@ bool LAUMultiVelmexWidget::scanRange(int dim, double *lowMM, double *highMM) con
     return (false);
 }
 
+bool LAUMultiVelmexWidget::limitRange(int dim, double *lowMM, double *highMM) const
+{
+    for (int n = 0; n < widgets.count(); n++) {
+        LAUVelmexWidget *axis = widgets.at(n);
+        if (axis->dim() == dim) {
+            const double perMM = axis->unitsFromMM(1.0);
+            *lowMM = axis->left() / perMM;
+            *highMM = axis->right() / perMM;
+            return (*highMM > *lowMM);
+        }
+    }
+    return (false);
+}
+
 /****************************************************************************************************************/
 /****************************************************************************************************************/
 /****************************************************************************************************************/

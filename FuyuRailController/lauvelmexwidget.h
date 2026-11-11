@@ -684,6 +684,8 @@ public:
 
     // Where this axis may be sent, in mm: its limit sliders, kept 5 mm clear of both end switches
     bool scanRange(int dim, double *lowMM, double *highMM) const;
+    // Where the limit sliders are now, in mm, with no margin: the most a move with a target may use
+    bool limitRange(int dim, double *lowMM, double *highMM) const;
     double reportedMM(int dim) const         // WHERE THE LAST MOVE ACTUALLY ENDED
     {
         return (homeCounts.value(dim) / 1000.0);
