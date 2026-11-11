@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QJsonDocument>
 #include <QImage>
+#include <opencv2/imgproc.hpp>
 
 namespace
 {
@@ -38,6 +39,7 @@ namespace
     const int MAX_MOVES = 5;
     const int SETTLE_MS = 500;
     const int FRAME_TIMEOUT_MS = 15000;
+    const double ZOOM_HALF_MM = 12.0;        // the dialog's view around the hole, each way
 
     cv::Point2d unit(const cv::Point2d &v)
     {
@@ -147,6 +149,7 @@ void LAUGantryMainWindow::onCornerTuneRequested()
     connect(tuneDialog, &LAUCornerTuneDialog::emitCentered, this, &LAUGantryMainWindow::onTuneCentered);
     connect(tuneDialog, &LAUCornerTuneDialog::emitSkip, this, &LAUGantryMainWindow::onTuneSkip);
     connect(tuneDialog, &LAUCornerTuneDialog::emitCancel, this, &LAUGantryMainWindow::onTuneCancel);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, tuneDialog, [this](cv::Mat raw16) { showTuneZoom(raw16); });
     tuneDialog->show();
     nextTuneCorner();
 }
@@ -329,6 +332,71 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole. It was %2 mm off; move %3...")
                                .arg(c.name).arg(c.missMM, 0, 'f', 2).arg(c.moves));
     railWidget->moveRails(c.single + dSingle, c.pair + dPair);
+}
+
+// The live picture around the hole, enlarged for the dialog.  The hole is fixed to the camera, so it is always in the
+// same place in the frame; green marks where the i1 measures and its 9.8 mm hole, yellow where the corner should be.
+void LAUGantryMainWindow::showTuneZoom(const cv::Mat &raw16)
+{
+    if (!tuning || !tuneDialog || raw16.empty() || tuneIndex < 0 || tuneIndex >= tuneCorners.count() || !singleRail.isKnown() || !pairRail.isKnown()) {
+        return;
+    }
+    const double now = guideClock.elapsed() / 1000.0;
+    const double pair = pairRail.estimate(now), single = singleRail.estimate(now);
+    cv::Point2d aperture = holeView.isValid() ? holeView.calibratedAperture() : tuneGeometry.A0;
+    if (!tuneApertures.isEmpty()) {
+        aperture = cv::Point2d(0, 0);
+        for (const cv::Point2d &a : tuneApertures) {
+            aperture += a * (1.0 / tuneApertures.count());
+        }
+    }
+    const cv::Point2d ax(tuneGeometry.ex[0], tuneGeometry.ex[1]), ay(tuneGeometry.ey[0], tuneGeometry.ey[1]);
+    const cv::Point2d hole = aperture + ax * pair + ay * single;
+    cv::Point2d centre, edge, corner;
+    if (!platenOverlay.project(hole, pair, single, &centre) || !platenOverlay.project(hole + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
+        return;
+    }
+    const double pxPerMM = cv::norm(edge - centre) / 4.9;
+    const int half = std::max(8, (int)std::lround(ZOOM_HALF_MM * pxPerMM));
+    const cv::Rect box((int)std::lround(centre.x) - half, (int)std::lround(centre.y) - half, 2 * half + 1, 2 * half + 1);
+    const cv::Rect inside = box & cv::Rect(0, 0, raw16.cols, raw16.rows);
+    if (inside.area() <= 0) {
+        return;
+    }
+    cv::Mat crop = cv::Mat::zeros(box.size(), CV_8U), grey;
+    raw16(inside).convertTo(grey, CV_8U, 0.25);  // Mono10 -> 8 bits
+    grey.copyTo(crop(inside - box.tl()));
+    const int size = 420;
+    const double scale = size / (double)box.width;
+    cv::Mat big, colour;
+    cv::resize(crop, big, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+    cv::cvtColor(big, colour, cv::COLOR_GRAY2BGR);
+    const auto at = [&](const cv::Point2d &pixel) {   // raw pixel -> zoom, 1/16 pixel
+        return cv::Point((int)std::lround(((pixel.x - box.x + 0.5) * scale - 0.5) * 16.0), (int)std::lround(((pixel.y - box.y + 0.5) * scale - 0.5) * 16.0));
+    };
+    const cv::Scalar green(0, 220, 0), yellow(0, 230, 255);
+    std::vector<cv::Point> ring;
+    for (int n = 0; n <= 48; n++) {
+        cv::Point2d p;
+        if (platenOverlay.project(hole + cv::Point2d(std::cos(n * CV_PI / 24.0), std::sin(n * CV_PI / 24.0)) * 4.9, pair, single, &p)) {
+            ring.push_back(at(p));
+        }
+    }
+    cv::polylines(colour, ring, false, green, 1, cv::LINE_AA, 4);
+    const cv::Point c = at(centre);
+    const int arm = 14 * 16;
+    cv::line(colour, c - cv::Point(arm, 0), c + cv::Point(arm, 0), green, 1, cv::LINE_AA, 4);
+    cv::line(colour, c - cv::Point(0, arm), c + cv::Point(0, arm), green, 1, cv::LINE_AA, 4);
+    if (platenOverlay.project(tuneCorners[tuneIndex].board, pair, single, &corner)) {
+        const cv::Point k = at(corner);
+        cv::line(colour, k - cv::Point(arm / 2, arm / 2), k + cv::Point(arm / 2, arm / 2), yellow, 2, cv::LINE_AA, 4);
+        cv::line(colour, k - cv::Point(arm / 2, -arm / 2), k + cv::Point(arm / 2, -arm / 2), yellow, 2, cv::LINE_AA, 4);
+    }
+    cv::putText(colour, QString("%1 corner").arg(tuneCorners[tuneIndex].name).toStdString(), cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    cv::putText(colour, QString("%1 mm across").arg(2 * ZOOM_HALF_MM, 0, 'f', 0).toStdString(), cv::Point(10, size - 12), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
+    tuneDialog->setZoom(QImage(colour.data, colour.cols, colour.rows, (int)colour.step, QImage::Format_BGR888).copy());
 }
 
 // the camera couldn't: the dialog's arrows for this corner

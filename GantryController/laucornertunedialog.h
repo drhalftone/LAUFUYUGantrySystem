@@ -12,6 +12,7 @@
 #include <QDialog>
 
 class QLabel;
+class QImage;
 class QComboBox;
 class QPushButton;
 
@@ -26,6 +27,7 @@ public:
     void setNudge(const QString &text);
     void setBusy(bool busy);                 // while the rails move: only Cancel works
     double stepMM() const;                   // how far, on the paper, one arrow press moves it
+    void setZoom(const QImage &image);       // the live picture around the hole, enlarged
 
 public slots:
     void reject() override;                  // Cancel, Esc and the title bar's X
@@ -38,6 +40,7 @@ signals:
 
 private:
     QLabel *message = nullptr;
+    QLabel *zoom = nullptr;
     QLabel *nudge = nullptr;
     QComboBox *step = nullptr;
     QList<QPushButton *> arrows;

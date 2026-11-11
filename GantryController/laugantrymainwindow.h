@@ -183,6 +183,7 @@ private:
     void onTuneTimer();
     void onTuneFrame(const cv::Mat &raw16);
     void tuneByHand(const QString &reason);
+    void showTuneZoom(const cv::Mat &raw16);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;
     bool tuning = false;

@@ -3,7 +3,9 @@
  *********************************************************************************/
 #include "laucornertunedialog.h"
 
+#include <QImage>
 #include <QLabel>
+#include <QPixmap>
 #include <QComboBox>
 #include <QSettings>
 #include <QGridLayout>
@@ -24,6 +26,12 @@ LAUCornerTuneDialog::LAUCornerTuneDialog(QWidget *parent) : QDialog(parent)
     setModal(false);                         // the live picture and its zoom stay usable
 
     QVBoxLayout *layout = new QVBoxLayout(this);
+    zoom = new QLabel(QString("Waiting for the camera..."));
+    zoom->setFixedSize(420, 420);
+    zoom->setAlignment(Qt::AlignCenter);
+    zoom->setStyleSheet(QString("QLabel { background: black; color: gray; }"));
+    zoom->setToolTip(QString("The live picture around the i1's hole. Green: where the i1 measures. Yellow: where the page's corner should be."));
+    layout->addWidget(zoom, 0, Qt::AlignHCenter);
     message = new QLabel();
     message->setWordWrap(true);
     message->setMinimumWidth(380);
@@ -90,6 +98,11 @@ void LAUCornerTuneDialog::setBusy(bool busy)
     }
     centeredButton->setEnabled(!busy);
     skipButton->setEnabled(!busy);
+}
+
+void LAUCornerTuneDialog::setZoom(const QImage &image)
+{
+    zoom->setPixmap(QPixmap::fromImage(image));
 }
 
 double LAUCornerTuneDialog::stepMM() const
