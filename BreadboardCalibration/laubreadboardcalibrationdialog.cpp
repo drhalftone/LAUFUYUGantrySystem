@@ -257,6 +257,10 @@ LAUBreadboardCalibrationWidget::LAUBreadboardCalibrationWidget(QWidget *parent) 
     connect(grabber, &LAUBaslerGrabber::emitError, this, &LAUBreadboardCalibrationWidget::onCameraError, Qt::QueuedConnection);
     connect(grabber, &LAUBaslerGrabber::emitCameraName, this, [this](QString name) {
         camera->setText(QString("Camera: %1").arg(name));
+        if (cameraMissing) {
+            cameraMissing = false;
+            setStatus(statusBeforeCameraLost);
+        }
     });
     grabber->start();
 
@@ -302,8 +306,12 @@ void LAUBreadboardCalibrationWidget::onCameraError(QString message)
     }
     busy = false;
     camera->setText(message);
-    setStatus(QString("The camera isn't available. Check its USB cable, and that no other program is using it, "
-                      "then reopen this window."));
+    if (!cameraMissing) {
+        cameraMissing = true;
+        statusBeforeCameraLost = status->text();
+    }
+    setStatus(QString("The camera isn't available. Check its USB cable, and that no other program is using it; "
+                      "the picture comes back on its own once the camera is found."));
     calibrateAction->setEnabled(false);
 }
 
@@ -391,6 +399,11 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     connect(scanBareAction, &QAction::triggered, this, [this]() { emit emitScanRequested(false); });
     addAction(scanBareAction);
 
+    scanImageAction = new QAction(QString("Scan platen image"), this);
+    scanImageAction->setEnabled(false);
+    connect(scanImageAction, &QAction::triggered, this, [this]() { emit emitImageScanRequested(); });
+    addAction(scanImageAction);
+
     scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
     connect(scanTargetAction, &QAction::triggered, this, [this]() { emit emitScanRequested(true); });
@@ -409,6 +422,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
 
     if (result.ok) {                         // restored from the last session
         scanBareAction->setEnabled(true);
+        scanImageAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
     }
@@ -419,6 +433,7 @@ void LAUBreadboardCalibrationWidget::beginScan()
     busy = true;
     calibrateAction->setEnabled(false);
     scanBareAction->setEnabled(false);
+    scanImageAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
 }
@@ -430,6 +445,7 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     grabber->setAutoExposure(true);
     calibrateAction->setEnabled(true);
     scanBareAction->setEnabled(true);
+    scanImageAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
 }
@@ -491,6 +507,7 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
     showView();
     if (scanBareAction) {
         scanBareAction->setEnabled(true);
+        scanImageAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }
 }

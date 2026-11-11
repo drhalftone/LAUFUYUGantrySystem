@@ -142,6 +142,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
 
     cameraWidget->enablePlatenScan();
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanRequested, this, &LAUGantryMainWindow::onScanRequested);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitImageScanRequested, this, &LAUGantryMainWindow::onImageScanRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanFrame, this, &LAUGantryMainWindow::onScanFrame);
     scanBase = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QString("GantryScans"));
     scanTimer = new QTimer(this);
@@ -298,7 +299,7 @@ void LAUGantryMainWindow::wrapUp()
     const QString image = wrapUpImage, folder = wrapUpFolder;
     finishScan(wrapUpMessage + wrapUpNote);
     loadGuides();                            // a new platen calibration may have just been saved
-    if (scanWithTarget && measureTarget.isValid() && !folder.isEmpty()) {
+    if (scanMeasures && measureTarget.isValid() && !folder.isEmpty()) {
         locateTarget(folder);                // the camera's pass is done: on to the patches
         return;
     }
@@ -323,7 +324,9 @@ void LAUGantryMainWindow::onMergeFinished(LAUPlatenMosaicResult result)
 {
     merging = false;
     wrapUpMessage = result.ok ? QString("Merged. Results are in %1").arg(QDir::toNativeSeparators(result.folder)) : result.message;
-    wrapUpImage = result.ok ? result.gridImage : QString();
+    // a picture-only scan shows the plain picture; the others show it labelled with the holes
+    const bool plain = scanWithTarget && !scanMeasures;
+    wrapUpImage = result.ok ? (plain ? QDir(result.folder).filePath(QString("platen_mosaic.png")) : result.gridImage) : QString();
     wrapUpFolder = result.ok ? result.folder : QString();
     wrapUp();
 }
@@ -342,6 +345,21 @@ void LAUGantryMainWindow::onAbort()
 
 void LAUGantryMainWindow::onScanRequested(bool withTarget)
 {
+    startScan(withTarget ? ScanTarget : ScanBare);
+}
+
+void LAUGantryMainWindow::onImageScanRequested()
+{
+    startScan(ScanImage);
+}
+
+void LAUGantryMainWindow::startScan(ScanKind kind)
+{
+    const bool withTarget = (kind != ScanBare);
+    if (withTarget && QSettings().value(QString("LAUGantryMainWindow::bareScanFolder")).toString().isEmpty()) {
+        cameraWidget->showMessage(QString("The platen hasn't been calibrated yet, so a scan of it can't be merged. Run Calibrate platen first."));
+        return;
+    }
     if (!railBox->isChecked() || !railWidget->isControllerStarted()) {
         cameraWidget->showMessage(QString("Tick Enable Sliders first, so the sliders can scan the platen."));
         return;
@@ -365,7 +383,7 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
 
     // a target to measure is chosen first, so a target that can't be used is turned away before the scan
     wrapUpFolder.clear();
-    if (withTarget) {
+    if (kind == ScanTarget) {
         const QString path = QFileDialog::getOpenFileName(this, QString("Which Printed Target Is on the Platen?"), LAULastDirectory::get(),
                                                           QString("Print target (*.tif *.tiff)"));
         if (path.isEmpty()) {
@@ -381,15 +399,22 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
         measureName = QFileInfo(path).completeBaseName();
     }
 
-    const QString title = withTarget ? QString("Scan Target") : QString("Calibrate Platen");
+    const QString title = (kind == ScanTarget) ? QString("Scan Target") : (kind == ScanImage) ? QString("Scan Platen Image") : QString("Calibrate Platen");
     if (!cradleIsClear(title)) {
         return;
     }
-    const QMessageBox::StandardButton answer = QMessageBox::warning(this, title,
-        (withTarget ? QString("Take the i1 Pro off the carriage and place the printed target on the platen. The camera finds its %1 patches first; "
-                              "the i1 measures them after.").arg(measureTarget.patches.count())
-                    : QString("Clear everything off the platen and take the i1 Pro off the carriage: this pass needs to see all the holes, "
-                              "and it finds where the i1 measures by looking through the plate's hole.")) +
+    QString what;
+    if (kind == ScanTarget) {
+        what = QString("Take the i1 Pro off the carriage and place the printed target on the platen. The camera finds its %1 patches first; "
+                       "the i1 measures them after.").arg(measureTarget.patches.count());
+    } else if (kind == ScanImage) {
+        what = QString("Take the i1 Pro off the carriage. The camera scans whatever is on the platen and merges it into one picture; "
+                       "nothing is measured.");
+    } else {
+        what = QString("Clear everything off the platen and take the i1 Pro off the carriage: this pass needs to see all the holes, "
+                       "and it finds where the i1 measures by looking through the plate's hole.");
+    }
+    const QMessageBox::StandardButton answer = QMessageBox::warning(this, title, what +
         QString("\n\nThe camera sees %1 x %2 mm of the platen, so the sliders will stop at %3 positions (%4 x %5). Make sure nothing is in their way.")
             .arg(viewAcross, 0, 'f', 0).arg(viewAlong, 0, 'f', 0).arg(total).arg(stopsX).arg(stopsY),
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
@@ -407,10 +432,12 @@ void LAUGantryMainWindow::onScanRequested(bool withTarget)
         }
     }
 
-    scanFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + (withTarget ? QString("_target") : QString("_bare")));
+    scanFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) +
+                                              ((kind == ScanTarget) ? QString("_target") : (kind == ScanImage) ? QString("_image") : QString("_bare")));
     scanFrames = QJsonArray();
     scanIndex = 0;
     scanWithTarget = withTarget;
+    scanMeasures = (kind == ScanTarget);
     scanAborted = false;
     waitingForFrame = false;
     scanning = true;

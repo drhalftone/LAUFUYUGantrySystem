@@ -49,9 +49,42 @@ namespace
     }
 }
 
+// Keeps looking for the camera: until one is plugged in, and again whenever it is unplugged or stops answering.
 void LAUBaslerGrabber::run()
 {
-    try {
+    QString reported;                        // the last problem told to the UI, so it isn't repeated every second
+    while (!stopFlag) {
+        QString problem;
+        try {
+            Pylon::DeviceInfoList_t devices;
+            if (Pylon::CTlFactory::GetInstance().EnumerateDevices(devices) == 0) {
+                problem = QString("No camera found. Plug it in; this program keeps looking.");
+            } else {
+                grab();
+                reported.clear();            // it did connect, so the next loss is news again
+                if (!stopFlag) {
+                    problem = QString("The camera was disconnected. Plug it back in; this program keeps looking.");
+                }
+            }
+        } catch (const GenICam::GenericException &e) {
+            problem = QString("Camera problem: %1. Retrying...").arg(e.GetDescription());
+        }
+        if (stopFlag) {
+            break;
+        }
+        if (problem != reported) {
+            reported = problem;
+            emit emitError(problem);
+        }
+        for (int i = 0; i < 10 && !stopFlag; i++) {
+            msleep(100);
+        }
+    }
+}
+
+void LAUBaslerGrabber::grab()
+{
+    {
         Pylon::CBaslerUniversalInstantCamera cam(Pylon::CTlFactory::GetInstance().CreateFirstDevice());
         cam.Open();
         emit emitCameraName(QString("%1 (%2)").arg(QString(cam.GetDeviceInfo().GetModelName().c_str()))
@@ -70,6 +103,9 @@ void LAUBaslerGrabber::run()
         cv::Mat acc;
         while (!stopFlag && cam.IsGrabbing()) {
             if (!cam.RetrieveResult(2000, res, Pylon::TimeoutHandling_Return) || !res || !res->GrabSucceeded()) {
+                if (cam.IsCameraDeviceRemoved()) {
+                    break;
+                }
                 continue;
             }
             const cv::Mat raw((int)res->GetHeight(), (int)res->GetWidth(), CV_16UC1, res->GetBuffer());
@@ -100,10 +136,12 @@ void LAUBaslerGrabber::run()
                 emit emitFrame(raw.clone(), cam.ExposureTime.GetValue() / 1000.0);
             }
         }
+        if (cam.IsCameraDeviceRemoved()) {
+            cam.DestroyDevice();             // the device is gone: release it, so the next one can be opened
+            return;
+        }
         cam.StopGrabbing();
         cam.Close();
-    } catch (const GenICam::GenericException &e) {
-        emit emitError(QString("Camera problem: %1").arg(e.GetDescription()));
     }
 }
 #else

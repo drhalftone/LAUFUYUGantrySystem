@@ -77,6 +77,7 @@ private slots:
     void onGoHome();
     void onHomeFinished(bool ok, QString message);
     void onScanRequested(bool withTarget);
+    void onImageScanRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -98,7 +99,11 @@ private:
     QList<ScanStop> scanStops;
     int scanIndex = 0;
     bool scanning = false;
-    bool scanWithTarget = false;
+    // Bare calibrates the platen; Image and Target merge against that calibration, and Target then measures patches
+    enum ScanKind { ScanBare, ScanImage, ScanTarget };
+    void startScan(ScanKind kind);
+    bool scanWithTarget = false;             // something on the platen: merged against the bare calibration
+    bool scanMeasures = false;               // and find the target's patches for the i1 after
     bool scanAborted = false;
     bool waitingForFrame = false;
     QTimer *scanTimer = nullptr;

@@ -110,6 +110,7 @@ signals:
     void emitCalibrate(cv::Mat raw16, double exposureMs);
     void emitGoHome();
     void emitScanRequested(bool withTarget);
+    void emitImageScanRequested();           // a picture of whatever is on the platen, merged against the platen calibration
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
     void emitLiveFrame(cv::Mat raw16);       // every frame shown, for whoever else wants to watch
@@ -133,10 +134,13 @@ private:
     LAUBreadboardCalibrationResult result;
     QString savedFolder;
     bool busy = false;
+    bool cameraMissing = false;
+    QString statusBeforeCameraLost;          // put back when the camera turns up again
     bool homeMoveFlag = false;
     bool scanFrameRequested = false;
     QAction *scanBareAction = nullptr;
     QAction *scanTargetAction = nullptr;
+    QAction *scanImageAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
 

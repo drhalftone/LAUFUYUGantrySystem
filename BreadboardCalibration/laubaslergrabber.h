@@ -56,6 +56,8 @@ protected:
     void run() override;
 
 private:
+    void grab();                             // one session with the camera, until it's stopped or disconnected
+
     std::atomic<bool> stopFlag{ false };
     std::atomic<int> averageRequest{ 0 };
     std::atomic<bool> framePending{ false };
