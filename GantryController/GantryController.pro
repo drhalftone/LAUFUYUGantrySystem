@@ -91,7 +91,7 @@ win32 {
         CV_SUFFIX = 490
         CV_DST    = $$OUT_PWD/release
     }
-    CV_MODULES = core imgproc calib3d features2d flann
+    CV_MODULES = core imgproc calib3d features2d flann stitching
     for(m, CV_MODULES) {
         LIBS += -lopencv_$${m}$${CV_SUFFIX}
         QMAKE_POST_LINK += $$QMAKE_COPY $$shell_quote($$shell_path($$OPENCV_BIN/opencv_$${m}$${CV_SUFFIX}.dll)) \

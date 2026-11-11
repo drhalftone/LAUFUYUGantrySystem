@@ -5,6 +5,7 @@
 #include "lauholegrid.h"
 
 #include <set>
+#include <array>
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -18,6 +19,10 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/stitching/detail/blenders.hpp>
+#include <opencv2/stitching/detail/seam_finders.hpp>
+#include <opencv2/stitching/detail/exposure_compensate.hpp>
 
 namespace
 {
@@ -446,29 +451,444 @@ namespace
         return ff;
     }
 
-    // every mosaic pixel looks up each frame through the camera; the closest view dominates, feathered at the edges
-    void renderMosaic(const std::vector<Frame> &frames, const cv::Mat &ff, const Camera &cam, const cv::Mat &mask,
-                      int nx, int ny, const std::atomic<bool> &cancel, cv::Mat &mosaic, cv::Mat &covered)
+    // ------------------------------------------------------------------------------------------------------------
+    // Fine alignment.  The rails' reported positions and the calibrated camera put each frame on the board to within
+    // a millimetre or two, which doubles anything printed where frames overlap.  Each frame gets a small correction:
+    // a tilt of the camera (the carriage pitches and rolls a little differently at each stop) and a shift on the
+    // board.  They come from SIFT features matched between overlapping frames, which pulls the frames onto each
+    // other, and from the platen holes each frame sees, which must land on the hole grid and so keep the picture
+    // on the board (the i1 is aimed from it).
+    struct FrameFix
     {
-        cv::Mat acc = cv::Mat::zeros(ny, nx, CV_32F), wsum = cv::Mat::zeros(ny, nx, CV_32F);
+        cv::Vec3d rot = cv::Vec3d(0, 0, 0);      // Rodrigues, applied before the camera's own rotation
+        cv::Point2d shift;                       // board mm
+    };
+
+    const double ALIGN_RADIUS_MM = 6.0;          // a feature's match is looked for this close to where the model puts it
+    const double ALIGN_RATIO = 0.75;             // Lowe's ratio test, among those candidates
+    const double ALIGN_RANSAC_MM = 0.5;
+    const int ALIGN_MIN_MATCHES = 8;             // per pair of frames
+    const double ALIGN_HOLE_SNAP_MM = 3.0;       // a hole this close to a grid position is that hole
+    const double ALIGN_HUBER_MM = 0.3;
+    const double ALIGN_TILT_PRIOR = 30.0;        // mm of residual per radian of tilt: keeps the tilts small where little constrains them
+
+    cv::Matx33d fixedRotation(const Camera &cam, const FrameFix &fix)
+    {
+        cv::Mat r;
+        cv::Rodrigues(cv::Mat(fix.rot), r);
+        return cv::Matx33d(r) * cam.R;
+    }
+
+    // a ray in normalised (undistorted) camera coordinates onto the board, from a camera at C turned by R
+    cv::Point2d rayOnBoard(const cv::Vec3d &C, const cv::Matx33d &R, const cv::Point2d &n)
+    {
+        const cv::Vec3d d = R.t() * cv::Vec3d(n.x, n.y, 1.0);
+        const double s = -C[2] / d[2];
+        return cv::Point2d(C[0] + s * d[0], C[1] + s * d[1]);
+    }
+
+    std::vector<cv::Point2d> raysOf(const std::vector<cv::Point2d> &uv, const Camera &cam)
+    {
+        std::vector<cv::Point2d> rays;
+        if (!uv.empty()) {
+            cv::undistortPoints(uv, rays, cv::Mat(cam.K), cv::Mat(1, 5, CV_64F, const_cast<double *>(cam.dist)));
+        }
+        return rays;
+    }
+
+    std::vector<FrameFix> alignFrames(const std::vector<Frame> &frames, const Camera &cam, const cv::Mat &mask,
+                                      const std::atomic<bool> &cancel, QStringList *report)
+    {
+        const int N = (int)frames.size();
+        std::vector<FrameFix> none(N);
+
+        // ---- features and holes, each frame on its own
+        struct View
+        {
+            std::vector<cv::Point2d> ray, board;   // features
+            cv::Mat des;
+            std::vector<cv::Point2d> holeRay, holeTarget;
+        };
+        std::vector<View> views(N);
+        cv::Mat keep;
+        cv::erode(mask == 0, keep, cv::Mat::ones(15, 15, CV_8U));
+        const double minD = HOLE_D_MIN * cam.K(0, 0) / HOLE_D_F, maxD = HOLE_D_MAX * cam.K(0, 0) / HOLE_D_F;
+        cv::parallel_for_(cv::Range(0, N), [&](const cv::Range &range) {
+            cv::Ptr<cv::SIFT> sift = cv::SIFT::create(4000);
+            for (int k = range.start; k < range.end && !cancel; k++) {
+                View &v = views[k];
+                const cv::Vec3d C = cam.centre(frames[k].x, frames[k].y);
+                std::vector<cv::KeyPoint> kp;
+                sift->detectAndCompute(frames[k].gray, keep, kp, v.des);
+                std::vector<cv::Point2d> uv;
+                for (const cv::KeyPoint &p : kp) {
+                    uv.push_back(cv::Point2d(p.pt.x, p.pt.y));
+                }
+                v.ray = raysOf(uv, cam);
+                for (const cv::Point2d &n : v.ray) {
+                    v.board.push_back(rayOnBoard(C, cam.R, n));
+                }
+
+                const LAUHoleGrid::Detections det = LAUHoleGrid::detectHoles(frames[k].gray, minD, maxD);
+                std::vector<cv::Point2d> holes;
+                for (const cv::Point2d &c : det.centers) {
+                    const int r = (int)std::lround(c.y), col = (int)std::lround(c.x);
+                    if (r >= 0 && col >= 0 && r < mask.rows && col < mask.cols && keep.at<uchar>(r, col)) {
+                        holes.push_back(c);
+                    }
+                }
+                for (const cv::Point2d &n : raysOf(holes, cam)) {
+                    const cv::Point2d b = rayOnBoard(C, cam.R, n);
+                    const long I = std::lround((b.x - EDGE) / PITCH), J = std::lround((b.y - EDGE) / PITCH);
+                    const cv::Point2d grid(EDGE + PITCH * I, EDGE + PITCH * J);
+                    if (I >= 0 && J >= 0 && cv::norm(b - grid) < ALIGN_HOLE_SNAP_MM) {
+                        v.holeRay.push_back(n);
+                        v.holeTarget.push_back(grid);
+                    }
+                }
+            }
+        });
+        if (cancel) {
+            return none;
+        }
+
+        // ---- matches between overlapping frames, looked for only near where the model already puts them: the
+        // hole grid repeats every 25.4 mm, so a match from anywhere further could be the wrong hole
+        struct Match
+        {
+            int i, j;
+            cv::Point2d ri, rj;
+        };
+        std::vector<Match> matches;
+        int pairs = 0;
+        for (int i = 0; i < N; i++) {
+            for (int j = i + 1; j < N; j++) {
+                const View &a = views[i], &b = views[j];
+                if (a.board.empty() || b.board.empty()) {
+                    continue;
+                }
+                cv::Point2d lo(1e18, 1e18), hi(-1e18, -1e18);
+                for (const cv::Point2d &p : b.board) {
+                    lo = cv::Point2d(std::min(lo.x, p.x), std::min(lo.y, p.y));
+                    hi = cv::Point2d(std::max(hi.x, p.x), std::max(hi.y, p.y));
+                }
+                const double cell = ALIGN_RADIUS_MM;
+                const int gw = (int)((hi.x - lo.x) / cell) + 1, gh = (int)((hi.y - lo.y) / cell) + 1;
+                std::vector<std::vector<int>> grid((size_t)gw * gh);
+                for (int n = 0; n < (int)b.board.size(); n++) {
+                    grid[(size_t)((int)((b.board[n].y - lo.y) / cell) * gw + (int)((b.board[n].x - lo.x) / cell))].push_back(n);
+                }
+                std::vector<cv::Point2f> P, Q;
+                std::vector<std::pair<int, int>> which;
+                for (int m = 0; m < (int)a.board.size(); m++) {
+                    const cv::Point2d &p = a.board[m];
+                    const int gx = (int)std::floor((p.x - lo.x) / cell), gy = (int)std::floor((p.y - lo.y) / cell);
+                    if (gx < -1 || gy < -1 || gx > gw || gy > gh) {
+                        continue;
+                    }
+                    double best = 1e18, second = 1e18;
+                    int bestN = -1;
+                    for (int y = std::max(gy - 1, 0); y <= std::min(gy + 1, gh - 1); y++) {
+                        for (int x = std::max(gx - 1, 0); x <= std::min(gx + 1, gw - 1); x++) {
+                            for (int n : grid[(size_t)y * gw + x]) {
+                                if (cv::norm(b.board[n] - p) > ALIGN_RADIUS_MM) {
+                                    continue;
+                                }
+                                const double d = cv::norm(a.des.row(m), b.des.row(n), cv::NORM_L2);
+                                if (d < best) {
+                                    second = best;
+                                    best = d;
+                                    bestN = n;
+                                } else if (d < second) {
+                                    second = d;
+                                }
+                            }
+                        }
+                    }
+                    if (bestN >= 0 && best <= ALIGN_RATIO * second) {
+                        P.push_back(cv::Point2f((float)p.x, (float)p.y));
+                        Q.push_back(cv::Point2f((float)b.board[bestN].x, (float)b.board[bestN].y));
+                        which.push_back({ m, bestN });
+                    }
+                }
+                if ((int)P.size() < ALIGN_MIN_MATCHES) {
+                    continue;
+                }
+                std::vector<uchar> inlier;
+                const cv::Mat A = cv::estimateAffinePartial2D(P, Q, inlier, cv::RANSAC, ALIGN_RANSAC_MM);
+                if (A.empty() || cv::countNonZero(inlier) < ALIGN_MIN_MATCHES) {
+                    continue;
+                }
+                for (size_t n = 0; n < which.size(); n++) {
+                    if (inlier[n]) {
+                        matches.push_back({ i, j, a.ray[which[n].first], b.ray[which[n].second] });
+                    }
+                }
+                pairs++;
+            }
+        }
+        int holes = 0;
+        for (const View &v : views) {
+            holes += (int)v.holeRay.size();
+        }
+        if (matches.empty()) {
+            *report << QString("fine alignment: skipped, no features matched between frames");
+            return none;
+        }
+
+        // ---- robust Gauss-Newton on 5 numbers per frame: tilt (3) and shift (2)
+        std::vector<FrameFix> fix(N);
+        std::vector<cv::Vec3d> C(N);
+        for (int k = 0; k < N; k++) {
+            C[k] = cam.centre(frames[k].x, frames[k].y);
+        }
+        const double h = 1e-6;
+        // board point and its 2x5 derivative for frame k's ray n
+        const auto observe = [&](int k, const cv::Point2d &n, const std::vector<std::array<cv::Matx33d, 4>> &Rs, cv::Matx<double, 2, 5> *J) {
+            const cv::Point2d b = rayOnBoard(C[k], Rs[k][0], n) + fix[k].shift;
+            for (int p = 0; p < 3; p++) {
+                const cv::Point2d d = (rayOnBoard(C[k], Rs[k][p + 1], n) + fix[k].shift - b) / h;
+                (*J)(0, p) = d.x;
+                (*J)(1, p) = d.y;
+            }
+            (*J)(0, 3) = 1.0; (*J)(1, 3) = 0.0;
+            (*J)(0, 4) = 0.0; (*J)(1, 4) = 1.0;
+            return b;
+        };
+        const auto rotations = [&]() {
+            std::vector<std::array<cv::Matx33d, 4>> Rs(N);
+            for (int k = 0; k < N; k++) {
+                Rs[k][0] = fixedRotation(cam, fix[k]);
+                for (int p = 0; p < 3; p++) {
+                    FrameFix f = fix[k];
+                    f.rot[p] += h;
+                    Rs[k][p + 1] = fixedRotation(cam, f);
+                }
+            }
+            return Rs;
+        };
+        // RMS and median of the match and the hole residuals as things stand
+        const auto residuals = [&](double *matchRms, double *matchMedian, double *holeRms) {
+            const std::vector<std::array<cv::Matx33d, 4>> Rs = rotations();
+            std::vector<double> e;
+            for (const Match &m : matches) {
+                const cv::Point2d d = (rayOnBoard(C[m.i], Rs[m.i][0], m.ri) + fix[m.i].shift) - (rayOnBoard(C[m.j], Rs[m.j][0], m.rj) + fix[m.j].shift);
+                e.push_back(d.dot(d));
+            }
+            double sum = 0.0;
+            for (double v : e) {
+                sum += v;
+            }
+            *matchRms = std::sqrt(sum / e.size());
+            *matchMedian = std::sqrt(medianOf(e));
+            sum = 0.0;
+            int count = 0;
+            for (int k = 0; k < N; k++) {
+                for (size_t n = 0; n < views[k].holeRay.size(); n++) {
+                    const cv::Point2d d = rayOnBoard(C[k], Rs[k][0], views[k].holeRay[n]) + fix[k].shift - views[k].holeTarget[n];
+                    sum += d.dot(d);
+                    count++;
+                }
+            }
+            *holeRms = count ? std::sqrt(sum / count) : 0.0;
+        };
+        double rms0, median0, holes0;
+        residuals(&rms0, &median0, &holes0);
+
+        const bool anchored = holes >= 10;
+        for (int iteration = 0; iteration < 20 && !cancel; iteration++) {
+            const std::vector<std::array<cv::Matx33d, 4>> Rs = rotations();
+            cv::Mat H = cv::Mat::zeros(5 * N, 5 * N, CV_64F), g = cv::Mat::zeros(5 * N, 1, CV_64F);
+            const auto add = [&](int k, const cv::Matx<double, 2, 5> &Jk, int l, const cv::Matx<double, 2, 5> &Jl, const cv::Point2d &r, double w) {
+                const cv::Matx<double, 5, 5> kk = Jk.t() * Jk * w;
+                const cv::Matx<double, 5, 1> gk = Jk.t() * cv::Vec2d(r.x, r.y) * w;
+                for (int a = 0; a < 5; a++) {
+                    g.at<double>(5 * k + a) += gk(a);
+                    for (int b = 0; b < 5; b++) {
+                        H.at<double>(5 * k + a, 5 * k + b) += kk(a, b);
+                    }
+                }
+                if (l >= 0) {
+                    const cv::Matx<double, 5, 5> ll = Jl.t() * Jl * w, kl = Jk.t() * Jl * w;
+                    const cv::Matx<double, 5, 1> gl = Jl.t() * cv::Vec2d(r.x, r.y) * w;
+                    for (int a = 0; a < 5; a++) {
+                        g.at<double>(5 * l + a) += gl(a);
+                        for (int b = 0; b < 5; b++) {
+                            H.at<double>(5 * l + a, 5 * l + b) += ll(a, b);
+                            H.at<double>(5 * k + a, 5 * l + b) += kl(a, b);
+                            H.at<double>(5 * l + b, 5 * k + a) += kl(a, b);
+                        }
+                    }
+                }
+            };
+            const auto huber = [](const cv::Point2d &r) {
+                const double e = std::sqrt(r.dot(r));
+                return e <= ALIGN_HUBER_MM ? 1.0 : ALIGN_HUBER_MM / e;
+            };
+            for (const Match &m : matches) {
+                cv::Matx<double, 2, 5> Ji, Jj;
+                const cv::Point2d r = observe(m.i, m.ri, Rs, &Ji) - observe(m.j, m.rj, Rs, &Jj);
+                add(m.i, Ji, m.j, -Jj, r, huber(r));
+            }
+            for (int k = 0; k < N; k++) {
+                for (size_t n = 0; n < views[k].holeRay.size(); n++) {
+                    cv::Matx<double, 2, 5> Jk;
+                    const cv::Point2d r = observe(k, views[k].holeRay[n], Rs, &Jk) - views[k].holeTarget[n];
+                    add(k, Jk, -1, Jk, r, huber(r));
+                }
+                for (int p = 0; p < 3; p++) {
+                    H.at<double>(5 * k + p, 5 * k + p) += ALIGN_TILT_PRIOR * ALIGN_TILT_PRIOR;
+                    g.at<double>(5 * k + p) += ALIGN_TILT_PRIOR * ALIGN_TILT_PRIOR * fix[k].rot[p];
+                }
+            }
+            if (!anchored) {
+                // no holes to hold the picture on the board: the corrections average to nothing instead
+                for (int p = 0; p < 5; p++) {
+                    cv::Mat a = cv::Mat::zeros(5 * N, 1, CV_64F);
+                    double sum = 0.0;
+                    for (int k = 0; k < N; k++) {
+                        a.at<double>(5 * k + p) = 1.0;
+                        sum += (p < 3) ? fix[k].rot[p] : (p == 3 ? fix[k].shift.x : fix[k].shift.y);
+                    }
+                    const double G = (p < 3) ? 1e4 : 100.0;
+                    H += G * G * a * a.t();
+                    g += G * G * sum * a;
+                }
+            }
+            for (int n = 0; n < 5 * N; n++) {
+                H.at<double>(n, n) *= 1.0 + 1e-6;
+            }
+            cv::Mat delta;
+            if (!cv::solve(H, -g, delta, cv::DECOMP_CHOLESKY) && !cv::solve(H, -g, delta, cv::DECOMP_SVD)) {
+                break;
+            }
+            double step = 0.0;
+            for (int k = 0; k < N; k++) {
+                for (int p = 0; p < 3; p++) {
+                    fix[k].rot[p] += delta.at<double>(5 * k + p);
+                }
+                fix[k].shift += cv::Point2d(delta.at<double>(5 * k + 3), delta.at<double>(5 * k + 4));
+                step = std::max(step, std::max(std::abs(delta.at<double>(5 * k + 3)), std::abs(delta.at<double>(5 * k + 4))));
+            }
+            if (step < 1e-4) {
+                break;
+            }
+        }
+        if (cancel) {
+            return none;
+        }
+
+        double rms1, median1, holes1;
+        residuals(&rms1, &median1, &holes1);
+        if (!(median1 < median0)) {
+            *report << QString("fine alignment: skipped, it didn't improve the fit (%1 matches)").arg(matches.size());
+            return none;
+        }
+        double tilt = 0.0, shift = 0.0;
+        for (const FrameFix &f : fix) {
+            tilt = std::max(tilt, cv::norm(f.rot) * 180.0 / CV_PI);
+            shift = std::max(shift, cv::norm(f.shift));
+        }
+        *report << QString("fine alignment: %1 matches over %2 pairs of frames, %3 holes; frames agree to %4 mm median (RMS %5), was %6 (RMS %7)")
+                       .arg(matches.size()).arg(pairs).arg(holes).arg(median1, 0, 'f', 3).arg(rms1, 0, 'f', 3).arg(median0, 0, 'f', 3).arg(rms0, 0, 'f', 3);
+        *report << QString("fine alignment: holes off the grid by %1 mm RMS, was %2; largest correction %3 mm, %4 deg%5")
+                       .arg(holes1, 0, 'f', 3).arg(holes0, 0, 'f', 3).arg(shift, 0, 'f', 2).arg(tilt, 0, 'f', 3)
+                       .arg(anchored ? QString() : QString(" (too few holes in view to hold it to the board)"));
+        return fix;
+    }
+
+    // Fills the pixels a frame has no picture for (off its edge, behind the carriage) with the brightness around
+    // them, by normalised convolution at growing scales.  The blender's coarse bands reach past each frame's seam,
+    // and black there would bleed in as dark halos the shape of the carriage.
+    void fillUnseen(cv::Mat &grey, const cv::Mat &valid)
+    {
+        cv::Mat value, have;
+        grey.convertTo(value, CV_32F);
+        valid.convertTo(have, CV_32F, 1.0 / 255.0);
+        value = value.mul(have);
+        cv::Mat filled = value.clone(), done = have.clone();
+        for (double sigma : { 8.0, 32.0, 128.0, 512.0 }) {
+            const double scale = std::min(1.0, 4.0 / sigma);
+            const cv::Size small(std::max(1, (int)std::lround(grey.cols * scale)), std::max(1, (int)std::lround(grey.rows * scale)));
+            cv::Mat num, den;
+            cv::resize(value, num, small, 0, 0, cv::INTER_AREA);
+            cv::resize(have, den, small, 0, 0, cv::INTER_AREA);
+            cv::GaussianBlur(num, num, cv::Size(), sigma * scale);
+            cv::GaussianBlur(den, den, cv::Size(), sigma * scale);
+            cv::resize(num, num, grey.size(), 0, 0, cv::INTER_LINEAR);
+            cv::resize(den, den, grey.size(), 0, 0, cv::INTER_LINEAR);
+            const cv::Mat now = (done == 0) & (den > 1e-3f);
+            cv::Mat estimate;
+            cv::divide(num, cv::max(den, 1e-6f), estimate);
+            estimate.copyTo(filled, now);
+            done.setTo(1.0f, now);
+        }
+        filled.setTo(cv::mean(grey, valid)[0], done == 0);
+        filled.convertTo(grey, CV_8U);
+    }
+
+    // A view this much further from the board than the closest view of the same point is left out: the camera is
+    // tilted, so the far side of each frame is softer, and the blend should come from the sharpest frames.
+    const double VIEW_DEPTH_MARGIN = 1.25;
+    const double SEAM_SCALE = 0.25;              // seams and brightness gains are worked out at this scale
+    const int GAIN_BLOCK = 32;                   // px at SEAM_SCALE (32 mm): the brightness gains vary at this size
+    const int BLEND_BANDS = 6;
+
+    // Each frame is warped onto the board (through the camera, with its alignment fix) and the frames are combined
+    // with OpenCV's stitching tools: BlocksGainCompensator evens out brightness between frames block by block (the
+    // lighting moves with the carriage, so frames disagree in a pattern across each one), GraphCutSeamFinder puts the
+    // joins where neighbouring frames agree, which steers them around anything that was only in one frame, and
+    // MultiBandBlender hides the joins without softening fine detail.
+    void renderMosaic(const std::vector<Frame> &frames, const cv::Mat &ff, const Camera &cam, const cv::Mat &mask,
+                      int nx, int ny, const std::atomic<bool> &cancel, cv::Mat &mosaic, cv::Mat &covered,
+                      const std::vector<FrameFix> &fixes = std::vector<FrameFix>())
+    {
+        const int N = (int)frames.size();
         const double fx = cam.K(0, 0), fy = cam.K(1, 1), cx = cam.K(0, 2), cy = cam.K(1, 2);
         const double k1 = cam.dist[0], k2 = cam.dist[1];
-        for (const Frame &frame : frames) {
-            if (cancel) {
-                return;
-            }
+        const cv::Rect canvas(0, 0, nx, ny);
+
+        // ---- each frame on the board: its picture, where it has one, and how far the camera was from each point
+        std::vector<cv::Rect> roi(N);
+        std::vector<cv::Mat> image(N), valid(N), depth(N);
+        for (int k = 0; k < N && !cancel; k++) {
+            const FrameFix fix = k < (int)fixes.size() ? fixes[k] : FrameFix();
+            const cv::Matx33d R = fixedRotation(cam, fix);
+            const cv::Vec3d C = cam.centre(frames[k].x, frames[k].y);
             cv::Mat prep;
-            frame.gray.convertTo(prep, CV_32F);
+            frames[k].gray.convertTo(prep, CV_32F);
             cv::divide(prep, cv::max(ff, 1e-3), prep);
             prep = cv::min(prep, 255.0);
             const int W = prep.cols, H = prep.rows;
-            const cv::Vec3d C = cam.centre(frame.x, frame.y);
-            cv::parallel_for_(cv::Range(0, ny), [&](const cv::Range &range) {
+
+            // the frame's footprint: its border, onto the board
+            std::vector<cv::Point2d> border;
+            for (int t = 0; t <= 40; t++) {
+                border.push_back(cv::Point2d(t * (W - 1) / 40.0, 0.0));
+                border.push_back(cv::Point2d(t * (W - 1) / 40.0, H - 1.0));
+                border.push_back(cv::Point2d(0.0, t * (H - 1) / 40.0));
+                border.push_back(cv::Point2d(W - 1.0, t * (H - 1) / 40.0));
+            }
+            double x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+            for (const cv::Point2d &n : raysOf(border, cam)) {
+                const cv::Point2d b = rayOnBoard(C, R, n) + fix.shift;
+                x0 = std::min(x0, b.x / MM); x1 = std::max(x1, b.x / MM);
+                y0 = std::min(y0, b.y / MM); y1 = std::max(y1, b.y / MM);
+            }
+            roi[k] = cv::Rect(cv::Point((int)std::floor(x0) - 1, (int)std::floor(y0) - 1), cv::Point((int)std::ceil(x1) + 2, (int)std::ceil(y1) + 2)) & canvas;
+            if (roi[k].empty()) {
+                continue;
+            }
+            image[k] = cv::Mat::zeros(roi[k].size(), CV_8U);
+            valid[k] = cv::Mat::zeros(roi[k].size(), CV_8U);
+            depth[k] = cv::Mat(roi[k].size(), CV_32F, cv::Scalar(1e30f));
+            cv::parallel_for_(cv::Range(0, roi[k].height), [&](const cv::Range &range) {
                 for (int r = range.start; r < range.end; r++) {
-                    float *a = acc.ptr<float>(r), *s = wsum.ptr<float>(r);
-                    const double Y = (r + 0.5) * MM;
-                    for (int c = 0; c < nx; c++) {
-                        const cv::Vec3d p = cam.R * cv::Vec3d((c + 0.5) * MM - C[0], Y - C[1], -C[2]);
+                    uchar *im = image[k].ptr<uchar>(r), *va = valid[k].ptr<uchar>(r);
+                    float *de = depth[k].ptr<float>(r);
+                    const double Y = (roi[k].y + r + 0.5) * MM;
+                    for (int c = 0; c < roi[k].width; c++) {
+                        const cv::Vec3d p = R * cv::Vec3d((roi[k].x + c + 0.5) * MM - fix.shift.x - C[0], Y - fix.shift.y - C[1], -C[2]);
                         if (p[2] <= 1.0) {
                             continue;
                         }
@@ -489,18 +909,102 @@ namespace
                         const float du = (float)(u - iu), dv = (float)(v - iv);
                         const float *p0 = prep.ptr<float>(iv), *p1 = prep.ptr<float>(iv + 1);
                         const float val = (1 - dv) * ((1 - du) * p0[iu] + du * p0[iu + 1]) + dv * ((1 - du) * p1[iu] + du * p1[iu + 1]);
-                        const double edge = std::min(std::min(u, v), std::min(W - u, H - v));
-                        const double weight = std::min(edge / 60.0, 1.0) * std::pow(300.0 / p[2], 6.0);
-                        a[c] += (float)(weight * val);
-                        s[c] += (float)weight;
+                        im[c] = cv::saturate_cast<uchar>(val);
+                        va[c] = 255;
+                        de[c] = (float)p[2];
                     }
                 }
             });
+            // a pixel off the edge of what the frame sees, where the bilinear sample reaches past the picture or the carriage
+            cv::erode(valid[k], valid[k], cv::Mat::ones(3, 3, CV_8U));
         }
-        cv::Mat out;
-        cv::divide(acc, cv::max(wsum, 1e-9f), out);
-        out.convertTo(mosaic, CV_8U);
-        covered = (wsum > 0);
+        if (cancel) {
+            return;
+        }
+        std::vector<int> used;
+        for (int k = 0; k < N; k++) {
+            if (!roi[k].empty() && cv::countNonZero(valid[k]) > 0) {
+                used.push_back(k);
+            }
+        }
+        mosaic = cv::Mat::zeros(ny, nx, CV_8U);
+        covered = cv::Mat::zeros(ny, nx, CV_8U);
+        if (used.empty()) {
+            return;
+        }
+
+        // ---- the closest views only: each frame keeps the points it sees nearly as close up as any other frame does
+        cv::Mat nearest(ny, nx, CV_32F, cv::Scalar(1e30f));
+        for (int k : used) {
+            cv::Mat region = nearest(roi[k]);
+            cv::min(region, depth[k], region);
+        }
+        std::vector<cv::Mat> keep(N);
+        for (int k : used) {
+            cv::Mat limit = nearest(roi[k]) * VIEW_DEPTH_MARGIN;
+            keep[k] = valid[k] & (depth[k] <= limit);
+        }
+
+        // ---- brightness and seams, worked out small
+        std::vector<cv::Point> smallCorner;
+        std::vector<cv::UMat> smallImage, smallFloat, seam;
+        std::vector<std::pair<cv::UMat, uchar>> smallValid;
+        for (int k : used) {
+            const cv::Size s(std::max(1, (int)std::lround(roi[k].width * SEAM_SCALE)), std::max(1, (int)std::lround(roi[k].height * SEAM_SCALE)));
+            smallCorner.push_back(cv::Point((int)std::lround(roi[k].x * SEAM_SCALE), (int)std::lround(roi[k].y * SEAM_SCALE)));
+            cv::Mat g, colour, v, kept;
+            cv::resize(image[k], g, s, 0, 0, cv::INTER_AREA);
+            cv::cvtColor(g, colour, cv::COLOR_GRAY2BGR);
+            cv::resize(valid[k], v, s, 0, 0, cv::INTER_NEAREST);
+            cv::resize(keep[k], kept, s, 0, 0, cv::INTER_NEAREST);
+            smallImage.push_back(colour.getUMat(cv::ACCESS_READ).clone());
+            smallFloat.push_back(cv::UMat());
+            smallValid.push_back({ v.getUMat(cv::ACCESS_READ).clone(), (uchar)255 });
+            seam.push_back(kept.getUMat(cv::ACCESS_READ).clone());
+        }
+        cv::detail::BlocksGainCompensator gains(GAIN_BLOCK, GAIN_BLOCK);
+        gains.feed(smallCorner, smallImage, smallValid);
+        // the seams are found on brightness-matched pictures, so a join isn't judged by the lighting
+        for (size_t n = 0; n < used.size(); n++) {
+            cv::Mat colour = smallImage[n].getMat(cv::ACCESS_READ).clone();
+            gains.apply((int)n, smallCorner[n], colour, smallValid[n].first);
+            colour.convertTo(smallFloat[n], CV_32F);
+        }
+        if (cancel) {
+            return;
+        }
+        cv::detail::GraphCutSeamFinder seams(cv::detail::GraphCutSeamFinderBase::COST_COLOR_GRAD);
+        seams.find(smallFloat, smallCorner, seam);
+        if (cancel) {
+            return;
+        }
+
+        // ---- full size: brightness, the seams, and the blend
+        cv::detail::MultiBandBlender blender(false, BLEND_BANDS);
+        blender.prepare(canvas);
+        for (size_t n = 0; n < used.size(); n++) {
+            const int k = used[n];
+            cv::Mat colour, colour16, joined, dilated;
+            fillUnseen(image[k], valid[k]);
+            cv::cvtColor(image[k], colour, cv::COLOR_GRAY2BGR);
+            gains.apply((int)n, roi[k].tl(), colour, valid[k]);
+            cv::dilate(seam[n].getMat(cv::ACCESS_READ), dilated, cv::Mat());
+            cv::resize(dilated, joined, roi[k].size(), 0, 0, cv::INTER_LINEAR_EXACT);
+            joined = joined & valid[k];
+            colour.convertTo(colour16, CV_16S);
+            blender.feed(colour16, joined, roi[k].tl());
+        }
+        cv::Mat blended, blendedMask;
+        blender.blend(blended, blendedMask);
+        cv::Mat grey;
+        blended.convertTo(blended, CV_8U);
+        cv::cvtColor(blended, grey, cv::COLOR_BGR2GRAY);
+        grey.copyTo(mosaic, blendedMask);
+        for (int k : used) {
+            cv::Mat region = covered(roi[k]);
+            region |= valid[k];
+        }
+        mosaic.setTo(0, covered == 0);
     }
 
     double holePx(double mm)
@@ -921,12 +1425,25 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
     }
 
     // ------------------------------------------------------------------------------------- the mosaic
+    // with something on the platen, line the frames up on what they see; the bare scan's frames are what the
+    // camera model was fitted to, so they are already as close as it gets
+    std::vector<FrameFix> fixes;
+    if (!isBare) {
+        emit emitProgress(QString("Lining up the frames on what they see..."));
+        fixes = alignFrames(all, cam, mask, cancelFlag, &report);
+        if (cancelFlag) {
+            return fail(cancelled);
+        }
+    }
+
     emit emitProgress(QString("Merging %1 frames into one picture of the platen...").arg(all.size()));
     cv::Mat mosaic, covered;
-    renderMosaic(all, flat, cam, mask, nx, ny, cancelFlag, mosaic, covered);
+    renderMosaic(all, flat, cam, mask, nx, ny, cancelFlag, mosaic, covered, fixes);
     if (cancelFlag) {
         return fail(cancelled);
     }
+    report << QString("blending: brightness matched between frames in %1 mm blocks, seams by graph cut, %2-band blend")
+                  .arg(GAIN_BLOCK / SEAM_SCALE * MM, 0, 'f', 0).arg(BLEND_BANDS);
 
     const int columns = (int)((std::max(nx, ny) * MM - EDGE) / PITCH) + 1;
     std::vector<std::vector<bool>> real(columns, std::vector<bool>(columns, false)), inView = real;
@@ -970,25 +1487,65 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
         }
     }
 
-    // ---- the gantry's axes.  Mosaic columns are board X (the rail pair), rows board Y (the single rail): swap them,
-    // then flip whichever axis runs against its slider.
-    const bool flipX = cam.ey[1] < 0.0, flipY = cam.ex[0] < 0.0;
+    // ---- which way the picture faces: as seen from behind the camera, the way someone standing behind it sees the
+    // platen.  Up in the picture is the way the camera looks, right is the camera's right.  The camera is fixed to the
+    // carriage, so this is the same turn for every scan.  Only the picture turns: the hole numbers (X along the rail
+    // pair's columns, Y along the single rail, from the sliders' low ends) and the board frame stay as they were.
+    //
+    // A mosaic pixel (mx, my) lands in the picture at u = mx or my, v = the other, either one counted from the far
+    // side: swap says which, su and sv the directions.
+    bool swap = true;
+    int su = 1, sv = 1;
+    {
+        const std::vector<cv::Point2d> look = cam.toBoard({ cv::Point2d(cam.K(0, 2), cam.K(1, 2)),
+                                                            cv::Point2d(cam.K(0, 2) + 50.0, cam.K(1, 2)),
+                                                            cv::Point2d(cam.K(0, 2), cam.K(1, 2) - 50.0) }, 0.0, 0.0);
+        const cv::Point2d right = look[1] - look[0], up = look[2] - look[0];   // board mm = mosaic px directions
+        // the picture's axes in mosaic px terms, for each of the four quarter turns: keep the one that puts the
+        // camera's right to the right and its view upward (the camera sees the board unmirrored, so one fits)
+        double best = -1e18;
+        for (int turn = 0; turn < 4; turn++) {
+            // turn 0: u along my, v along mx (the gantry's own layout); each turn is a quarter turn clockwise
+            cv::Matx22d A(0, 1, 1, 0);
+            for (int t = 0; t < turn; t++) {
+                A = cv::Matx22d(0, -1, 1, 0) * A;
+            }
+            const cv::Vec2d r = A * cv::Vec2d(right.x, right.y), u = A * cv::Vec2d(up.x, up.y);
+            const double score = r[0] / cv::norm(r) - u[1] / cv::norm(u);
+            if (score > best) {
+                best = score;
+                swap = A(0, 0) == 0.0;
+                su = (swap ? A(0, 1) : A(0, 0)) > 0 ? 1 : -1;
+                sv = (swap ? A(1, 0) : A(1, 1)) > 0 ? 1 : -1;
+            }
+        }
+    }
     cv::Mat turned;
-    cv::transpose(mosaic, turned);
-    if (flipX) {
+    if (swap) {
+        cv::transpose(mosaic, turned);
+    } else {
+        turned = mosaic.clone();
+    }
+    if (su < 0) {
         cv::flip(turned, turned, 1);
     }
-    if (flipY) {
+    if (sv < 0) {
         cv::flip(turned, turned, 0);
     }
+    // mosaic pixel -> picture pixel
+    const auto toPicture = [&](double mx, double my) {
+        const double a = swap ? my : mx, b = swap ? mx : my;
+        const int na = swap ? ny : nx, nb = swap ? nx : ny;
+        return cv::Point2d(su > 0 ? a : na - 1 - a, sv > 0 ? b : nb - 1 - b);
+    };
+    const bool flipX = cam.ey[1] < 0.0, flipY = cam.ex[0] < 0.0;   // the hole numbers run with the sliders
     const int nX = J1 - J0 + 1, nY = I1 - I0 + 1;
     const auto latticeOf = [&](int X, int Y) {
         return cv::Point(flipY ? I1 - Y : I0 + Y, flipX ? J1 - X : J0 + X);
     };
     const auto pictureOf = [&](int X, int Y) {
         const cv::Point L = latticeOf(X, Y);
-        const double bx = holePx(EDGE + PITCH * L.x), by = holePx(EDGE + PITCH * L.y);
-        return cv::Point2d(flipX ? ny - 1 - by : by, flipY ? nx - 1 - bx : bx);
+        return toPicture(holePx(EDGE + PITCH * L.x), holePx(EDGE + PITCH * L.y));
     };
     const auto rounded = [](const cv::Point2d &p) {
         return cv::Point((int)std::lround(p.x), (int)std::lround(p.y));
@@ -1039,10 +1596,17 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
         }
     }
     const cv::Point origin = rounded(pictureOf(0, 0));
-    cv::arrowedLine(image, origin, origin + cv::Point(200, 0), red, 3, cv::LINE_AA, 0, 0.1);
-    cv::arrowedLine(image, origin, origin + cv::Point(0, 200), blue, 3, cv::LINE_AA, 0, 0.1);
-    cv::putText(image, "X (in)", origin + cv::Point(205, 8), cv::FONT_HERSHEY_SIMPLEX, 0.8, red, 2, cv::LINE_AA);
-    cv::putText(image, "Y (in)", origin + cv::Point(-40, 228), cv::FONT_HERSHEY_SIMPLEX, 0.8, blue, 2, cv::LINE_AA);
+    const auto axis = [&](int X, int Y, const cv::Scalar &colour, const char *name) {
+        cv::Point2d d = pictureOf(X, Y) - pictureOf(0, 0);
+        d *= 1.0 / std::max(cv::norm(d), 1e-9);
+        const cv::Point tip = origin + rounded(d * 200.0);
+        cv::arrowedLine(image, origin, tip, colour, 3, cv::LINE_AA, 0, 0.1);
+        const cv::Size text = cv::getTextSize(name, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, nullptr);
+        const cv::Point2d centre = cv::Point2d(tip) + d * (0.6 * text.width + 10.0);
+        cv::putText(image, name, rounded(centre + cv::Point2d(-0.5 * text.width, 0.5 * text.height)), cv::FONT_HERSHEY_SIMPLEX, 0.8, colour, 2, cv::LINE_AA);
+    };
+    axis(1, 0, red, "X (in)");
+    axis(0, 1, blue, "Y (in)");
 
     // crop to the board: one inch around the holes
     const cv::Point far = rounded(pictureOf(nX - 1, nY - 1));
@@ -1051,10 +1615,16 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
     const int x1 = std::min(std::max(origin.x, far.x) + margin, image.cols), y1 = std::min(std::max(origin.y, far.y) + margin, image.rows);
     const cv::Rect crop(x0, y0, x1 - x0, y1 - y0);
 
-    // the saved picture's pixel (u, v) undoes the crop, the flips and the transpose: board map pixel, then board mm
-    const double su = flipX ? -1.0 : 1.0, ou = flipX ? ny - 1 - x0 : x0;
-    const double sv = flipY ? -1.0 : 1.0, ov = flipY ? nx - 1 - y0 : y0;
-    geometry.pictureToBoard = cv::Matx23d(0.0, MM * sv, MM * (ov + 0.5), MM * su, 0.0, MM * (ou + 0.5));
+    // the saved picture's pixel (u, v) undoes the crop and the turn: mosaic pixel, then board mm
+    {
+        const int na = swap ? ny : nx, nb = swap ? nx : ny;
+        const double ou = su > 0 ? x0 : na - 1 - x0, ov = sv > 0 ? y0 : nb - 1 - y0;   // a = su * u + ou, b = sv * v + ov
+        if (swap) {   // mx = b, my = a
+            geometry.pictureToBoard = cv::Matx23d(0.0, MM * sv, MM * (ov + 0.5), MM * su, 0.0, MM * (ou + 0.5));
+        } else {      // mx = a, my = b
+            geometry.pictureToBoard = cv::Matx23d(MM * su, 0.0, MM * (ou + 0.5), 0.0, MM * sv, MM * (ov + 0.5));
+        }
+    }
 
     result.gridImage = out.filePath(QString("platen_mosaic_grid.png"));
     bool saved = writeGray(turned(crop), out.filePath(QString("platen_mosaic.png")));
