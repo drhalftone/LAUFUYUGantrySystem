@@ -162,12 +162,12 @@ private:
         cv::Point2d board;
         double plannedSingle = 0.0, plannedPair = 0.0;   // from the model, before any correction
         double startSingle = 0.0, startPair = 0.0;       // where the rails first went: the model with the saved correction
+        double nearSingle = 0.0, nearPair = 0.0;         // the same, kept within the i1's travel
         double single = 0.0, pair = 0.0;                 // where the rails are, or were when it was confirmed
         bool reachable = false;
         bool confirmed = false;
-        cv::Point2d inset;                               // plain paper 12 mm in from both edges, to see the hole on
-        double insetSingle = 0.0, insetPair = 0.0;
-        bool insetReachable = false;
+        QList<cv::Point2d> insets;                       // plain paper in from both edges, to see the hole on, nearest first
+        int insetTry = 0;
         bool automatic = false;                          // centred by the camera, not by hand
         QString note;                                    // why the camera couldn't, if it couldn't
         double missMM = -1.0;                            // the camera's last measured miss before the final step
@@ -183,6 +183,7 @@ private:
     void onTuneTimer();
     void onTuneFrame(const cv::Mat &raw16);
     void tuneByHand(const QString &reason);
+    void tuneOutOfReach(bool measured, const QString &why);
     void showTuneZoom(const cv::Mat &raw16);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;

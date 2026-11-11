@@ -34,14 +34,22 @@
 namespace
 {
     const double LARGE_NUDGE_MM = 5.0;       // more than this at a corner suggests the wrong corner was centred
-    const double INSET_MM = 12.0;            // where the hole is seen on plain paper, in from both edges
-    const double TOLERANCE_MM = 0.05;        // a corner this close to the hole's centre is centred
-    const int MAX_MOVES = 5;
+    const double INSETS_MM[] = { 12.0, 20.0, 30.0 };   // where the hole is seen on plain paper, in from both edges
+    const double TOLERANCE_MM = 0.1;         // a corner this close to the hole's centre is centred (the rails repeat to about this)
+    const int MAX_MOVES = 4;
+    const double STUCK_MM = 0.02;            // a move smaller than this, at the end of the travel, isn't worth making
     const int SETTLE_MS = 500;
     const int FRAME_TIMEOUT_MS = 15000;
     const double ZOOM_HALF_MM = 12.0;        // the dialog's view around the hole, each way
 
-    cv::Point2d unit(const cv::Point2d &v)
+    // rails kept within the i1's travel
+    void clampToTravel(const LAUPlatenGeometry &g, double *single, double *pair)
+    {
+        *single = std::min(std::max(*single, g.singleLow), g.singleHigh);
+        *pair = std::min(std::max(*pair, g.pairLow), g.pairHigh);
+    }
+
+    cv::Point2d unitOf(const cv::Point2d &v)
     {
         return v * (1.0 / std::max(cv::norm(v), 1e-12));
     }
@@ -93,6 +101,9 @@ void LAUGantryMainWindow::onCornerTuneRequested()
     for (int k = 0; k < 4; k++) {
         P.emplace_back(corners[k].toArray().at(0).toDouble(), corners[k].toArray().at(1).toDouble());
     }
+    const auto onPaper = [this](double ds, double dp) {
+        return cv::norm(cv::Point2d(tuneGeometry.ex[0], tuneGeometry.ex[1]) * dp + cv::Point2d(tuneGeometry.ey[0], tuneGeometry.ey[1]) * ds);
+    };
     tuneCorners.clear();
     QStringList unreachable;
     for (int k = 0; k < 4; k++) {
@@ -101,20 +112,25 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         c.board = P[k];
         tuneGeometry.railsFor(c.board, &c.plannedSingle, &c.plannedPair, false);
         tuneGeometry.railsFor(c.board, &c.startSingle, &c.startPair, true);
-        c.single = c.startSingle;
-        c.pair = c.startPair;
-        c.reachable = tuneGeometry.reachable(c.startSingle, c.startPair);
-        c.inset = P[k] + unit(P[(k + 1) % 4] - P[k]) * INSET_MM + unit(P[(k + 3) % 4] - P[k]) * INSET_MM;
-        tuneGeometry.railsFor(c.inset, &c.insetSingle, &c.insetPair, true);
-        c.insetReachable = tuneGeometry.reachable(c.insetSingle, c.insetPair);
+        // a corner just past the travel: the rails go as near as they can, and the camera sees it off-centre in the hole
+        c.nearSingle = c.startSingle;
+        c.nearPair = c.startPair;
+        clampToTravel(tuneGeometry, &c.nearSingle, &c.nearPair);
+        c.single = c.nearSingle;
+        c.pair = c.nearPair;
+        c.reachable = onPaper(c.nearSingle - c.startSingle, c.nearPair - c.startPair) < STUCK_MM;
+        for (double inset : INSETS_MM) {
+            const cv::Point2d at = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * inset + unitOf(P[(k + 3) % 4] - P[k]) * inset;
+            double single = 0.0, pair = 0.0;
+            tuneGeometry.railsFor(at, &single, &pair, true);
+            if (tuneGeometry.reachable(single, pair)) {
+                c.insets << cv::Point2d(single, pair);
+            }
+        }
         if (!c.reachable) {
             unreachable << c.name;
         }
         tuneCorners << c;
-    }
-    if (unreachable.count() == 4) {
-        QMessageBox::warning(this, title, QString("None of the page's corners is within the i1's reach. Move the page toward the middle of the platen and scan it again."));
-        return;
     }
 
     QString text = QString("The sliders will put the i1's hole over each corner of the %1 x %2 mm page found in scan %3, and the camera will "
@@ -125,7 +141,8 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         text += QString("\n\nThe platen calibration can't be read, so you'll centre each corner by hand with the arrows.");
     }
     if (!unreachable.isEmpty()) {
-        text += QString("\n\nOut of the i1's reach, so skipped: the %1 corner%2.").arg(unreachable.join(QString(", "))).arg(unreachable.count() > 1 ? "s" : "");
+        text += QString("\n\nThe %1 corner%2 may be past the i1's travel: the sliders will go as close as they can, and you'll be told if %3 can't be reached.")
+                    .arg(unreachable.join(QString(", "))).arg(unreachable.count() > 1 ? "s" : "").arg(unreachable.count() > 1 ? "they" : "it");
     }
     if (QMessageBox::information(this, title, text, QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok) != QMessageBox::Ok) {
         return;
@@ -156,9 +173,7 @@ void LAUGantryMainWindow::onCornerTuneRequested()
 
 void LAUGantryMainWindow::nextTuneCorner()
 {
-    do {
-        tuneIndex++;
-    } while (tuneIndex < tuneCorners.count() && !tuneCorners[tuneIndex].reachable);
+    tuneIndex++;
     if (tuneIndex >= tuneCorners.count()) {
         finishTune();
         return;
@@ -171,13 +186,14 @@ void LAUGantryMainWindow::goToTuneCorner()
     TuneCorner &c = tuneCorners[tuneIndex];
     tuneDialog->setBusy(true);
     tuneDialog->setNudge(QString());
-    c.single = c.startSingle;
-    c.pair = c.startPair;
+    c.single = c.nearSingle;
+    c.pair = c.nearPair;
     c.moves = 0;
-    if (holeView.isValid() && c.insetReachable) {
+    c.insetTry = 0;
+    if (holeView.isValid() && !c.insets.isEmpty()) {
         tuneStage = TuneToInset;
         tuneDialog->setMessage(QString("The page's %1 corner: finding the hole on plain paper next to it...").arg(c.name));
-        railWidget->moveRails(c.insetSingle, c.insetPair);
+        railWidget->moveRails(c.insets[0].x, c.insets[0].y);
         return;
     }
     tuneStage = (holeView.isValid() && !tuneApertures.isEmpty()) ? TuneToCorner : TuneManual;
@@ -209,10 +225,8 @@ void LAUGantryMainWindow::onTuneMoveFinished(bool ok, const QString &message)
 
     int number = 0, total = 0;
     for (int k = 0; k < tuneCorners.count(); k++) {
-        if (tuneCorners[k].reachable) {
-            total++;
-            number += (k <= tuneIndex);
-        }
+        total++;
+        number += (k <= tuneIndex);
     }
     tuneDialog->setBusy(false);
     tuneDialog->setMessage(QString("<b>Corner %1 of %2: the page's %3 corner.</b><br><br>%4In the live picture, the corner of the paper should be "
@@ -278,6 +292,11 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         if (!check.empty()) {
             QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
         }
+        if (!c.note.isEmpty() && ++c.insetTry < c.insets.count()) {
+            c.note.clear();                  // print under the hole, most likely: try further in
+            railWidget->moveRails(c.insets[c.insetTry].x, c.insets[c.insetTry].y);
+            return;
+        }
         if (tuneApertures.isEmpty()) {
             tuneStage = TuneManual;
         } else {
@@ -315,8 +334,21 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     const double det = ax.x * ay.y - ay.x * ax.y;
     const double dPair = (miss.x * ay.y - ay.x * miss.y) / det, dSingle = (ax.x * miss.y - miss.x * ax.y) / det;
     c.missMM = cv::norm(miss);
+    double nextSingle = c.single + dSingle, nextPair = c.pair + dPair;
+    clampToTravel(tuneGeometry, &nextSingle, &nextPair);
+    const double step = cv::norm(ax * (nextPair - c.pair) + ay * (nextSingle - c.single));
+    if (c.missMM >= TOLERANCE_MM && step < STUCK_MM) {
+        // the sliders are as close as they go: measured, but out of reach
+        c.single += dSingle;
+        c.pair += dPair;
+        c.automatic = true;
+        c.confirmed = true;
+        tuneOutOfReach(true, QString("the sliders stop %1 mm short of it").arg(c.missMM, 0, 'f', 1));
+        return;
+    }
     if (c.missMM < TOLERANCE_MM || c.moves >= MAX_MOVES) {
-        // centred: the last small miss is added to where the rails are rather than moved
+        // centred, or as near as the travel allows: the miss left is added to where the rails are rather than moved,
+        // which may put a corner just past the travel beyond it -- it is only used to fit the correction
         c.single += dSingle;
         c.pair += dPair;
         c.automatic = true;
@@ -324,14 +356,10 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         nextTuneCorner();
         return;
     }
-    if (!tuneGeometry.reachable(c.single + dSingle, c.pair + dPair)) {
-        tuneByHand(QString("centring it would take the sliders past the i1's travel."));
-        return;
-    }
     c.moves++;
     tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole. It was %2 mm off; move %3...")
                                .arg(c.name).arg(c.missMM, 0, 'f', 2).arg(c.moves));
-    railWidget->moveRails(c.single + dSingle, c.pair + dPair);
+    railWidget->moveRails(nextSingle, nextPair);
 }
 
 // The live picture around the hole, enlarged for the dialog.  The hole is fixed to the camera, so it is always in the
@@ -403,6 +431,10 @@ void LAUGantryMainWindow::showTuneZoom(const cv::Mat &raw16)
 void LAUGantryMainWindow::tuneByHand(const QString &reason)
 {
     TuneCorner &c = tuneCorners[tuneIndex];
+    if (!c.reachable && tuneStage == TuneToCorner) {
+        tuneOutOfReach(false, reason);       // as close as the sliders go, and the camera couldn't see it there
+        return;
+    }
     c.note = reason;
     const bool overCorner = (tuneStage != TuneToInset);
     tuneStage = TuneManual;
@@ -411,6 +443,34 @@ void LAUGantryMainWindow::tuneByHand(const QString &reason)
     } else {
         railWidget->moveRails(c.single, c.pair);   // still beside it, over plain paper
     }
+}
+
+// The corner can't be brought under the hole: say so, and go on to the next corner unless the user would rather stop.
+// measured: the camera saw it from as close as the sliders go, so it still counts in the fit.
+void LAUGantryMainWindow::tuneOutOfReach(bool measured, const QString &why)
+{
+    TuneCorner &c = tuneCorners[tuneIndex];
+    c.note = QString("out of reach: %1").arg(why);
+    const bool last = (tuneIndex + 1 >= tuneCorners.count());
+    QString text = QString("The page's %1 corner is out of reach: %2.").arg(c.name, why);
+    text += measured ? QString("\n\nThe camera still saw it through the hole, so it counts toward the correction.")
+                     : QString("\n\nThe camera couldn't see it through the hole from there, so it is left out.");
+    QMessageBox box(QMessageBox::Information, QString("Fine-tune Page Corners"), text, QMessageBox::NoButton, tuneDialog);
+    QPushButton *next = box.addButton(last ? QString("Finish") : QString("Next corner"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(next);
+    box.exec();
+    if (!tuning) {
+        return;
+    }
+    if (box.clickedButton() != next) {
+        endTune(QString("Fine-tuning the page corners was cancelled. Nothing was changed."));
+        return;
+    }
+    if (!measured) {
+        c.confirmed = false;
+    }
+    nextTuneCorner();
 }
 
 // Each arrow moves the paper that way in the live picture by the chosen step, measured on the paper
@@ -564,7 +624,8 @@ void LAUGantryMainWindow::finishTune()
         o["left_after_fit_mm"] = left;
         json.append(o);
         rows += QString("<tr><td>%1</td><td>%2</td><td align=right>%3 mm</td><td align=right>%4 mm</td></tr>")
-                    .arg(c.name, c.automatic ? QString("camera") : QString("by hand")).arg(nudge, 0, 'f', 2).arg(left, 0, 'f', 2);
+                    .arg(c.name, c.automatic ? (c.reachable ? QString("camera") : QString("camera, past the travel")) : QString("by hand"))
+                    .arg(nudge, 0, 'f', 2).arg(left, 0, 'f', 2);
     }
     const QString scanName = QFileInfo(QFileInfo(tuneFolder).absolutePath()).fileName();
     QString text = QString("<p>%1 of %2 corners centred.</p><table cellspacing=6><tr><th align=left>Corner</th><th align=left>Centred</th>"

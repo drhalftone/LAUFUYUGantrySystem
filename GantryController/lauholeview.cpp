@@ -213,8 +213,19 @@ bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, 
         *why = QString("No bright paper showed through the hole.");
         return false;
     }
-    cv::Mat body = (lab == best);
-    cv::morphologyEx(body, body, cv::MORPH_CLOSE, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(31, 31)));
+    // the paper the hole shows is round (or round with a bite out by the rim): its convex outline, so anything printed
+    // inside it counts against the spread below instead of being left out
+    cv::Mat body = cv::Mat::zeros(lab.size(), CV_8U);
+    {
+        std::vector<std::vector<cv::Point>> outline;
+        cv::findContours(cv::Mat(lab == best), outline, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        const auto largest = std::max_element(outline.begin(), outline.end(), [](const std::vector<cv::Point> &a, const std::vector<cv::Point> &b) {
+            return cv::contourArea(a) < cv::contourArea(b);
+        });
+        std::vector<cv::Point> hull;
+        cv::convexHull(*largest, hull);
+        cv::fillConvexPoly(body, hull, cv::Scalar(255), cv::LINE_8);
+    }
     hole->areaMM2 = cv::countNonZero(body) * RES * RES;
     if (hole->areaMM2 < MIN_DISC_MM2 || hole->areaMM2 > MAX_DISC_MM2) {
         *why = QString("What showed through the hole (%1 mm2) isn't the size of the hole.").arg(hole->areaMM2, 0, 'f', 0);
