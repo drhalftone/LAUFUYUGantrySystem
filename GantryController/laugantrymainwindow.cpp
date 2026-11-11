@@ -326,7 +326,8 @@ void LAUGantryMainWindow::onMergeFinished(LAUPlatenMosaicResult result)
     wrapUpMessage = result.ok ? QString("Merged. Results are in %1").arg(QDir::toNativeSeparators(result.folder)) : result.message;
     // a picture-only scan shows the plain picture; the others show it labelled with the holes
     const bool plain = scanWithTarget && !scanMeasures;
-    wrapUpImage = result.ok ? (plain ? QDir(result.folder).filePath(QString("platen_mosaic.png")) : result.gridImage) : QString();
+    const QString plainImage = result.pageImage.isEmpty() ? QDir(result.folder).filePath(QString("platen_mosaic.png")) : result.pageImage;
+    wrapUpImage = result.ok ? (plain ? plainImage : result.gridImage) : QString();
     wrapUpFolder = result.ok ? result.folder : QString();
     wrapUp();
 }

@@ -35,6 +35,7 @@ struct LAUTargetFinderResult
     double sheetW = 0.0, sheetL = 0.0;           // mm
     double blockW = 0.0, blockL = 0.0;
     double swatchW = 0.0, swatchH = 0.0;
+    double sheetEdgeFit[4] = { 0, 0, 0, 0 };     // of each paper edge's profiles, the share on its line
     double edgeFit[4] = { 0, 0, 0, 0 };          // of each block edge's scanlines, the share on its line
     int edgeScanlines[4] = { 0, 0, 0, 0 };
     cv::Mat check;                               // BGR close-up of the sheet with what was found drawn on it
@@ -51,6 +52,9 @@ class LAUTargetFinder
 {
 public:
     // mosaic: CV_8UC1, 0 where the camera never looked.  mmPerPixel: its resolution.
+    // The paper alone: its four corners (sheet), its size (sheetW x sheetL), how straight each edge was, and a close-up.
+    static LAUTargetFinderResult findSheet(const cv::Mat &mosaic, double mmPerPixel);
+
     static LAUTargetFinderResult find(const cv::Mat &mosaic, double mmPerPixel, int rows, int cols, double gapMM);
 
     // A target from LAUPrintTargetDialog: the paper's edges give the sheet, then the patch block is found on it by its

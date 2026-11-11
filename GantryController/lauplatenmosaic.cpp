@@ -3,6 +3,7 @@
  *********************************************************************************/
 #include "lauplatenmosaic.h"
 #include "lauholegrid.h"
+#include "lautargetfinder.h"
 
 #include <set>
 #include <array>
@@ -1633,6 +1634,107 @@ LAUPlatenMosaicResult LAUPlatenMosaic::process(const LAUPlatenMosaicRequest &req
     saved = writeText(out.filePath(QString("holes_inches.csv")), inches.join(QChar('\n')) + QChar('\n')) && saved;
     if (apertureOk) {
         saved = writeText(out.filePath(QString("hole_sliders.csv")), sliders.join(QChar('\n')) + QChar('\n')) && saved;
+    }
+
+    // ---- the page lying on the platen: its four edges, where the white paper meets the dark board, each a straight
+    // line through hundreds of sub-pixel edge points.  Saved as page.json (corners in picture pixels and board mm,
+    // size, turn) and drawn on platen_page.png.  A missing page isn't an error: the scan may be of something else.
+    if (!isBare) {
+        const cv::Mat picture = turned(crop);
+        const LAUTargetFinderResult page = LAUTargetFinder::findSheet(picture, MM);
+        bool found = page.ok;
+        // clockwise on the picture from its top-left corner, whichever way the page lies
+        std::vector<cv::Point2d> sheet;
+        size_t first = 0;
+        if (found) {
+            for (size_t k = 1; k < page.sheet.size(); k++) {
+                if (page.sheet[k].x + page.sheet[k].y < page.sheet[first].x + page.sheet[first].y) {
+                    first = k;
+                }
+            }
+            for (size_t k = 0; k < page.sheet.size(); k++) {
+                sheet.push_back(page.sheet[(first + k) % page.sheet.size()]);
+            }
+        }
+        double worstCorner = 0.0, worstEdge = 1.0;
+        std::vector<cv::Point2d> board;
+        if (found) {
+            for (const cv::Point2d &p : sheet) {
+                board.push_back(geometry.boardOf(p));
+            }
+            for (int k = 0; k < 4; k++) {
+                const cv::Point2d a = board[(k + 3) % 4] - board[k], b = board[(k + 1) % 4] - board[k];
+                const double angle = std::acos(std::clamp(a.dot(b) / (cv::norm(a) * cv::norm(b)), -1.0, 1.0)) * 180.0 / CV_PI;
+                worstCorner = std::max(worstCorner, std::abs(angle - 90.0));
+                worstEdge = std::min(worstEdge, page.sheetEdgeFit[k]);
+            }
+            // a page is at least a few cm across and has square corners
+            found = std::min(page.sheetW, page.sheetL) > 30.0 && worstCorner < 3.0;
+        }
+        if (found) {
+            // the long side's direction on the board, folded into -90..90 deg from board X
+            const cv::Point2d sideA = (board[1] - board[0]) + (board[2] - board[3]), sideB = (board[3] - board[0]) + (board[2] - board[1]);
+            const cv::Point2d longSide = cv::norm(sideA) > cv::norm(sideB) ? sideA : sideB;
+            double turn = std::atan2(longSide.y, longSide.x) * 180.0 / CV_PI;
+            turn = (turn > 90.0) ? turn - 180.0 : (turn <= -90.0) ? turn + 180.0 : turn;
+            cv::Point2d centre(0, 0);
+            QJsonArray cornersPicture, cornersBoard, edgeFit;
+            for (int k = 0; k < 4; k++) {
+                cornersPicture.append(QJsonArray{ sheet[k].x, sheet[k].y });
+                cornersBoard.append(QJsonArray{ board[k].x, board[k].y });
+                edgeFit.append(page.sheetEdgeFit[(first + k) % 4]);   // edge k runs from corner k to k + 1
+                centre += board[k] * 0.25;
+            }
+            QJsonObject json;
+            json["corners_picture_px"] = cornersPicture;      // clockwise on the picture, from the top-left
+            json["corners_board_mm"] = cornersBoard;
+            json["centre_board_mm"] = QJsonArray{ centre.x, centre.y };
+            json["width_mm"] = page.sheetW;                   // the short side
+            json["length_mm"] = page.sheetL;                  // the long side
+            json["long_side_from_board_x_deg"] = turn;
+            json["worst_corner_off_square_deg"] = worstCorner;
+            json["edge_fit"] = edgeFit;                       // share of each edge's points on its line
+            QFile file(out.filePath(QString("page.json")));
+            saved = file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(QJsonDocument(json).toJson()) > 0 && saved;
+
+            cv::Mat drawn;
+            cv::cvtColor(picture, drawn, cv::COLOR_GRAY2BGR);
+            std::vector<cv::Point> outline;
+            for (const cv::Point2d &p : sheet) {
+                outline.emplace_back((int)std::lround(p.x * 16.0), (int)std::lround(p.y * 16.0));
+            }
+            cv::polylines(drawn, std::vector<std::vector<cv::Point>>{ outline }, true, cv::Scalar(0, 0, 255), 2, cv::LINE_AA, 4);
+            const cv::Point2d middle = (sheet[0] + sheet[1] + sheet[2] + sheet[3]) * 0.25;
+            for (int k = 0; k < 4; k++) {
+                const cv::Point at((int)std::lround(sheet[k].x), (int)std::lround(sheet[k].y));
+                cv::circle(drawn, at, 6, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+                const std::string label = QString("(%1, %2) mm").arg(board[k].x, 0, 'f', 1).arg(board[k].y, 0, 'f', 1).toStdString();
+                const cv::Size size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.7, 2, nullptr);
+                cv::Point2d away = sheet[k] - middle;
+                away *= 1.0 / std::max(cv::norm(away), 1e-9);
+                const cv::Point2d textCentre = sheet[k] + away * 40.0;
+                cv::Point textAt((int)std::lround(textCentre.x - 0.5 * size.width), (int)std::lround(textCentre.y + 0.5 * size.height));
+                textAt.x = std::clamp(textAt.x, 4, std::max(4, drawn.cols - size.width - 4));
+                textAt.y = std::clamp(textAt.y, size.height + 4, std::max(size.height + 4, drawn.rows - 4));
+                cv::putText(drawn, label, textAt, cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 0), 5, cv::LINE_AA);
+                cv::putText(drawn, label, textAt, cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
+            }
+            const std::string sizeText = QString("%1 x %2 mm").arg(page.sheetW, 0, 'f', 1).arg(page.sheetL, 0, 'f', 1).toStdString();
+            const cv::Size textSize = cv::getTextSize(sizeText, cv::FONT_HERSHEY_SIMPLEX, 1.2, 3, nullptr);
+            const cv::Point sizeAt((int)std::lround(middle.x - 0.5 * textSize.width), (int)std::lround(middle.y + 0.5 * textSize.height));
+            cv::putText(drawn, sizeText, sizeAt, cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(255, 255, 255), 8, cv::LINE_AA);
+            cv::putText(drawn, sizeText, sizeAt, cv::FONT_HERSHEY_SIMPLEX, 1.2, cv::Scalar(0, 0, 255), 3, cv::LINE_AA);
+            result.pageImage = out.filePath(QString("platen_page.png"));
+            saved = writeColor(drawn, result.pageImage) && saved;
+            report << QString("page: %1 x %2 mm, centre (%3, %4) board mm, long side %5 deg from board X; corners within %6 deg of square, "
+                              "edges %7 % straight at worst")
+                          .arg(page.sheetW, 0, 'f', 1).arg(page.sheetL, 0, 'f', 1).arg(centre.x, 0, 'f', 1).arg(centre.y, 0, 'f', 1)
+                          .arg(turn, 0, 'f', 2).arg(worstCorner, 0, 'f', 2).arg(100.0 * worstEdge, 0, 'f', 0);
+        } else {
+            QFile::remove(out.filePath(QString("page.json")));
+            QFile::remove(out.filePath(QString("platen_page.png")));
+            report << (page.ok ? QString("page: none found (the brightest shape wasn't a rectangle)") : QString("page: none found: ") + page.message);
+        }
     }
 
     if (isBare) {

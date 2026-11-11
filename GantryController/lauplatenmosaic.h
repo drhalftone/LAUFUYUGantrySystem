@@ -71,6 +71,7 @@ struct LAUPlatenMosaicResult
     QString message;                     // plain-language summary, or why it failed
     QString folder;                      // <scan>/mosaic
     QString gridImage;                   // the labelled mosaic
+    QString pageImage;                   // the picture with the page outlined, when a page was found
 };
 Q_DECLARE_METATYPE(LAUPlatenMosaicResult)
 

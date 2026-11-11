@@ -133,7 +133,7 @@ namespace
     }
 
     // the sheet's corners: brightest blob -> rough rectangle -> each side refined from profiles across it
-    bool findSheet(const cv::Mat &mosaic, double mm, std::vector<cv::Point2d> *corners, QString *why)
+    bool sheetCorners(const cv::Mat &mosaic, double mm, std::vector<cv::Point2d> *corners, QString *why, double *edgeFit = nullptr)
     {
         std::vector<float> seen;
         for (int r = 0; r < mosaic.rows; r++) {
@@ -234,6 +234,9 @@ namespace
                 points[s] = base[s] + e * normal;
             }
             lines.push_back(fitLine(points, 0.3 / mm));
+            if (edgeFit) {
+                edgeFit[i] = lines.back().keptShare;
+            }
         }
         corners->resize(4);
         for (int i = 0; i < 4; i++) {
@@ -368,7 +371,9 @@ namespace
             return q;
         };
         cv::polylines(check, std::vector<std::vector<cv::Point>>{ toCheck(result.sheet) }, true, cv::Scalar(0, 200, 0), 2, cv::LINE_AA, 4);
-        cv::polylines(check, std::vector<std::vector<cv::Point>>{ toCheck(result.block) }, true, cv::Scalar(255, 160, 0), 2, cv::LINE_AA, 4);
+        if (!result.block.empty()) {
+            cv::polylines(check, std::vector<std::vector<cv::Point>>{ toCheck(result.block) }, true, cv::Scalar(255, 160, 0), 2, cv::LINE_AA, 4);
+        }
         for (size_t k = 0; k < swatches.size(); k++) {
             cv::polylines(check, std::vector<std::vector<cv::Point>>{ toCheck(swatches[k]) }, true, cv::Scalar(0, 220, 255), 1, cv::LINE_AA, 4);
             const cv::Point q = toCheck({ result.centres[k] })[0];
@@ -407,6 +412,24 @@ namespace
     }
 }
 
+LAUTargetFinderResult LAUTargetFinder::findSheet(const cv::Mat &mosaic, double mm)
+{
+    LAUTargetFinderResult result;
+    if (mosaic.empty() || mosaic.type() != CV_8UC1) {
+        result.message = QString("No platen picture to look for the page in.");
+        return result;
+    }
+    if (!sheetCorners(mosaic, mm, &result.sheet, &result.message, result.sheetEdgeFit)) {
+        return result;
+    }
+    result.sheetW = cv::norm(result.sheet[1] - result.sheet[0]) * mm;
+    result.sheetL = cv::norm(result.sheet[3] - result.sheet[0]) * mm;
+    result.check = drawCheck(mosaic, result, {});
+    result.ok = true;
+    result.message = QString("Found the page: %1 x %2 mm.").arg(result.sheetW, 0, 'f', 1).arg(result.sheetL, 0, 'f', 1);
+    return result;
+}
+
 LAUTargetFinderResult LAUTargetFinder::find(const cv::Mat &mosaic, double mm, int rows, int cols, double gapMM)
 {
     LAUTargetFinderResult result;
@@ -415,7 +438,7 @@ LAUTargetFinderResult LAUTargetFinder::find(const cv::Mat &mosaic, double mm, in
         return result;
     }
 
-    if (!findSheet(mosaic, mm, &result.sheet, &result.message)) {
+    if (!sheetCorners(mosaic, mm, &result.sheet, &result.message, result.sheetEdgeFit)) {
         return result;
     }
     cv::Mat S, H;
@@ -478,7 +501,7 @@ LAUTargetFinderResult LAUTargetFinder::findPrint(const cv::Mat &mosaic, double m
         result.message = QString("No print target to look for.");
         return result;
     }
-    if (!findSheet(mosaic, mm, &result.sheet, &result.message)) {
+    if (!sheetCorners(mosaic, mm, &result.sheet, &result.message, result.sheetEdgeFit)) {
         return result;
     }
     cv::Mat S, H;
