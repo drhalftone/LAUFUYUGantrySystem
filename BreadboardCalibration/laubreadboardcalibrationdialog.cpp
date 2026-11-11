@@ -407,6 +407,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     tuneAction->setEnabled(false);
     connect(tuneAction, &QAction::triggered, this, [this]() { emit emitCornerTuneRequested(); });
     addAction(tuneAction);
+    pageGoAction = new QAction(QString("Go to page position..."), this);
+    pageGoAction->setEnabled(false);
+    connect(pageGoAction, &QAction::triggered, this, [this]() { emit emitPagePositionRequested(); });
+    addAction(pageGoAction);
 
     scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
@@ -428,6 +432,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
         scanBareAction->setEnabled(true);
         scanImageAction->setEnabled(true);
         tuneAction->setEnabled(true);
+        pageGoAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
     }
@@ -440,6 +445,7 @@ void LAUBreadboardCalibrationWidget::beginScan()
     scanBareAction->setEnabled(false);
     scanImageAction->setEnabled(false);
     tuneAction->setEnabled(false);
+    pageGoAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
 }
@@ -453,6 +459,7 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     scanBareAction->setEnabled(true);
     scanImageAction->setEnabled(true);
     tuneAction->setEnabled(true);
+    pageGoAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
 }
@@ -464,6 +471,7 @@ void LAUBreadboardCalibrationWidget::lockScanActions(bool locked)
     scanBareAction->setEnabled(!locked);
     scanImageAction->setEnabled(!locked);
     tuneAction->setEnabled(!locked);
+    pageGoAction->setEnabled(!locked);
     scanTargetAction->setEnabled(!locked);
 }
 
@@ -526,6 +534,7 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
         scanBareAction->setEnabled(true);
         scanImageAction->setEnabled(true);
         tuneAction->setEnabled(true);
+        pageGoAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }
 }

@@ -29,6 +29,12 @@
 #include <QPushButton>
 #include <QJsonDocument>
 #include <QImage>
+#include <QLabel>
+#include <QDialog>
+#include <QFormLayout>
+#include <QVBoxLayout>
+#include <QDoubleSpinBox>
+#include <QDialogButtonBox>
 #include <opencv2/imgproc.hpp>
 
 namespace
@@ -680,6 +686,8 @@ void LAUGantryMainWindow::finishTune()
     }
 
     tuneGeometry.railsFix = F;
+    double pageW = 0.0, pageH = 0.0;
+    const bool mapped = savePageMap(F, &pageW, &pageH);
     tuneGeometry.singleLow = tuneSavedTravel[0];
     tuneGeometry.singleHigh = tuneSavedTravel[1];
     tuneGeometry.pairLow = tuneSavedTravel[2];
@@ -695,9 +703,145 @@ void LAUGantryMainWindow::finishTune()
     record["worst_left_after_fit_mm"] = worstLeft;
     QFile out(QDir(tuneFolder).filePath(QString("corner_tune.json")));
     const bool saved = tuneGeometry.save(tuneFolder) && out.open(QIODevice::WriteOnly | QIODevice::Truncate) && out.write(QJsonDocument(record).toJson()) > 0;
-    endTune(saved ? QString("Saved the page-corner correction with %1: corners moved by up to %2 mm, %3 mm left after the fit.")
-                        .arg(QDir::toNativeSeparators(tuneFolder)).arg(worstNudge, 0, 'f', 2).arg(worstLeft, 0, 'f', 2)
+    endTune((saved && mapped) ? QString("Saved the page-corner correction with %1: corners moved by up to %2 mm, %3 mm left after the fit. "
+                                        "Go to page position now puts the hole anywhere on the %4 x %5 mm page.")
+                        .arg(QDir::toNativeSeparators(tuneFolder)).arg(worstNudge, 0, 'f', 2).arg(worstLeft, 0, 'f', 2).arg(pageW, 0, 'f', 1).arg(pageH, 0, 'f', 1)
                   : QString("Couldn't save the page-corner correction in %1").arg(QDir::toNativeSeparators(tuneFolder)));
+}
+
+// The page's own coordinates to slider positions: mm from the page's top-left corner as the merged picture shows it,
+// X toward its top-right corner and Y toward its bottom-left.  A perspective map through the four corners' slider
+// positions -- where the camera centred them, or for a corner it didn't, the corrected model's -- so it is exact at
+// every centred corner and carries the correction smoothly across the page.  Saved as page_sliders.json.
+bool LAUGantryMainWindow::savePageMap(const cv::Matx23d &fix, double *widthMM, double *heightMM)
+{
+    std::vector<cv::Point2d> B;
+    for (const TuneCorner &c : tuneCorners) {
+        B.push_back(c.board);
+    }
+    *widthMM = 0.5 * (cv::norm(B[1] - B[0]) + cv::norm(B[2] - B[3]));
+    *heightMM = 0.5 * (cv::norm(B[3] - B[0]) + cv::norm(B[2] - B[1]));
+    const std::vector<cv::Point2f> page{ { 0.0f, 0.0f }, { (float)*widthMM, 0.0f }, { (float)*widthMM, (float)*heightMM }, { 0.0f, (float)*heightMM } };
+    std::vector<cv::Point2f> rails;
+    QJsonArray corners;
+    for (int k = 0; k < 4; k++) {
+        const TuneCorner &c = tuneCorners[k];
+        double single = c.single, pair = c.pair;
+        if (!c.confirmed) {
+            single = fix(0, 0) * c.plannedSingle + fix(0, 1) * c.plannedPair + fix(0, 2);
+            pair = fix(1, 0) * c.plannedSingle + fix(1, 1) * c.plannedPair + fix(1, 2);
+        }
+        rails.emplace_back((float)single, (float)pair);
+        corners.append(QJsonObject{ { "corner", c.name }, { "page_mm", QJsonArray{ page[k].x, page[k].y } },
+                                    { "single_pair_mm", QJsonArray{ single, pair } }, { "centred", c.confirmed } });
+    }
+    const cv::Mat H = cv::getPerspectiveTransform(page, rails);
+    QJsonArray h;
+    for (int r = 0; r < 3; r++) {
+        h.append(QJsonArray{ H.at<double>(r, 0), H.at<double>(r, 1), H.at<double>(r, 2) });
+    }
+    QJsonObject o;
+    o["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    o["page_size_mm"] = QJsonArray{ *widthMM, *heightMM };
+    o["page_axes"] = QString("mm from the page's top-left corner as the merged picture shows it; X toward its top-right corner, Y toward its bottom-left");
+    o["page_to_single_pair"] = h;            // (single, pair, w) = H (x, y, 1)
+    o["corners"] = corners;
+    QFile file(QDir(tuneFolder).filePath(QString("page_sliders.json")));
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(QJsonDocument(o).toJson()) > 0;
+}
+
+// Go to page position: the hole over a point given in the page's own mm, from the newest page_sliders.json
+void LAUGantryMainWindow::onPagePositionRequested()
+{
+    const QString title = QString("Go to Page Position");
+    if (scanning || measuring || merging || returningHome || tuning || pageMoving || railWidget->isHoming()) {
+        cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
+        return;
+    }
+    if (!railBox->isChecked() || !railWidget->isControllerStarted()) {
+        QMessageBox::information(this, title, QString("Tick Enable Sliders first, so the sliders can move."));
+        return;
+    }
+    QDir base(scanBase);
+    QString folder;
+    for (const QString &name : base.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::Reversed)) {
+        if (QFile::exists(base.filePath(name + QString("/mosaic/page_sliders.json")))) {
+            folder = base.filePath(name + QString("/mosaic"));
+            break;
+        }
+    }
+    if (folder.isEmpty()) {
+        QMessageBox::information(this, title, QString("No page has been fine-tuned yet. Scan the platen image, then choose Fine-tune page corners."));
+        return;
+    }
+    QFile file(QDir(folder).filePath(QString("page_sliders.json")));
+    const QJsonObject o = file.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject();
+    const QJsonArray h = o["page_to_single_pair"].toArray(), size = o["page_size_mm"].toArray();
+    if (h.count() != 3 || size.count() != 2) {
+        QMessageBox::warning(this, title, QString("%1 couldn't be read. Fine-tune the page corners again.").arg(QDir::toNativeSeparators(file.fileName())));
+        return;
+    }
+    cv::Matx33d H;
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            H(r, c) = h[r].toArray().at(c).toDouble();
+        }
+    }
+    const double width = size[0].toDouble(), height = size[1].toDouble();
+    const QString scanName = QFileInfo(QFileInfo(folder).absolutePath()).fileName();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(title);
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+    QLabel *label = new QLabel(QString("The %1 x %2 mm page fine-tuned in scan %3.\nX is from its left edge and Y from its top edge, "
+                                       "as the merged picture shows the page.").arg(width, 0, 'f', 1).arg(height, 0, 'f', 1).arg(scanName));
+    label->setWordWrap(true);
+    layout->addWidget(label);
+    QFormLayout *form = new QFormLayout();
+    QSettings settings;
+    QDoubleSpinBox *x = new QDoubleSpinBox(), *y = new QDoubleSpinBox();
+    for (QDoubleSpinBox *box : { x, y }) {
+        box->setDecimals(2);
+        box->setSuffix(QString(" mm"));
+        box->setSingleStep(1.0);
+    }
+    x->setRange(0.0, width);
+    y->setRange(0.0, height);
+    x->setValue(settings.value(QString("LAUGantryMainWindow::pageX"), width / 2.0).toDouble());
+    y->setValue(settings.value(QString("LAUGantryMainWindow::pageY"), height / 2.0).toDouble());
+    form->addRow(QString("X"), x);
+    form->addRow(QString("Y"), y);
+    layout->addLayout(form);
+    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(QString("Go"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    settings.setValue(QString("LAUGantryMainWindow::pageX"), x->value());
+    settings.setValue(QString("LAUGantryMainWindow::pageY"), y->value());
+
+    const cv::Vec3d r = H * cv::Vec3d(x->value(), y->value(), 1.0);
+    const double single = r[0] / r[2], pair = r[1] / r[2];
+    double sLow = 0.0, sHigh = 0.0, pLow = 0.0, pHigh = 0.0;
+    if (!railWidget->limitRange(0, &sLow, &sHigh) || !railWidget->limitRange(2, &pLow, &pHigh) ||
+        single < sLow || single > sHigh || pair < pLow || pair > pHigh) {
+        QMessageBox::information(this, title, QString("(%1, %2) mm on the page needs the sliders at X %3 mm, Y %4 mm, outside their limit sliders.")
+                                                  .arg(x->value(), 0, 'f', 2).arg(y->value(), 0, 'f', 2).arg(single, 0, 'f', 2).arg(pair, 0, 'f', 2));
+        return;
+    }
+    pageMoveMessage = QString("The i1's hole is over (%1, %2) mm on the page: sliders at X %3 mm, Y %4 mm.")
+                          .arg(x->value(), 0, 'f', 2).arg(y->value(), 0, 'f', 2).arg(single, 0, 'f', 2).arg(pair, 0, 'f', 2);
+    pageMoving = true;
+    railBox->setEnabled(false);
+    homeDialog = new LAUHomeDialog(this);
+    homeDialog->setWindowTitle(title);
+    homeDialog->setMessage(QString("Moving the i1's hole to (%1, %2) mm on the page...").arg(x->value(), 0, 'f', 2).arg(y->value(), 0, 'f', 2));
+    connect(homeDialog, &LAUHomeDialog::emitAbort, railWidget, &LAUMultiVelmexWidget::abortHome);
+    homeDialog->open();
+    railWidget->moveRails(single, pair);     // answers with emitHomeFinished
 }
 
 void LAUGantryMainWindow::endTune(const QString &message)

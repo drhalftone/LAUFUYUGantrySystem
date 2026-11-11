@@ -114,7 +114,8 @@ signals:
     void emitGoHome();
     void emitScanRequested(bool withTarget);
     void emitImageScanRequested();           // a picture of whatever is on the platen, merged against the platen calibration
-    void emitCornerTuneRequested();          // put the i1 hole over each corner of the last page found and fine-tune the rails
+    void emitCornerTuneRequested();
+    void emitPagePositionRequested();        // move the i1's hole to a point given in mm on the page          // put the i1 hole over each corner of the last page found and fine-tune the rails
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
     void emitLiveFrame(cv::Mat raw16);       // every frame shown, for whoever else wants to watch
@@ -146,6 +147,7 @@ private:
     QAction *scanTargetAction = nullptr;
     QAction *scanImageAction = nullptr;
     QAction *tuneAction = nullptr;
+    QAction *pageGoAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
 

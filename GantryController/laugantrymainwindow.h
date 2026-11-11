@@ -80,6 +80,7 @@ private slots:
     void onScanRequested(bool withTarget);
     void onImageScanRequested();
     void onCornerTuneRequested();
+    void onPagePositionRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -184,6 +185,9 @@ private:
     void onTuneFrame(const cv::Mat &raw16);
     void tuneByHand(const QString &reason);
     void tuneOutOfReach(bool measured, const QString &why);
+    bool savePageMap(const cv::Matx23d &fix, double *widthMM, double *heightMM);
+    bool pageMoving = false;                 // Go to page position: the sliders are on their way
+    QString pageMoveMessage;
     void showTuneZoom(const cv::Mat &raw16);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;

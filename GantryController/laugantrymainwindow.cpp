@@ -144,6 +144,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanRequested, this, &LAUGantryMainWindow::onScanRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitImageScanRequested, this, &LAUGantryMainWindow::onImageScanRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitCornerTuneRequested, this, &LAUGantryMainWindow::onCornerTuneRequested);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitPagePositionRequested, this, &LAUGantryMainWindow::onPagePositionRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanFrame, this, &LAUGantryMainWindow::onScanFrame);
     scanBase = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QString("GantryScans"));
     scanTimer = new QTimer(this);
@@ -595,6 +596,16 @@ void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
 {
     if (tuning) {
         onTuneMoveFinished(ok, message);
+        return;
+    }
+    if (pageMoving) {
+        pageMoving = false;
+        if (homeDialog) {
+            homeDialog->finish();
+            homeDialog = nullptr;
+        }
+        railBox->setEnabled(true);
+        cameraWidget->showMessage(ok ? pageMoveMessage : QString("The sliders didn't get there: %1").arg(message));
         return;
     }
     if (measuring) {
