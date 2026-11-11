@@ -9,7 +9,9 @@ frame; this script adds:
 - a solid bar across the wide end (the pocket's end wall is only 1.3 mm), and
 - the "lower" half of the chain hinge (middle knuckle, PIVOT_D pivot hole, LINK_CLEAR
   axial clearance like the links) on that bar, so the plate pins to the bottom end of
-  the last chain link like another link.
+  the last chain link like another link, and
+- UNDER_R rounds on the underside's outline and triangular opening, so the plate rides
+  over a sheet's edge on the platen instead of catching it.
 
 The knuckle axis is PIVOT_Z above the plate's underside (not T/2 as on the links), so the
 plate lies flat on the table with the aperture floor on the chart while the last link's
@@ -74,6 +76,15 @@ xrite_plate = (hinge_half(cradle.union(bar).translate((0, 0, -LIFT)), 0, +1, "lo
 filler = (cq.Workplane("XY").box(kx1 - kx0 - 2 * g, SWING_CLEAR + r + 0.01, LIFT + 0.01, centered=False)
           .translate((kx0 + g, -r, 0)))
 xrite_plate = xrite_plate.union(filler).clean()
+
+# Round the underside's edges so the plate slides over a sheet's edge instead of catching and tearing it: the
+# outline and the triangular opening.  The measuring aperture stays sharp (it's in the 1 mm floor, and the i1 reads there).
+UNDER_R = 2.0         # walls above these edges are 5.26 mm or taller
+_s = xrite_plate.val()
+_under = [f for f in _s.Faces() if abs(f.Center().z) < 1e-3 and f.normalAt().z < -0.999][0]
+_aperture = min(_under.innerWires(), key=lambda w: w.BoundingBox().xlen)
+xrite_plate = cq.Workplane("XY").add(_s.fillet(UNDER_R, [e for w in _under.Wires() if not w.isSame(_aperture)
+                                                           for e in w.Edges()]))
 
 # Aperture centre in the plate frame (source ring centre 35.85, 51.29)
 APERTURE = (L / 2 + (bb.xmin + bb.xmax) / 2 - 35.85, SWING_CLEAR + BAR + bb.ymax - 51.29)
