@@ -41,8 +41,8 @@ public:
     {
         return railsValid;
     }
-    // false if there is no aperture calibration or the rail axes are degenerate
-    bool railsFor(const cv::Point2d &board, double *singleMM, double *pairMM) const;
+    // false if there is no aperture calibration or the rail axes are degenerate.  corrected: with railsFix applied.
+    bool railsFor(const cv::Point2d &board, double *singleMM, double *pairMM, bool corrected = true) const;
     bool reachable(double singleMM, double pairMM) const
     {
         return singleMM >= singleLow && singleMM <= singleHigh && pairMM >= pairLow && pairMM <= pairHigh;
@@ -54,6 +54,9 @@ public:
     cv::Vec2d ex, ey;                            // board mm per mm of the rail pair, and of the single rail
     double singleLow = 0.0, singleHigh = 0.0;    // the travel the i1 may use, mm
     double pairLow = 0.0, pairHigh = 0.0;
+    // from Fine-tune page corners: the rails that really centre the i1 on a point, from those the model gives,
+    // (single, pair) = railsFix * (single, pair, 1)
+    cv::Matx23d railsFix = cv::Matx23d(1, 0, 0, 0, 1, 0);
 };
 
 struct LAUPlatenMosaicRequest

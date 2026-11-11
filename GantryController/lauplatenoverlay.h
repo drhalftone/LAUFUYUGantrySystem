@@ -28,6 +28,9 @@ public:
     // The largest print the i1's circle can reach, along the gantry's X (single rail) and Y (rail pair), whole mm
     bool reachSize(double singleLow, double singleHigh, double pairLow, double pairHigh, double *xMM, double *yMM) const;
 
+    // where board point (mm) appears in the raw camera picture with the rails at pairMM, singleMM
+    bool project(const cv::Point2d &board, double pairMM, double singleMM, cv::Point2d *pixel) const;
+
     LAUViewOverlay build(double pairMM, double singleMM, double singleLow, double singleHigh, double pairLow, double pairHigh) const;
 
 private:

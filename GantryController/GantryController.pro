@@ -31,7 +31,7 @@ HEADERS += \
     lauplatenoverlay.h \
     laurailpredictor.h \
     lauprinttargetdialog.h \
-    lautargetfinder.h \
+    lautargetfinder.h     laucornertunedialog.h \
     lauprinttarget.h \
     laui1worker.h \
     laui1attachdialog.h \
@@ -47,7 +47,7 @@ HEADERS += \
 SOURCES += \
     main.cpp \
     laugantrymainwindow.cpp \
-    laugantrymeasure.cpp \
+    laugantrymeasure.cpp     laugantrytune.cpp     laucornertunedialog.cpp \
     lauplatenmosaic.cpp \
     lauimageinspectdialog.cpp \
     lauplatenoverlay.cpp \

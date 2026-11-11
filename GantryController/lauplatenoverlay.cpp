@@ -134,6 +134,19 @@ bool LAUPlatenOverlay::reachSize(double singleLow, double singleHigh, double pai
     return true;
 }
 
+bool LAUPlatenOverlay::project(const cv::Point2d &board, double pairMM, double singleMM, cv::Point2d *pixel) const
+{
+    if (!valid) {
+        return false;
+    }
+    QPointF p;
+    if (!Projector{ K, R, dist, C0 + ex * pairMM + ey * singleMM }(board, &p)) {
+        return false;
+    }
+    *pixel = cv::Point2d(p.x(), p.y());
+    return true;
+}
+
 LAUViewOverlay LAUPlatenOverlay::build(double pairMM, double singleMM, double singleLow, double singleHigh, double pairLow, double pairHigh) const
 {
     LAUViewOverlay overlay;

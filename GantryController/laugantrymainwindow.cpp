@@ -143,6 +143,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     cameraWidget->enablePlatenScan();
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanRequested, this, &LAUGantryMainWindow::onScanRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitImageScanRequested, this, &LAUGantryMainWindow::onImageScanRequested);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitCornerTuneRequested, this, &LAUGantryMainWindow::onCornerTuneRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanFrame, this, &LAUGantryMainWindow::onScanFrame);
     scanBase = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QString("GantryScans"));
     scanTimer = new QTimer(this);
@@ -588,6 +589,10 @@ void LAUGantryMainWindow::onGoHome()
 
 void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
 {
+    if (tuning) {
+        onTuneMoveFinished(ok, message);
+        return;
+    }
     if (measuring) {
         onPatchMoveFinished(ok, message);
         return;

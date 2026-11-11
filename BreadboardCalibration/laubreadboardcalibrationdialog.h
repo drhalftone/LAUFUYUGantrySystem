@@ -88,6 +88,9 @@ public:
         return result;
     }
     void setGuides(const LAUViewOverlay &overlay);    // drawn over the video unless turned off on the menu
+    // the scan actions off (and the widget busy) while the rails are used for something else, then back on
+    void lockScanActions(bool locked);
+
     void showMessage(const QString &text)
     {
         setStatus(text);
@@ -111,6 +114,7 @@ signals:
     void emitGoHome();
     void emitScanRequested(bool withTarget);
     void emitImageScanRequested();           // a picture of whatever is on the platen, merged against the platen calibration
+    void emitCornerTuneRequested();          // put the i1 hole over each corner of the last page found and fine-tune the rails
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
     void emitLiveFrame(cv::Mat raw16);       // every frame shown, for whoever else wants to watch
@@ -141,6 +145,7 @@ private:
     QAction *scanBareAction = nullptr;
     QAction *scanTargetAction = nullptr;
     QAction *scanImageAction = nullptr;
+    QAction *tuneAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
 

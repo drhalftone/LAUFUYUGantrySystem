@@ -1179,15 +1179,17 @@ namespace
     }
 }
 
-bool LAUPlatenGeometry::railsFor(const cv::Point2d &board, double *singleMM, double *pairMM) const
+bool LAUPlatenGeometry::railsFor(const cv::Point2d &board, double *singleMM, double *pairMM, bool corrected) const
 {
     const double a = ex[0], b = ey[0], c = ex[1], d = ey[1], det = a * d - b * c;
     if (!railsValid || std::abs(det) < 1e-9) {
         return false;
     }
     const double px = board.x - A0.x, py = board.y - A0.y;
-    *pairMM = (d * px - b * py) / det;
-    *singleMM = (a * py - c * px) / det;
+    const double pair = (d * px - b * py) / det, single = (a * py - c * px) / det;
+    const cv::Matx23d &F = corrected ? railsFix : cv::Matx23d(1, 0, 0, 0, 1, 0);
+    *singleMM = F(0, 0) * single + F(0, 1) * pair + F(0, 2);
+    *pairMM = F(1, 0) * single + F(1, 1) * pair + F(1, 2);
     return true;
 }
 
@@ -1212,6 +1214,12 @@ bool LAUPlatenGeometry::save(const QString &mosaicFolder) const
     if (railsValid) {
         o["rails"] = QJsonObject{ { "A0_mm", QJsonArray{ A0.x, A0.y } }, { "ex", QJsonArray{ ex[0], ex[1] } }, { "ey", QJsonArray{ ey[0], ey[1] } },
                                   { "single_mm", QJsonArray{ singleLow, singleHigh } }, { "pair_mm", QJsonArray{ pairLow, pairHigh } } };
+        if (railsFix != cv::Matx23d(1, 0, 0, 0, 1, 0)) {
+            const cv::Matx23d &F = railsFix;
+            QJsonObject r = o["rails"].toObject();
+            r["fix_single_pair"] = QJsonArray{ QJsonArray{ F(0, 0), F(0, 1), F(0, 2) }, QJsonArray{ F(1, 0), F(1, 1), F(1, 2) } };
+            o["rails"] = r;
+        }
     }
     QFile file(QDir(mosaicFolder).filePath(QString("platen_mosaic.json")));
     return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(QJsonDocument(o).toJson()) > 0;
@@ -1254,6 +1262,15 @@ bool LAUPlatenGeometry::load(const QString &mosaicFolder, QString *error)
         singleHigh = single[1];
         pairLow = pairRange[0];
         pairHigh = pairRange[1];
+        const QJsonArray fix = rails["fix_single_pair"].toArray();
+        railsFix = cv::Matx23d(1, 0, 0, 0, 1, 0);
+        if (fix.count() == 2 && fix[0].toArray().count() == 3 && fix[1].toArray().count() == 3) {
+            for (int r = 0; r < 2; r++) {
+                for (int c = 0; c < 3; c++) {
+                    railsFix(r, c) = fix[r].toArray()[c].toDouble();
+                }
+            }
+        }
     }
     return true;
 }

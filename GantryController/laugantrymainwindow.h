@@ -78,6 +78,7 @@ private slots:
     void onHomeFinished(bool ok, QString message);
     void onScanRequested(bool withTarget);
     void onImageScanRequested();
+    void onCornerTuneRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -151,6 +152,35 @@ private:
     bool writeSpectral(const QString &path) const;
     void endMeasure(const QString &message);
     void onMeasureAbort();
+
+    // Fine-tune page corners (laugantrytune.cpp): the i1 hole over each corner of the last page found, the user
+    // nudging the rails until the corner is centred, then a correction of the rails fitted to the four
+    struct TuneCorner
+    {
+        QString name;
+        cv::Point2d board;
+        double plannedSingle = 0.0, plannedPair = 0.0;   // from the model, before any correction
+        double startSingle = 0.0, startPair = 0.0;       // where the rails first went: the model with the saved correction
+        double single = 0.0, pair = 0.0;                 // where the rails are, or were when it was confirmed
+        bool reachable = false;
+        bool confirmed = false;
+    };
+    QList<TuneCorner> tuneCorners;
+    int tuneIndex = -1;
+    bool tuning = false;
+    bool tuneCancelling = false;
+    QString tuneFolder;                      // the page's <scan>/mosaic
+    LAUPlatenGeometry tuneGeometry;
+    class LAUCornerTuneDialog *tuneDialog = nullptr;
+    void goToTuneCorner();
+    void onTuneMoveFinished(bool ok, const QString &message);
+    void onTuneNudge(int right, int down);
+    void onTuneCentered();
+    void onTuneSkip();
+    void onTuneCancel();
+    void nextTuneCorner();
+    void finishTune();
+    void endTune(const QString &message);
 
     void returnHomeAfterScan();
     void wrapUp();

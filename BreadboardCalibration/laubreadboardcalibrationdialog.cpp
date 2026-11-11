@@ -403,6 +403,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     scanImageAction->setEnabled(false);
     connect(scanImageAction, &QAction::triggered, this, [this]() { emit emitImageScanRequested(); });
     addAction(scanImageAction);
+    tuneAction = new QAction(QString("Fine-tune page corners..."), this);
+    tuneAction->setEnabled(false);
+    connect(tuneAction, &QAction::triggered, this, [this]() { emit emitCornerTuneRequested(); });
+    addAction(tuneAction);
 
     scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
@@ -423,6 +427,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     if (result.ok) {                         // restored from the last session
         scanBareAction->setEnabled(true);
         scanImageAction->setEnabled(true);
+        tuneAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
     }
@@ -434,6 +439,7 @@ void LAUBreadboardCalibrationWidget::beginScan()
     calibrateAction->setEnabled(false);
     scanBareAction->setEnabled(false);
     scanImageAction->setEnabled(false);
+    tuneAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
 }
@@ -446,8 +452,19 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     calibrateAction->setEnabled(true);
     scanBareAction->setEnabled(true);
     scanImageAction->setEnabled(true);
+    tuneAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
+}
+
+void LAUBreadboardCalibrationWidget::lockScanActions(bool locked)
+{
+    busy = locked;
+    calibrateAction->setEnabled(!locked);
+    scanBareAction->setEnabled(!locked);
+    scanImageAction->setEnabled(!locked);
+    tuneAction->setEnabled(!locked);
+    scanTargetAction->setEnabled(!locked);
 }
 
 void LAUBreadboardCalibrationWidget::requestScanFrame()
@@ -508,6 +525,7 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
     if (scanBareAction) {
         scanBareAction->setEnabled(true);
         scanImageAction->setEnabled(true);
+        tuneAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }
 }
