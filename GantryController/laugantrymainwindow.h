@@ -203,6 +203,8 @@ private:
     {
         int round = 0, hour = 0;             // hour 12 = from +Y (rail pair), 3 = from +X (single rail)
         int lastX = 0, lastY = 0;            // the sign of the last move each slider made before the hole was seen
+        int prevX = 0, prevY = 0;            // and of the move each made before that
+        int via = 0;                         // the hour it went out to first, or 0 straight out and back, or -1 farther out first
         bool ok = false;
         cv::Point2d hole, corner;            // where the camera saw the hole and the page's corner, board mm
         cv::Point2d offset;                  // hole - corner: what the slop moves
@@ -211,9 +213,20 @@ private:
     };
     // checking a measurement: the hole sent onto the corner itself, each approach corrected by the slop it predicts
     bool slopVerify = false;
-    double slopFitX[3] = { 0, 0, 0 }, slopFitY[3] = { 0, 0, 0 };   // correction = c0 + c1 * lastX + c2 * lastY, slider mm
+    // the correction, slider mm, is linear in the signs of each slider's last two moves:
+    // c0 + c1 * lastX + c2 * lastY + c3 * prevX + c4 * prevY
+    static const int SLOP_TERMS = 5;
+    double slopFitX[SLOP_TERMS] = { 0, 0, 0, 0, 0 }, slopFitY[SLOP_TERMS] = { 0, 0, 0, 0, 0 };
+    int slopPrevX = 0, slopPrevY = 0;        // the sign of each slider's move before its last one
+    QList<cv::Point2d> slopLegs;             // this shot's way out, slider mm, before it comes back to the corner
+    int slopLeg = 0;
     double slopRimRadius = 0.0;
     QString slopMeasured;                    // the measurement being checked
+    // confirming revises the estimate: after each pass the slop still left is added to the fit, and the next pass
+    // uses the revised fit, until it stops changing or the passes run out; the result is saved as a new measurement
+    int slopPass = 1, slopPasses = 1;
+    QJsonArray slopHistory;
+    cv::Point2d slopCentred;                 // the sliders' position with the corner in the middle of the hole, before the slop
     cv::Point2d slopAperture;                // the hole at rails zero, as the corner fine-tune saw it (else the calibration's)
     cv::Point2d slopAlong1, slopAlong2;      // the page's two edges leaving the corner
     QString slopFolder;

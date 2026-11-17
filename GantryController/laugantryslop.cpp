@@ -10,8 +10,16 @@
 // few rounds over.  For each hour the sliders go out to that hour, the given distance away, then back, settle, and
 // LAUHoleView::findHoleAtCorner finds the corner from its two edges and the hole from its rim over the paper.  The
 // hole's offset from the corner -- where the i1 lands on the page, carriage and holder both -- against its average is
-// turned into the correction the sliders need, in slider mm, and plotted around a clock face; a fit of that
-// correction to the sign of each slider's last move gives the slop.
+// turned into the correction the sliders need, in slider mm, and plotted around a clock face.
+//
+// The slop left by the move back can depend on the move away, so the correction is solved for as a linear system in
+// the signs of each slider's last two moves (c0 + c1 lastX + c2 lastY + c3 prevX + c4 prevY, for X and for Y).  Going
+// straight out and back makes the move away the move back reversed, which can't tell the two apart, so the rounds
+// alternate: straight out; farther out first and in to the hour, so the last two moves go the same way; or out to
+// the hour 3 ahead first and across to the hour.
+//
+// Confirm slop sends the corner into the middle of the hole with each approach corrected by that prediction, adds what
+// is still needed to the estimate after each pass, and saves the revised estimate as a new measurement.
 //
 #include "laugantrymainwindow.h"
 #include "lauimageinspectdialog.h"
@@ -47,6 +55,7 @@ namespace
     const int FRAME_TIMEOUT_MS = 15000;
     const double MOVED_MM = 0.005;           // a slider that moved less than this didn't move
     const double CORNER_IN_MM = 2.0;         // the hole's centre, this far in from the corner along both edges
+    const double CONVERGED_MM = 0.01;        // a confirm pass that changes the estimate less than this is the last
 
     cv::Point2d unitOf(const cv::Point2d &v)
     {
@@ -63,6 +72,43 @@ namespace
     int signOf(double v)
     {
         return (v > MOVED_MM) ? 1 : (v < -MOVED_MM) ? -1 : 0;
+    }
+
+    // a slider's last two moves after one more of sign s (0: it didn't move, and remembers what it had)
+    void afterMove(int s, int *last, int *prev)
+    {
+        if (s) {
+            *prev = *last;
+            *last = s;
+        }
+    }
+
+    // the terms the correction is linear in
+    void slopTerms(int lastX, int lastY, int prevX, int prevY, double *f)
+    {
+        f[0] = 1.0;
+        f[1] = lastX;
+        f[2] = lastY;
+        f[3] = prevX;
+        f[4] = prevY;
+    }
+
+    // The way out for a round, so each slider's last two moves come in every combination: straight out to the hour and
+    // back (the move before is the last one reversed); out FARTHER first, then in to the hour (on each slider the move
+    // before goes the same way as the last); or out to the hour 3 ahead first and across (the sliders mixed).
+    // Returns 0 for straight, FARTHER_FIRST, or the hour it goes to first.
+    const int FARTHER_FIRST = -1;
+    const double FARTHER = 1.5;              // that far out, times the approach
+    int viaHour(int round, int hour)
+    {
+        switch (round % 3) {
+            case 1:
+                return FARTHER_FIRST;
+            case 2:
+                return (hour + 2) % 12 + 1;  // 3 ahead
+            default:
+                return 0;
+        }
     }
 }
 
@@ -166,9 +212,11 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
             return false;
         }
         for (int hour = 1; hour <= 12; hour++) {
-            const cv::Point2d d = hourDirection(hour) * out;
-            if (!slopGeometry.reachable(single + d.x, pair + d.y)) {
-                return false;
+            for (double reach : { out, FARTHER * out }) {
+                const cv::Point2d d = hourDirection(hour) * reach;
+                if (!slopGeometry.reachable(single + d.x, pair + d.y)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -178,8 +226,10 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
     dialog.setWindowTitle(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
     const QString measureText = QString("The sliders bring the i1's hole back over a corner of the page found in scan %1, with the corner %2 mm in from "
-                                        "the hole's centre along both edges, from each of the twelve hours of a clock. Each time the camera finds the "
-                                        "corner and the hole's rim, and how far the hole lands from the corner shows the slop.")
+                                        "the hole's centre along both edges, from each of the twelve hours of a clock. Rounds alternate the way out: "
+                                        "straight out and back, farther out first and then in, or out to the hour 3 ahead first, so the move away and "
+                                        "the move back can be told apart. Each time the camera finds the corner and the hole's rim, and the slop is solved for as a linear "
+                                        "system in the signs of each slider's last two moves. Use 3 or more rounds.")
                                     .arg(slopScan).arg(CORNER_IN_MM, 0, 'f', 1);
     const QString confirmText = QString("The sliders bring the i1's hole onto the %1 corner measured in %2, from each of the twelve hours of a clock, "
                                         "adding to each approach the slop that measurement predicts. If the slop was measured right, the corner lands "
@@ -202,7 +252,16 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
     rounds->setValue(settings.value(QString("LAUGantryMainWindow::slopRounds"), 3).toInt());
     form->addRow(QString("Corner"), corner);
     form->addRow(QString("Approach from"), distance);
-    form->addRow(QString("Rounds of the clock"), rounds);
+    form->addRow(QString(checkMode ? "Rounds of the clock per pass" : "Rounds of the clock"), rounds);
+    QDoubleSpinBox *passes = new QDoubleSpinBox();
+    passes->setRange(1, 10);
+    passes->setDecimals(0);
+    passes->setValue(settings.value(QString("LAUGantryMainWindow::slopPasses"), 3).toInt());
+    passes->setToolTip(QString("After each pass the slop still left is added to the estimate, and the next pass uses the revised estimate. "
+                               "It stops early once the estimate changes by less than %1 mm.").arg(CONVERGED_MM, 0, 'f', 3));
+    if (checkMode) {
+        form->addRow(QString("Passes, revising the estimate"), passes);
+    }
     layout->addLayout(form);
     QLabel *none = new QLabel();
     none->setWordWrap(true);
@@ -250,16 +309,21 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
         return;
     }
     if (slopVerify) {
+        const QStringList terms{ QString("constant"), QString("per_last_x_sign"), QString("per_last_y_sign"), QString("per_prev_x_sign"),
+                                 QString("per_prev_y_sign") };
         const QJsonObject fx = measurement["fit_x"].toObject(), fy = measurement["fit_y"].toObject();
-        slopFitX[0] = fx["constant"].toDouble();
-        slopFitX[1] = fx["per_last_x_sign"].toDouble();
-        slopFitX[2] = fx["per_last_y_sign"].toDouble();
-        slopFitY[0] = fy["constant"].toDouble();
-        slopFitY[1] = fy["per_last_x_sign"].toDouble();
-        slopFitY[2] = fy["per_last_y_sign"].toDouble();
+        for (int i = 0; i < SLOP_TERMS; i++) {
+            slopFitX[i] = fx[terms[i]].toDouble();   // missing (an older measurement): 0
+            slopFitY[i] = fy[terms[i]].toDouble();
+        }
         slopRimRadius = measurement["rim_radius_mm"].toDouble();
         slopMeasured = measured;
+        slopCentred = centred;
+        settings.setValue(QString("LAUGantryMainWindow::slopPasses"), (int)passes->value());
     }
+    slopPass = 1;
+    slopPasses = slopVerify ? (int)passes->value() : 1;
+    slopHistory = QJsonArray();
     settings.setValue(QString("LAUGantryMainWindow::slopCorner"), k);
     settings.setValue(QString("LAUGantryMainWindow::slopDistance"), distance->value());
     settings.setValue(QString("LAUGantryMainWindow::slopRounds"), (int)rounds->value());
@@ -300,10 +364,13 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
     slopShots.clear();
     slopStep = 0;
     slopAtCentre = false;
+    slopLeg = 0;
     slopAtSingle = railWidget->reportedMM(0);
     slopAtPair = railWidget->reportedMM(2);
     slopLastX = 0;
     slopLastY = 0;
+    slopPrevX = 0;
+    slopPrevY = 0;
     cameraWidget->lockScanActions(true);
     railBox->setEnabled(false);
     homeDialog = new LAUHomeDialog(this);
@@ -452,37 +519,59 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
     homeDialog->setZoom(QImage(colour.data, colour.cols, colour.rows, (int)colour.step, QImage::Format_BGR888).copy());
 }
 
-// out to the hour's start, or back in to the spot
+// the next leg of this shot: out (to the via hour, then the hour), or back in to the corner
 void LAUGantryMainWindow::slopNextMove()
 {
     const int total = 12 * slopRounds;
     const int round = slopStep / 12, hour = slopStep % 12 + 1;
+    if (slopLeg == 0) {
+        slopLegs.clear();
+        const int via = viaHour(round, hour);
+        if (via) {
+            const cv::Point2d v = (via == FARTHER_FIRST) ? hourDirection(hour) * (FARTHER * slopDistance) : hourDirection(via) * slopDistance;
+            slopLegs << cv::Point2d(slopSingle + v.x, slopPair + v.y);
+        }
+        const cv::Point2d d = hourDirection(hour) * slopDistance;
+        slopLegs << cv::Point2d(slopSingle + d.x, slopPair + d.y);
+    }
+    slopAtCentre = slopLeg >= slopLegs.count();   // this move ends at the corner
     double single = slopSingle, pair = slopPair;
     if (!slopAtCentre) {
-        const cv::Point2d d = hourDirection(hour) * slopDistance;
-        single += d.x;
-        pair += d.y;
-        homeDialog->setMessage(QString("Round %1 of %2: out to %3 o'clock...").arg(round + 1).arg(slopRounds).arg(hour));
+        single = slopLegs[slopLeg].x;
+        pair = slopLegs[slopLeg].y;
+        const bool viaLeg = slopLegs.count() > 1 && slopLeg == 0;
+        const int via = viaHour(round, hour);
+        homeDialog->setMessage(!viaLeg ? QString("Round %1 of %2: out to %3 o'clock...").arg(round + 1).arg(slopRounds).arg(hour)
+                               : (via == FARTHER_FIRST) ? QString("Round %1 of %2: farther out past %3 o'clock first...").arg(round + 1).arg(slopRounds).arg(hour)
+                                                        : QString("Round %1 of %2: out to %3 o'clock first...").arg(round + 1).arg(slopRounds).arg(via));
     } else if (slopVerify) {
-        // the slop this approach will leave, from the sign each slider's last move will have, added in advance; the
-        // correction can flip a small move's sign (12 and 6 o'clock in X), so settle on signs that agree with it
+        // the slop this approach will leave, from the signs each slider's last two moves will have, added in advance;
+        // the correction can flip a small move's sign (12 and 6 o'clock in X), so settle on signs that agree with it
         int sx = signOf(single - slopAtSingle), sy = signOf(pair - slopAtPair);
         for (int iteration = 0; iteration < 3; iteration++) {
-            const int lx = sx ? sx : slopLastX, ly = sy ? sy : slopLastY;
-            single = slopSingle + slopFitX[0] + slopFitX[1] * lx + slopFitX[2] * ly;
-            pair = slopPair + slopFitY[0] + slopFitY[1] * lx + slopFitY[2] * ly;
+            int lx = slopLastX, px = slopPrevX, ly = slopLastY, py = slopPrevY;
+            afterMove(sx, &lx, &px);
+            afterMove(sy, &ly, &py);
+            double f[SLOP_TERMS];
+            slopTerms(lx, ly, px, py, f);
+            single = slopSingle;
+            pair = slopPair;
+            for (int i = 0; i < SLOP_TERMS; i++) {
+                single += slopFitX[i] * f[i];
+                pair += slopFitY[i] * f[i];
+            }
             sx = signOf(single - slopAtSingle);
             sy = signOf(pair - slopAtPair);
         }
-        homeDialog->setMessage(QString("Round %1 of %2: onto the corner from %3 o'clock, %4 mm X and %5 mm Y added for the slop...")
-                                   .arg(round + 1).arg(slopRounds).arg(hour).arg(single - slopSingle, 0, 'f', 3).arg(pair - slopPair, 0, 'f', 3));
+        homeDialog->setMessage(QString("Pass %6 of %7, round %1 of %2: onto the corner from %3 o'clock, %4 mm X and %5 mm Y added for the slop...")
+                                   .arg(round + 1).arg(slopRounds).arg(hour).arg(single - slopSingle, 0, 'f', 3).arg(pair - slopPair, 0, 'f', 3)
+                                   .arg(slopPass).arg(slopPasses));
     } else {
         homeDialog->setMessage(QString("Round %1 of %2: back to the spot from %3 o'clock...").arg(round + 1).arg(slopRounds).arg(hour));
     }
     homeDialog->setProgress(slopStep, total);
-    const int sx = signOf(single - slopAtSingle), sy = signOf(pair - slopAtPair);
-    slopLastX = sx ? sx : slopLastX;
-    slopLastY = sy ? sy : slopLastY;
+    afterMove(signOf(single - slopAtSingle), &slopLastX, &slopPrevX);
+    afterMove(signOf(pair - slopAtPair), &slopLastY, &slopPrevY);
     slopAtSingle = single;
     slopAtPair = pair;
     railWidget->moveRails(single, pair);     // answers with emitHomeFinished -> onSlopMoveFinished
@@ -499,7 +588,7 @@ void LAUGantryMainWindow::onSlopMoveFinished(bool ok, const QString &message)
         return;
     }
     if (!slopAtCentre) {
-        slopAtCentre = true;
+        slopLeg++;                           // on out, or back in
         slopNextMove();
         return;
     }
@@ -544,6 +633,9 @@ void LAUGantryMainWindow::onSlopFrame(const cv::Mat &raw16)
     shot.hour = slopStep % 12 + 1;
     shot.lastX = slopLastX;
     shot.lastY = slopLastY;
+    shot.prevX = slopPrevX;
+    shot.prevY = slopPrevY;
+    shot.via = viaHour(shot.round - 1, shot.hour);
     const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
     // where to look: where the hole has been seen so far, else where the fine-tune saw it
     cv::Point2d guess = slopAperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single;
@@ -582,6 +674,7 @@ void LAUGantryMainWindow::onSlopFrame(const cv::Mat &raw16)
 
     slopStep++;
     slopAtCentre = false;
+    slopLeg = 0;
     if (slopStep >= 12 * slopRounds) {
         finishSlop();
         return;
@@ -625,44 +718,45 @@ void LAUGantryMainWindow::finishSlop()
         return cv::Point2d((ax.x * m.y - m.x * ax.y) / det, (m.x * ay.y - ay.x * m.y) / det);   // (single, pair)
     };
 
-    // the correction against the sign of each slider's last move: c = c0 + cx * lastX + cy * lastY, for X and for Y
+    // the linear system: every shot's correction against the signs of each slider's last two moves,
+    // c = c0 + c1 * lastX + c2 * lastY + c3 * prevX + c4 * prevY, for X and for Y, solved by least squares
     const int n = good.count();
-    cv::Mat A(n, 3, CV_64F), bx(n, 1, CV_64F), by(n, 1, CV_64F);
+    cv::Mat A(n, SLOP_TERMS, CV_64F), bx(n, 1, CV_64F), by(n, 1, CV_64F);
     for (int i = 0; i < n; i++) {
         const cv::Point2d c = correctionOf(good[i]);
-        A.at<double>(i, 0) = 1.0;
-        A.at<double>(i, 1) = good[i].lastX;
-        A.at<double>(i, 2) = good[i].lastY;
+        double f[SLOP_TERMS];
+        slopTerms(good[i].lastX, good[i].lastY, good[i].prevX, good[i].prevY, f);
+        for (int j = 0; j < SLOP_TERMS; j++) {
+            A.at<double>(i, j) = f[j];
+        }
         bx.at<double>(i) = c.x;
         by.at<double>(i) = c.y;
     }
     cv::Mat fx, fy;
     cv::solve(A, bx, fx, cv::DECOMP_SVD);
     cv::solve(A, by, fy, cv::DECOMP_SVD);
-    double rx = 0.0, ry = 0.0;
-    for (int i = 0; i < n; i++) {
-        const cv::Point2d c = correctionOf(good[i]);
-        const double ex = c.x - (fx.at<double>(0) + fx.at<double>(1) * good[i].lastX + fx.at<double>(2) * good[i].lastY);
-        const double ey = c.y - (fy.at<double>(0) + fy.at<double>(1) * good[i].lastX + fy.at<double>(2) * good[i].lastY);
-        rx += ex * ex / n;
-        ry += ey * ey / n;
-    }
-    rx = std::sqrt(rx);
-    ry = std::sqrt(ry);
+    // how well the shots pin the terms down: a term the paths never varied apart from the others can't be told
+    cv::Mat singular;
+    cv::SVD::compute(A, singular, cv::SVD::NO_UV);
+    const double conditioning = singular.at<double>(SLOP_TERMS - 1) / std::max(singular.at<double>(0), 1e-12);
+    const cv::Mat ex = A * fx - bx, ey = A * fy - by;
+    const double rx = std::sqrt(ex.dot(ex) / n), ry = std::sqrt(ey.dot(ey) / n);
+    const auto term = [](const cv::Mat &f, int j) { return f.at<double>(j); };
 
     // ---- the results folder
     const QString folder = slopFolder;
-    QFile csv(QDir(folder).filePath(QString("slop.csv")));
+    const QString tag = slopVerify ? QString("_pass%1").arg(slopPass) : QString();   // each confirm pass keeps its own files
+    QFile csv(QDir(folder).filePath(QString("slop%1.csv").arg(tag)));
     if (csv.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QTextStream out(&csv);
-        out << "round,hour,from_x_mm,from_y_mm,last_x_sign,last_y_sign,found,hole_board_x_mm,hole_board_y_mm,corner_board_x_mm,corner_board_y_mm,"
-               "correction_x_mm,correction_y_mm,note\n";
+        out << "round,hour,via_hour,from_x_mm,from_y_mm,last_x_sign,last_y_sign,prev_x_sign,prev_y_sign,found,hole_board_x_mm,hole_board_y_mm,"
+               "corner_board_x_mm,corner_board_y_mm,correction_x_mm,correction_y_mm,note\n";
         const auto mm = [](double v) { return QString::number(v, 'f', 4); };
         for (const SlopShot &s : slopShots) {
             const cv::Point2d d = hourDirection(s.hour) * slopDistance;
             const cv::Point2d c = s.ok ? correctionOf(s) : cv::Point2d(0, 0);
-            out << s.round << ',' << s.hour << ',' << QString::number(d.x, 'f', 3) << ',' << QString::number(d.y, 'f', 3) << ',' << s.lastX << ','
-                << s.lastY << ',' << (s.ok ? 1 : 0) << ',' << mm(s.hole.x) << ',' << mm(s.hole.y) << ',' << mm(s.corner.x) << ',' << mm(s.corner.y)
+            out << s.round << ',' << s.hour << ',' << s.via << ',' << QString::number(d.x, 'f', 3) << ',' << QString::number(d.y, 'f', 3) << ','
+                << s.lastX << ',' << s.lastY << ',' << s.prevX << ',' << s.prevY << ',' << (s.ok ? 1 : 0) << ',' << mm(s.hole.x) << ',' << mm(s.hole.y) << ',' << mm(s.corner.x) << ',' << mm(s.corner.y)
                 << ',' << (s.ok ? mm(c.x) : QString()) << ',' << (s.ok ? mm(c.y) : QString()) << ",\""
                 << QString(s.note).replace(QChar('"'), QChar('\'')) << "\"\n";
         }
@@ -737,14 +831,17 @@ void LAUGantryMainWindow::finishSlop()
         }
     }
     QStringList lines{
-        slopVerify ? QString("CHECK of %1: slider correction still needed (mm) with the slop corrected, by hour").arg(slopMeasured)
+        slopVerify ? QString("CONFIRM %1, pass %2: slider correction still needed (mm) with the slop corrected, by hour").arg(slopMeasured).arg(slopPass)
                    : QString("Slider correction to add (mm), by the hour the hole came back from"),
         QString("%1 corner of scan %2, %3 mm approach, %4 of %5 shots found").arg(slopCorner, slopScan).arg(slopDistance, 0, 'f', 1).arg(n).arg(slopShots.count()),
-        QString("X: %1 %2 %3 x lastX %4 %5 x lastY   (rms left %6)").arg(fx.at<double>(0), 0, 'f', 3).arg(fx.at<double>(1) < 0 ? "-" : "+")
-            .arg(std::abs(fx.at<double>(1)), 0, 'f', 3).arg(fx.at<double>(2) < 0 ? "-" : "+").arg(std::abs(fx.at<double>(2)), 0, 'f', 3).arg(rx, 0, 'f', 3),
-        QString("Y: %1 %2 %3 x lastX %4 %5 x lastY   (rms left %6)").arg(fy.at<double>(0), 0, 'f', 3).arg(fy.at<double>(1) < 0 ? "-" : "+")
-            .arg(std::abs(fy.at<double>(1)), 0, 'f', 3).arg(fy.at<double>(2) < 0 ? "-" : "+").arg(std::abs(fy.at<double>(2)), 0, 'f', 3).arg(ry, 0, 'f', 3),
-        QString("slop between +X and -X approaches: %1 mm").arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3),
+        QString("terms (mm):        const    lastX    lastY    prevX    prevY      rms left"),
+        QString("X correction:  %1 %2 %3 %4 %5   %6").arg(term(fx, 0), 8, 'f', 3).arg(term(fx, 1), 8, 'f', 3).arg(term(fx, 2), 8, 'f', 3)
+            .arg(term(fx, 3), 8, 'f', 3).arg(term(fx, 4), 8, 'f', 3).arg(rx, 8, 'f', 3),
+        QString("Y correction:  %1 %2 %3 %4 %5   %6").arg(term(fy, 0), 8, 'f', 3).arg(term(fy, 1), 8, 'f', 3).arg(term(fy, 2), 8, 'f', 3)
+            .arg(term(fy, 3), 8, 'f', 3).arg(term(fy, 4), 8, 'f', 3).arg(ry, 8, 'f', 3),
+        QString("X slop, +X vs -X last move: %1 mm; of it, from the move before: %2 mm   (terms told apart: %3)")
+            .arg(2.0 * std::abs(term(fx, 1)), 0, 'f', 3).arg(2.0 * std::abs(term(fx, 3)), 0, 'f', 3)
+            .arg(conditioning > 0.05 ? QString("well") : conditioning > 0.01 ? QString("poorly") : QString("no, vary the paths more")),
     };
     if (slopVerify) {
         lines << QString("hole's centre from the corner: %1 mm rms, %2 mm worst").arg(missRms, 0, 'f', 3).arg(missWorst, 0, 'f', 3);
@@ -752,7 +849,7 @@ void LAUGantryMainWindow::finishSlop()
     for (int i = 0; i < lines.count(); i++) {
         cv::putText(plot, lines[i].toStdString(), cv::Point(14, 24 + 20 * i), cv::FONT_HERSHEY_SIMPLEX, 0.5, ink, 1, cv::LINE_AA);
     }
-    const QString plotPath = QDir(folder).filePath(QString("slop_polar.png"));
+    const QString plotPath = QDir(folder).filePath(QString("slop_polar%1.png").arg(tag));
     QImage(plot.data, plot.cols, plot.rows, (int)plot.step, QImage::Format_BGR888).save(plotPath);
 
     QJsonObject json;
@@ -766,10 +863,25 @@ void LAUGantryMainWindow::finishSlop()
     json["found"] = n;
     json["clock"] = QString("in slider space: 12 o'clock is +Y (rail pair), 3 o'clock is +X (single rail); the hour the hole came back from");
     json["correction"] = QString("slider mm to add so the hole lands where the average puts it");
-    json["fit_x"] = QJsonObject{ { "constant", fx.at<double>(0) }, { "per_last_x_sign", fx.at<double>(1) }, { "per_last_y_sign", fx.at<double>(2) }, { "rms_left", rx } };
-    json["fit_y"] = QJsonObject{ { "constant", fy.at<double>(0) }, { "per_last_x_sign", fy.at<double>(1) }, { "per_last_y_sign", fy.at<double>(2) }, { "rms_left", ry } };
-    json["x_slop_mm"] = 2.0 * std::abs(fx.at<double>(1));
-    json["y_slop_mm"] = 2.0 * std::abs(fy.at<double>(2));
+    const auto fitJson = [](const double *f, double rms) {
+        QJsonObject o{ { "constant", f[0] }, { "per_last_x_sign", f[1] }, { "per_last_y_sign", f[2] }, { "per_prev_x_sign", f[3] }, { "per_prev_y_sign", f[4] } };
+        if (rms >= 0.0) {
+            o["rms_left"] = rms;
+        }
+        return o;
+    };
+    double solvedX[SLOP_TERMS], solvedY[SLOP_TERMS];
+    for (int j = 0; j < SLOP_TERMS; j++) {
+        solvedX[j] = term(fx, j);
+        solvedY[j] = term(fy, j);
+    }
+    json["model"] = QString("correction = constant + per_last_x_sign * lastX + per_last_y_sign * lastY + per_prev_x_sign * prevX + per_prev_y_sign * prevY; "
+                            "last and prev are the signs of each slider's last two moves");
+    json["fit_x"] = fitJson(solvedX, rx);
+    json["fit_y"] = fitJson(solvedY, ry);
+    json["conditioning"] = conditioning;
+    json["x_slop_mm"] = 2.0 * std::abs(term(fx, 1));
+    json["y_slop_mm"] = 2.0 * std::abs(term(fy, 2));
     json["hours"] = hours;
     json["mode"] = slopVerify ? QString("check") : QString("measure");
     json["corner_index"] = (int)QStringList{ QString("top-left"), QString("top-right"), QString("bottom-right"), QString("bottom-left") }.indexOf(slopCorner);
@@ -777,8 +889,8 @@ void LAUGantryMainWindow::finishSlop()
     json["mean_hole_from_corner_board_mm"] = QJsonArray{ measuredMean.x, measuredMean.y };
     if (slopVerify) {
         json["checked"] = slopMeasured;
-        json["applied_fit_x"] = QJsonArray{ slopFitX[0], slopFitX[1], slopFitX[2] };
-        json["applied_fit_y"] = QJsonArray{ slopFitY[0], slopFitY[1], slopFitY[2] };
+        json["applied_fit_x"] = fitJson(slopFitX, -1.0);
+        json["applied_fit_y"] = fitJson(slopFitY, -1.0);
         json["miss_rms_mm"] = missRms;
         json["miss_worst_mm"] = missWorst;
     } else {
@@ -786,23 +898,91 @@ void LAUGantryMainWindow::finishSlop()
         const cv::Point2d m = -measuredMean;
         json["corner_centred_single_pair_mm"] = QJsonArray{ slopSingle + (ax.x * m.y - m.x * ax.y) / det, slopPair + (m.x * ay.y - ay.x * m.y) / det };
     }
-    QFile jsonFile(QDir(folder).filePath(QString("slop.json")));
+    QFile jsonFile(QDir(folder).filePath(QString("slop%1.json").arg(tag)));
     if (jsonFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         jsonFile.write(QJsonDocument(json).toJson());
     }
 
     if (slopVerify) {
-        endSlop(QString("Checked %1: with the slop corrected, the hole's centre landed %2 mm rms (worst %3 mm) from the corner over %4 of %5 "
-                        "approaches, with %6 mm of X slop left. Results are in %7")
-                    .arg(slopMeasured).arg(missRms, 0, 'f', 3).arg(missWorst, 0, 'f', 3).arg(n).arg(slopShots.count())
-                    .arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(QDir::toNativeSeparators(folder)));
+        // what this pass still needed, fitted the same way, is added to the estimate it used
+        double change = 0.0;
+        for (int i = 0; i < SLOP_TERMS; i++) {
+            change = std::max(change, std::max(std::abs(term(fx, i)), std::abs(term(fy, i))));
+        }
+        slopHistory.append(QJsonObject{ { "pass", slopPass },
+                                        { "applied_fit_x", fitJson(slopFitX, -1.0) },
+                                        { "applied_fit_y", fitJson(slopFitY, -1.0) },
+                                        { "found", n },
+                                        { "miss_rms_mm", missRms },
+                                        { "miss_worst_mm", missWorst },
+                                        { "x_slop_left_mm", 2.0 * std::abs(term(fx, 1)) },
+                                        { "conditioning", conditioning },
+                                        { "largest_revision_mm", change } });
+        for (int i = 0; i < SLOP_TERMS; i++) {
+            slopFitX[i] += term(fx, i);
+            slopFitY[i] += term(fy, i);
+        }
+        if (slopPass < slopPasses && change >= CONVERGED_MM) {
+            slopPass++;                      // again, with the revised estimate
+            slopShots.clear();
+            slopStep = 0;
+            slopLeg = 0;
+            slopAtCentre = false;
+            slopSeenValid = false;
+            slopSeenHole = false;
+            slopNextMove();
+            return;
+        }
+
+        // the revised estimate, saved as a measurement so the next Confirm slop (and anything else) uses it
+        const QString revised = QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_slop");
+        QDir().mkpath(QDir(scanBase).filePath(revised));
+        QJsonObject r;
+        r["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        r["mode"] = QString("measure");
+        r["revised_from"] = slopMeasured;
+        r["confirmed_in"] = QFileInfo(folder).fileName();
+        r["scan"] = slopScan;
+        r["corner"] = slopCorner;
+        r["corner_index"] = json["corner_index"];
+        r["corner_centred_single_pair_mm"] = QJsonArray{ slopCentred.x, slopCentred.y };
+        r["rim_radius_mm"] = slopRimRadius;
+        r["approach_mm"] = slopDistance;
+        r["clock"] = json["clock"];
+        r["correction"] = QString("slider mm to add to the corner-centred position, from the signs of each slider's last two moves");
+        r["model"] = json["model"];
+        r["fit_x"] = fitJson(slopFitX, -1.0);
+        r["fit_y"] = fitJson(slopFitY, -1.0);
+        r["x_slop_mm"] = 2.0 * std::abs(slopFitX[1]);
+        r["y_slop_mm"] = 2.0 * std::abs(slopFitY[2]);
+        r["passes"] = slopHistory;
+        QFile revisedFile(QDir(scanBase).filePath(revised + QString("/slop.json")));
+        const bool saved = revisedFile.open(QIODevice::WriteOnly | QIODevice::Truncate) && revisedFile.write(QJsonDocument(r).toJson()) > 0;
+        QFile historyFile(QDir(folder).filePath(QString("passes.json")));
+        if (historyFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            historyFile.write(QJsonDocument(r).toJson());
+        }
+
+        QStringList steps;
+        for (const QJsonValue &v : slopHistory) {
+            const QJsonObject p = v.toObject();
+            steps << QString("pass %1: %2 mm rms").arg(p["pass"].toInt()).arg(p["miss_rms_mm"].toDouble(), 0, 'f', 3);
+        }
+        const bool converged = change < CONVERGED_MM;
+        endSlop(QString("Confirmed %1 over %2 pass%3 (%4); the hole's centre from the corner %5. %6 X slop now %7 mm. %8")
+                    .arg(slopMeasured).arg(slopPass).arg(slopPass > 1 ? "es" : "").arg(steps.join(QString(", ")))
+                    .arg(converged ? QString("stopped changing") : QString("was still changing by %1 mm").arg(change, 0, 'f', 3))
+                    .arg(saved ? QString("Revised estimate saved as %1:").arg(revised) : QString("Couldn't save the revised estimate:"))
+                    .arg(2.0 * std::abs(slopFitX[1]), 0, 'f', 3).arg(QString("Results are in %1").arg(QDir::toNativeSeparators(folder))));
         showSlopPlot(plotPath);
         return;
     }
-    endSlop(QString("Slop measured from %1 of %2 approaches: %3 mm in X between +X and -X moves, %4 mm in Y between +Y and -Y; %5 mm left unexplained. "
-                    "Results are in %6")
-                .arg(n).arg(slopShots.count()).arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(2.0 * std::abs(fy.at<double>(2)), 0, 'f', 3)
-                .arg(std::hypot(rx, ry), 0, 'f', 3).arg(QDir::toNativeSeparators(folder)));
+    endSlop(QString("Slop measured from %1 of %2 approaches: X %3 mm between +X and -X last moves (%4 mm more from the move before), Y %5 mm "
+                    "between +Y and -Y; %6 mm left unexplained%7. Results are in %8")
+                .arg(n).arg(slopShots.count()).arg(2.0 * std::abs(term(fx, 1)), 0, 'f', 3).arg(2.0 * std::abs(term(fx, 3)), 0, 'f', 3)
+                .arg(2.0 * std::abs(term(fy, 2)), 0, 'f', 3).arg(std::hypot(rx, ry), 0, 'f', 3)
+                .arg(conditioning > 0.01 ? QString() : QString(" (the paths didn't vary enough to tell the last move from the one before: use 3 or more rounds)"))
+                .arg(QDir::toNativeSeparators(folder)));
     showSlopPlot(plotPath);
 }
 
