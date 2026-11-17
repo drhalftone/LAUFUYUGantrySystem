@@ -211,6 +211,7 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     edgeTrail.clear();
     edgeTracked = false;
     edgeTrackedAt = 0;
+    edgeReferenceSet = false;
     edgeSpotTry = 0;
     edgeSide = +1;
     slopSeen = LAUHoleView::Corner();
@@ -362,6 +363,8 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
     if (edgeStage == EdgeSpot) {
         if (found) {
             edgeSpotX = edgeX;
+            edgeReference = hole.aperture;
+            edgeReferenceSet = true;
             edgeSide = +1;
             edgeNextReturn();
             return;

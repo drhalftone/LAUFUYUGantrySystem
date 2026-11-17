@@ -273,6 +273,8 @@ private:
     qint64 edgeTrackedAt = 0;
     bool edgeTracked = false;
     cv::Point2d edgeTrackedAperture;
+    cv::Point2d edgeReference;               // where the hole was first seen at the spot, relative to the carriage: the bullseye until both sides are known
+    bool edgeReferenceSet = false;
     QList<cv::Point2d> edgeTrail;            // the hole's board position as tracked, latest last
     cv::Point2d edgeMean(int i) const;
     double edgeCorrection(int side) const;   // X, slider mm, to add arriving from this side so the hole lands at the midpoint

@@ -405,8 +405,19 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
     const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
     const bool found = slopSeenValid && slopSeenHole;
     const cv::Point2d hole = (found ? slopSeenAperture : slopAperture) + ax * pair + ay * single;
+    // tracking the hole: the bullseye stays fixed to the carriage, at the midpoint of the two sides once both are
+    // known (else where the hole was first seen), and the hole the camera sees is drawn against it; otherwise the
+    // bullseye is the hole
+    const bool tracking = edgeSloping;
+    cv::Point2d reference = hole;
+    if (tracking) {
+        const cv::Point2d anchor = (!edgeApertures[0].isEmpty() && !edgeApertures[1].isEmpty()) ? (edgeMean(0) + edgeMean(1)) * 0.5
+                                   : edgeReferenceSet                                            ? edgeReference
+                                                                                                 : slopAperture;
+        reference = anchor + ax * pair + ay * single;
+    }
     cv::Point2d centre, edge;
-    if (!platenOverlay.project(hole, pair, single, &centre) || !platenOverlay.project(hole + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
+    if (!platenOverlay.project(reference, pair, single, &centre) || !platenOverlay.project(reference + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
         return;
     }
     const double pxPerMM = cv::norm(edge - centre) / 4.9;
@@ -492,17 +503,36 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
 
     // the i1's hole, always as a bullseye: bright where its rim was found, dim where it is expected until then
     {
-        const double r = (found && slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
-        const cv::Scalar ink = found ? green : cv::Scalar(0, 150, 0);
+        const cv::Point2d at = tracking ? reference : hole;
+        const double r = (!tracking && found && slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
+        const cv::Scalar ink = (found || tracking) ? green : cv::Scalar(0, 150, 0);
         for (double f : { 1.0, 2.0 / 3.0, 1.0 / 3.0 }) {
-            drawCircle(hole, r * f, ink, f == 1.0 ? 2 : 1);
+            drawCircle(at, r * f, ink, f == 1.0 ? 2 : 1);
         }
         cv::Point c;
-        if (project(hole, &c)) {
+        if (project(at, &c)) {
             cv::circle(colour, c, 3 * 16, ink, cv::FILLED, cv::LINE_AA, 4);
         }
-        drawLine(hole - cv::Point2d(r, 0), hole + cv::Point2d(r, 0), ink, 1);
-        drawLine(hole - cv::Point2d(0, r), hole + cv::Point2d(0, r), ink, 1);
+        drawLine(at - cv::Point2d(r, 0), at + cv::Point2d(r, 0), ink, 1);
+        drawLine(at - cv::Point2d(0, r), at + cv::Point2d(0, r), ink, 1);
+    }
+    // tracking: the hole as the camera sees it, a yellow circle and centre, joined to the bullseye's centre
+    if (tracking && found) {
+        const cv::Scalar yellow(0, 230, 255);
+        drawCircle(hole, 4.9, yellow, 2);
+        cv::Point c, b;
+        if (project(hole, &c)) {
+            cv::line(colour, c - cv::Point(7 * 16, 0), c + cv::Point(7 * 16, 0), yellow, 2, cv::LINE_AA, 4);
+            cv::line(colour, c - cv::Point(0, 7 * 16), c + cv::Point(0, 7 * 16), yellow, 2, cv::LINE_AA, 4);
+            if (project(reference, &b)) {
+                cv::line(colour, b, c, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
+            }
+        }
+        const cv::Point2d d = hole - reference;
+        const double det = ax.x * ay.y - ay.x * ax.y;
+        const double dx = (ax.x * d.y - d.x * ax.y) / det, dy = (d.x * ay.y - ay.x * d.y) / det;   // slider mm
+        cv::putText(colour, QString("hole from the bullseye: X %1, Y %2 mm").arg(dx, 0, 'f', 3).arg(dy, 0, 'f', 3).toStdString(), cv::Point(10, 66),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, yellow, 1, cv::LINE_AA);
     }
     if (found) {
         cv::Point c;
@@ -530,7 +560,7 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
     if (slopSeenValid && !slopSeenHole && !slopSeenWhy.isEmpty()) {
         cv::putText(colour, slopSeenWhy.left(64).toStdString(), cv::Point(10, 66), cv::FONT_HERSHEY_SIMPLEX, 0.4, cyan, 1, cv::LINE_AA);
     }
-    cv::putText(colour, "green bullseye: i1 hole   magenta: corner   cyan: page edges", cv::Point(10, size - 28), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+    cv::putText(colour, tracking ? "green bullseye: fixed to the carriage   yellow: the hole the camera sees" : "green bullseye: i1 hole   magenta: corner   cyan: page edges", cv::Point(10, size - 28), cv::FONT_HERSHEY_SIMPLEX, 0.4,
                 cv::Scalar(220, 220, 220), 1, cv::LINE_AA);
     cv::putText(colour, QString("%1 mm across").arg(2 * ZOOM_HALF_MM, 0, 'f', 0).toStdString(), cv::Point(10, size - 10), cv::FONT_HERSHEY_SIMPLEX, 0.4,
                 cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
