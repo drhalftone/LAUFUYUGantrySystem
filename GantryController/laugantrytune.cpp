@@ -350,15 +350,31 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     if (!check.empty()) {
         QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
     }
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    const double det = ax.x * ay.y - ay.x * ax.y;
     if (!ok) {
+        // a square corner was seen, just not where the picture put it (or not trusted for another reason): if the
+        // sliders can put the hole on it, go there and let the user check it, rather than give up on the prediction
+        if (found.atValid && found.angleDeg > 0.0 && std::abs(found.angleDeg - 90.0) <= 10.0) {
+            const cv::Point2d seenMiss = found.at - hole;
+            const double toPair = c.pair + (seenMiss.x * ay.y - ay.x * seenMiss.y) / det;
+            const double toSingle = c.single + (ax.x * seenMiss.y - seenMiss.x * ax.y) / det;
+            if (tuneGeometry.reachable(toSingle, toPair)) {
+                c.note = QString("%1 The hole has been moved onto the corner the camera saw; check it is the page's corner").arg(why);
+                c.single = toSingle;
+                c.pair = toPair;
+                tuneStage = TuneManual;
+                tuneDialog->setMessage(QString("The page's %1 corner: moving the hole onto the corner the camera saw...").arg(c.name));
+                railWidget->moveRails(c.single, c.pair);   // onTuneMoveFinished then shows the arrows
+                return;
+            }
+        }
         tuneByHand(why);
         return;
     }
 
     // the rails' move that puts the hole's centre on the corner: ex * dPair + ey * dSingle = miss
     const cv::Point2d miss = found.at - hole;
-    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
-    const double det = ax.x * ay.y - ay.x * ax.y;
     const double dPair = (miss.x * ay.y - ay.x * miss.y) / det, dSingle = (ax.x * miss.y - miss.x * ax.y) / det;
     c.missMM = cv::norm(miss);
     double nextSingle = c.single + dSingle, nextPair = c.pair + dPair;
