@@ -27,6 +27,7 @@
 #include <QPushButton>
 #include <QDateTime>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -111,6 +112,29 @@ void LAUGantryMainWindow::onSlopRequested()
 
     // which corner, how far out, how many rounds
     const QStringList names{ QString("top-left"), QString("top-right"), QString("bottom-right"), QString("bottom-left") };
+    std::vector<cv::Point2d> P;
+    for (int n = 0; n < 4; n++) {
+        P.emplace_back(corners[n].toArray().at(0).toDouble(), corners[n].toArray().at(1).toDouble());
+    }
+    // a corner whose spot, or any hour's start around it, is past the limit sliders isn't offered
+    const auto spotFor = [&](int k, double in, double *single, double *pair) {
+        const cv::Point2d spot = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * in + unitOf(P[(k + 3) % 4] - P[k]) * in;
+        slopGeometry.railsFor(spot, single, pair, true);
+    };
+    const auto fits = [&](int k, double in, double out) {
+        double single = 0.0, pair = 0.0;
+        spotFor(k, in, &single, &pair);
+        if (!slopGeometry.reachable(single, pair)) {
+            return false;
+        }
+        for (int hour = 1; hour <= 12; hour++) {
+            const cv::Point2d d = hourDirection(hour) * out;
+            if (!slopGeometry.reachable(single + d.x, pair + d.y)) {
+                return false;
+            }
+        }
+        return true;
+    };
     QSettings settings;
     QDialog dialog(this);
     dialog.setWindowTitle(title);
@@ -140,15 +164,46 @@ void LAUGantryMainWindow::onSlopRequested()
     form->addRow(QString("Approach from"), distance);
     form->addRow(QString("Rounds of the clock"), rounds);
     layout->addLayout(form);
+    QLabel *none = new QLabel();
+    none->setWordWrap(true);
+    layout->addWidget(none);
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(QString("Start"));
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
+
+    // grey out the corners too close to the edge of the travel, for the inset and approach chosen
+    QStandardItemModel *model = qobject_cast<QStandardItemModel *>(corner->model());
+    const auto refresh = [&]() {
+        int first = -1;
+        for (int k = 0; k < 4; k++) {
+            const bool ok = fits(k, inset->value(), distance->value());
+            model->item(k)->setEnabled(ok);
+            model->item(k)->setText(ok ? names[k] : names[k] + QString("  (too close to the edge of the travel)"));
+            if (ok && first < 0) {
+                first = k;
+            }
+        }
+        if (first >= 0 && !model->item(corner->currentIndex())->isEnabled()) {
+            corner->setCurrentIndex(first);
+        }
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(first >= 0);
+        none->setText(first >= 0 ? QString()
+                                 : QString("Every corner is too close to the edge of the travel for this spot and approach. "
+                                           "Move the spot further in, approach from closer, or widen the limit sliders."));
+        none->setVisible(first < 0);
+    };
+    connect(inset, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
+    connect(distance, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
+    refresh();
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
     const int k = corner->currentIndex();
+    if (!fits(k, inset->value(), distance->value())) {
+        return;
+    }
     settings.setValue(QString("LAUGantryMainWindow::slopCorner"), k);
     settings.setValue(QString("LAUGantryMainWindow::slopInset"), inset->value());
     settings.setValue(QString("LAUGantryMainWindow::slopDistance"), distance->value());
@@ -157,29 +212,7 @@ void LAUGantryMainWindow::onSlopRequested()
     slopDistance = distance->value();
     slopRounds = (int)rounds->value();
 
-    // the spot, and every hour's start, within the limit sliders
-    std::vector<cv::Point2d> P;
-    for (int n = 0; n < 4; n++) {
-        P.emplace_back(corners[n].toArray().at(0).toDouble(), corners[n].toArray().at(1).toDouble());
-    }
-    const cv::Point2d spot = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * inset->value() + unitOf(P[(k + 3) % 4] - P[k]) * inset->value();
-    slopGeometry.railsFor(spot, &slopSingle, &slopPair, true);
-    QStringList outside;
-    if (!slopGeometry.reachable(slopSingle, slopPair)) {
-        outside << QString("the spot itself");
-    }
-    for (int hour = 1; hour <= 12; hour++) {
-        const cv::Point2d d = hourDirection(hour) * slopDistance;
-        if (!slopGeometry.reachable(slopSingle + d.x, slopPair + d.y)) {
-            outside << QString("%1 o'clock").arg(hour);
-        }
-    }
-    if (!outside.isEmpty()) {
-        QMessageBox::warning(this, title, QString("With the limit sliders where they are, the sliders can't reach %1 (the spot is at X %2 mm, Y %3 mm). "
-                                                  "Pick another corner, move the spot further in, or approach from closer.")
-                                              .arg(outside.join(QString(", "))).arg(slopSingle, 0, 'f', 2).arg(slopPair, 0, 'f', 2));
-        return;
-    }
+    spotFor(k, inset->value(), &slopSingle, &slopPair);
 
     if (!slopTimer) {
         slopTimer = new QTimer(this);
