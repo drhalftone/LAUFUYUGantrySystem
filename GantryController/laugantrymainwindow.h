@@ -85,6 +85,7 @@ private slots:
     void onPagePositionRequested();
     void onSlopRequested();
     void onSlopConfirmRequested();
+    void onEdgeSlopRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -237,6 +238,40 @@ private:
     double slopSeenRadius = 0.0;
     QString slopSeenWhy;
     void showSlopZoom(const cv::Mat &raw16);
+    QString slopZoomTitle, slopZoomNote;     // set: the zoom's header and an extra line, for the edge test
+
+    // Measure X slop on the page edge (laugantryedgeslop.cpp): the hole's centre put exactly on a page edge across the
+    // X travel, arriving moving left and moving right, by creeping without reversing; then single moves refined
+    enum EdgeStage { EdgeOut, EdgeShort, EdgeCreep, EdgeSingle };
+    struct EdgeStop
+    {
+        EdgeStage stage = EdgeOut;
+        int side = 1;                        // +1 arrived from the right, moving left; -1 from the left, moving right
+        double commanded = 0.0, reported = 0.0, miss = 0.0;   // X, slider mm; miss: the X move that puts the hole on the edge
+        bool found = false;
+        QString note;
+    };
+    bool edgeSloping = false, edgeCancelling = false, edgeWaitingFrame = false, edgeLearning = true;
+    QTimer *edgeTimer = nullptr;
+    EdgeStage edgeStage = EdgeOut;
+    int edgeSide = 1, edgeCreeps = 0, edgeRestarts = 0, edgeTries = 8;
+    int edgeHits[2] = { 0, 0 }, edgeSingles[2] = { 0, 0 };   // [0] arriving moving left, [1] moving right
+    QList<double> edgeOnEdge[2];             // X where the hole's centre was on the edge, each arrival
+    double edgeAway = 25.4, edgeShort = 3.175, edgeTolerance = 0.02;
+    double edgeX = 0.0, edgeY = 0.0, edgeModelX = 0.0;
+    cv::Point2d edgeAlong, edgeIntoPaper;
+    QString edgeFolder, edgeScan, edgeName;
+    QList<EdgeStop> edgeStops;
+    QJsonArray edgeLog;
+    double edgeEstimate(int side) const;
+    void edgeMoveTo(double x, EdgeStage stage, const QString &message);
+    void edgeStartSide();
+    void edgeNextSide();
+    void onEdgeMoveFinished(bool ok, const QString &message);
+    void onEdgeTimer();
+    void onEdgeFrame(const cv::Mat &raw16);
+    void finishEdgeSlop();
+    void endEdgeSlop(const QString &message);
     bool sloping = false;
     bool slopCancelling = false;
     bool slopWaitingFrame = false;

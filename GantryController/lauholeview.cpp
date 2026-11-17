@@ -500,20 +500,181 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
         return false;
     }
     const double WINDOW_MM = APERTURE_RADIUS_MM + 2.0;   // room for the hole to be off the guess
-    const double OFF_EDGE_MM = 0.3;                      // rim points this close to a paper edge are the edge's
     const cv::Mat L = ortho(gray, pairMM, singleMM, holeGuess, WINDOW_HALF, RES);
     const int n = L.cols;
     cv::Mat window = cv::Mat::zeros(n, n, CV_8U);
     cv::circle(window, cv::Point(n / 2, n / 2), (int)std::lround(WINDOW_MM / RES), cv::Scalar(255), cv::FILLED);
+
+    // the corner, from its two edges inside the window
+    const bool cornerOk = findCorner(gray, pairMM, singleMM, holeGuess, window, holeGuess, along1, along2, corner, why);
+
+    return holeFromRim(L, holeGuess, window, WINDOW_MM, cornerOk, 2, corner, holeCentre, why, check, radiusMM, knownRadiusMM);
+}
+
+bool LAUHoleView::findHoleAtEdge(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along,
+                                 cv::Point2d intoPaper, cv::Point2d *holeCentre, Corner *edge, QString *why, cv::Mat *check, double *radiusMM,
+                                 double knownRadiusMM) const
+{
+    *edge = Corner();
+    if (!valid) {
+        *why = QString("There's no platen calibration to see the hole with.");
+        return false;
+    }
+    const double WINDOW_MM = APERTURE_RADIUS_MM + 2.0;   // room for the hole to be off the guess
+    const cv::Mat L = ortho(gray, pairMM, singleMM, holeGuess, WINDOW_HALF, RES);
+    const int n = L.cols;
+    cv::Mat window = cv::Mat::zeros(n, n, CV_8U);
+    cv::circle(window, cv::Point(n / 2, n / 2), (int)std::lround(WINDOW_MM / RES), cv::Scalar(255), cv::FILLED);
+    cv::Mat mask;
+    const int in = (int)std::lround(2.0 * STAY_OFF_RIM_MM / RES) | 1;
+    cv::erode(window, mask, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(in, in)));
+    const auto toPixel = [&](const cv::Point2d &b) {
+        return cv::Point2d((b.x - holeGuess.x + WINDOW_HALF) / RES, (b.y - holeGuess.y + WINDOW_HALF) / RES);
+    };
+    const auto inMask = [&](const cv::Point2d &px) {
+        const int x = (int)std::lround(px.x), y = (int)std::lround(px.y);
+        return x >= 0 && y >= 0 && x < n && y < n && mask.at<uchar>(y, x);
+    };
+
+    // paper and board (or plate) inside the window
+    std::vector<uchar> values;
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (mask.at<uchar>(r, c)) {
+                values.push_back(cv::saturate_cast<uchar>(L.at<float>(r, c)));
+            }
+        }
+    }
+    bool ok = values.size() >= 1000;
+    std::vector<cv::Point2d> paper;
+    double black = 0.0, white = 0.0;
+    if (ok) {
+        cv::Mat packed(1, (int)values.size(), CV_8U, values.data()), ignored;
+        const double threshold = cv::threshold(packed, ignored, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+        std::vector<double> dark, bright;
+        for (int r = 0; r < n; r++) {
+            for (int c = 0; c < n; c++) {
+                if (mask.at<uchar>(r, c)) {
+                    const double v = L.at<float>(r, c);
+                    if (v > threshold) {
+                        bright.push_back(v);
+                        paper.emplace_back(holeGuess.x - WINDOW_HALF + c * RES, holeGuess.y - WINDOW_HALF + r * RES);
+                    } else {
+                        dark.push_back(v);
+                    }
+                }
+            }
+        }
+        const double share = (double)bright.size() / values.size();
+        black = percentileOf(dark, 50.0);
+        white = percentileOf(bright, 50.0);
+        if (share < 0.03 || share > 0.97 || white - black < MIN_CONTRAST) {
+            *why = (share <= 0.03) ? QString("The hole shows no paper: the edge is too far off.")
+                   : (share >= 0.97) ? QString("The hole shows only paper: the edge is too far off.")
+                                     : QString("The paper and the board look too alike through the hole.");
+            ok = false;
+        }
+    } else {
+        *why = QString("Too little of the hole is open.");
+    }
+
+    // the edge: a line through the steepest board-to-paper step on profiles across it, refitted a few times
+    if (ok) {
+        along = unit(along);
+        const auto inward = [&](const cv::Point2d &u) {
+            const cv::Point2d m(-u.y, u.x);
+            return (m.dot(intoPaper) < 0.0) ? -m : m;
+        };
+        cv::Point2d m = inward(along);
+        std::vector<double> reach;
+        for (const cv::Point2d &q : paper) {
+            reach.push_back(q.dot(m));
+        }
+        // first guess: the paper's nearest reach across the edge, through the point nearest the guess
+        cv::Point2d P = holeGuess + m * (percentileOf(reach, 1.0) - holeGuess.dot(m));
+        Line line;
+        const double contrast = 0.5 * (white - black);
+        const int samples = (int)std::lround(2.0 * PROFILE_HALF_MM / RES) + 1;
+        std::vector<double> profile(samples);
+        for (int round = 0; round < 4 && ok; round++) {
+            std::vector<cv::Point2d> points;
+            for (double t = -2.0 * WINDOW_HALF; t < 2.0 * WINDOW_HALF; t += PROFILE_STEP_MM) {
+                const cv::Point2d base = P + along * t;
+                if (!inMask(toPixel(base - m * PROFILE_HALF_MM)) || !inMask(toPixel(base + m * PROFILE_HALF_MM)) || !inMask(toPixel(base))) {
+                    continue;
+                }
+                bool sampled = true;
+                for (int s = 0; s < samples && sampled; s++) {
+                    const cv::Point2d px = toPixel(base + m * (-PROFILE_HALF_MM + s * RES));
+                    sampled = sample(L, px.x, px.y, &profile[s]);
+                }
+                if (!sampled) {
+                    continue;
+                }
+                const int ends = 12;
+                double low = 0.0, high = 0.0;
+                for (int s = 0; s < ends; s++) {
+                    low += profile[s] / ends;
+                    high += profile[samples - 1 - s] / ends;
+                }
+                if (high - low < contrast) {
+                    continue;                // no step from board to paper along this profile
+                }
+                int k = 1;
+                double steepest = -1e9;
+                for (int s = 1; s < samples - 1; s++) {
+                    const double g = profile[s + 1] - profile[s - 1];
+                    if (g > steepest) {
+                        steepest = g;
+                        k = s;
+                    }
+                }
+                if (k < 2 || k > samples - 3) {
+                    continue;
+                }
+                const double g0 = profile[k] - profile[k - 2], g1 = steepest, g2 = profile[k + 2] - profile[k];
+                const double den = g0 - 2.0 * g1 + g2;
+                const double s = -PROFILE_HALF_MM + (k + ((den != 0.0) ? 0.5 * (g0 - g2) / den : 0.0)) * RES;
+                points.push_back(base + m * s);
+            }
+            edge->edgePoints[0] = points;
+            if ((int)points.size() < MIN_EDGE_POINTS || !fitLine(points, &line) || line.points < MIN_EDGE_POINTS) {
+                *why = QString("Couldn't see enough of the page's edge through the hole (%1 edge points, %2 needed).").arg(points.size()).arg(MIN_EDGE_POINTS);
+                ok = false;
+                break;
+            }
+            along = (line.d.dot(along) < 0.0) ? -line.d : line.d;
+            m = inward(along);
+            const cv::Point2d next = line.c + along * (holeGuess - line.c).dot(along);   // the line's point nearest the guess
+            const double moved = cv::norm(next - P);
+            P = next;
+            if (moved < 0.002 && round > 0) {
+                break;
+            }
+        }
+        if (ok) {
+            edge->edgeFitted[0] = true;
+            edge->edgeAt[0] = line.c;
+            edge->edgeDir[0] = along;
+            edge->points[0] = line.points;
+            edge->rmsMM = line.rms;
+        }
+    }
+    return holeFromRim(L, holeGuess, window, WINDOW_MM, ok, 1, edge, holeCentre, why, check, radiusMM, knownRadiusMM);
+}
+
+// The hole from its rim: the paper seen through the hole is bounded by the paper edges found (edgeCount of them, in
+// edges) and by the rim; the rim's points, less those on an edge and those the window cut off, give a circle.
+bool LAUHoleView::holeFromRim(const cv::Mat &L, const cv::Point2d &holeGuess, const cv::Mat &window, double WINDOW_MM, bool edgesOk, int edgeCount,
+                              Corner *corner, cv::Point2d *holeCentre, QString *why, cv::Mat *check, double *radiusMM, double knownRadiusMM) const
+{
+    const double OFF_EDGE_MM = 0.3;                      // rim points this close to a paper edge are the edge's
     const auto toBoard = [&](double c, double r) {
         return cv::Point2d(holeGuess.x - WINDOW_HALF + c * RES, holeGuess.y - WINDOW_HALF + r * RES);
     };
     const auto toPixel = [&](const cv::Point2d &b) {
         return cv::Point((int)std::lround((b.x - holeGuess.x + WINDOW_HALF) / RES), (int)std::lround((b.y - holeGuess.y + WINDOW_HALF) / RES));
     };
-
-    // the corner, from its two edges inside the window
-    const bool cornerOk = findCorner(gray, pairMM, singleMM, holeGuess, window, holeGuess, along1, along2, corner, why);
 
     // the paper seen through the hole: the bright region nearest the middle
     cv::Mat soft, bw;
@@ -534,14 +695,14 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
     // the rim: the paper's outline, less what lies on the two paper edges and what the window cut off
     std::vector<cv::Point2d> rim;
     std::vector<cv::Point> outline;
-    if (best > 0 && cornerOk) {
+    if (best > 0 && edgesOk) {
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(cv::Mat(lab == best), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
         for (const std::vector<cv::Point> &contour : contours) {
             for (const cv::Point &p : contour) {
                 const cv::Point2d b = toBoard(p.x, p.y);
                 bool keep = cv::norm(b - holeGuess) < WINDOW_MM - 0.1;
-                for (int e = 0; e < 2 && keep; e++) {
+                for (int e = 0; e < edgeCount && keep; e++) {
                     const cv::Point2d q = b - corner->edgeAt[e];
                     keep = std::abs(q.x * corner->edgeDir[e].y - q.y * corner->edgeDir[e].x) > OFF_EDGE_MM;
                 }
@@ -678,7 +839,7 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
             cv::drawMarker(*check, toPixel(centre), cv::Scalar(0, 200, 0), cv::MARKER_CROSS, 40, 2);
         }
     }
-    if (!cornerOk) {
+    if (!edgesOk) {
         return false;
     }
     if (!fitted) {
@@ -695,3 +856,4 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
     }
     return true;
 }
+

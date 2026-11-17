@@ -419,6 +419,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     slopConfirmAction->setEnabled(false);
     connect(slopConfirmAction, &QAction::triggered, this, [this]() { emit emitSlopConfirmRequested(); });
     addAction(slopConfirmAction);
+    edgeSlopAction = new QAction(QString("Measure X slop on page edge..."), this);
+    edgeSlopAction->setEnabled(false);
+    connect(edgeSlopAction, &QAction::triggered, this, [this]() { emit emitEdgeSlopRequested(); });
+    addAction(edgeSlopAction);
 
     scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
@@ -443,6 +447,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
         pageGoAction->setEnabled(true);
         slopAction->setEnabled(true);
         slopConfirmAction->setEnabled(true);
+        edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
     }
@@ -458,6 +463,7 @@ void LAUBreadboardCalibrationWidget::beginScan()
     pageGoAction->setEnabled(false);
     slopAction->setEnabled(false);
     slopConfirmAction->setEnabled(false);
+    edgeSlopAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
 }
@@ -474,6 +480,7 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     pageGoAction->setEnabled(true);
     slopAction->setEnabled(true);
     slopConfirmAction->setEnabled(true);
+    edgeSlopAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
 }
@@ -488,6 +495,7 @@ void LAUBreadboardCalibrationWidget::lockScanActions(bool locked)
     pageGoAction->setEnabled(!locked);
     slopAction->setEnabled(!locked);
     slopConfirmAction->setEnabled(!locked);
+    edgeSlopAction->setEnabled(!locked);
     scanTargetAction->setEnabled(!locked);
 }
 
@@ -553,6 +561,7 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
         pageGoAction->setEnabled(true);
         slopAction->setEnabled(true);
         slopConfirmAction->setEnabled(true);
+        edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }
 }

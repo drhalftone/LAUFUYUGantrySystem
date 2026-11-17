@@ -126,7 +126,7 @@ void LAUGantryMainWindow::onSlopConfirmRequested()
 void LAUGantryMainWindow::startSlop(bool checkMode)
 {
     const QString title = checkMode ? QString("Confirm Slop") : QString("Measure Slop");
-    if (scanning || measuring || merging || returningHome || tuning || sloping || pageMoving || railWidget->isHoming()) {
+    if (scanning || measuring || merging || returningHome || tuning || sloping || edgeSloping || pageMoving || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
     }
@@ -396,7 +396,7 @@ void LAUGantryMainWindow::startSlop(bool checkMode)
 // fixed to the page and the hole to the carriage, so each is carried along with the sliders between stops.
 void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
 {
-    if (!sloping || !homeDialog || raw16.empty() || !singleRail.isKnown() || !pairRail.isKnown()) {
+    if ((!sloping && !edgeSloping) || !homeDialog || raw16.empty() || !singleRail.isKnown() || !pairRail.isKnown()) {
         return;
     }
     const double ZOOM_HALF_MM = 9.0;
@@ -505,10 +505,15 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
     }
 
     QString title = QString("%1 corner").arg(slopCorner);
-    if (!slopShots.isEmpty()) {
+    if (!slopZoomTitle.isEmpty()) {
+        title = slopZoomTitle;
+    } else if (!slopShots.isEmpty()) {
         title += QString(", last stop from %1 o'clock").arg(slopShots.last().hour);
     }
     cv::putText(colour, title.toStdString(), cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    if (!slopZoomNote.isEmpty()) {
+        cv::putText(colour, slopZoomNote.toStdString(), cv::Point(10, 46), cv::FONT_HERSHEY_SIMPLEX, 0.5, green, 1, cv::LINE_AA);
+    }
     if (slopSeenValid && !slopSeenHole && !slopSeenWhy.isEmpty()) {
         cv::putText(colour, slopSeenWhy.left(64).toStdString(), cv::Point(10, 66), cv::FONT_HERSHEY_SIMPLEX, 0.4, cyan, 1, cv::LINE_AA);
     }

@@ -157,6 +157,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitPagePositionRequested, this, &LAUGantryMainWindow::onPagePositionRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitSlopRequested, this, &LAUGantryMainWindow::onSlopRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitSlopConfirmRequested, this, &LAUGantryMainWindow::onSlopConfirmRequested);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitEdgeSlopRequested, this, &LAUGantryMainWindow::onEdgeSlopRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanFrame, this, &LAUGantryMainWindow::onScanFrame);
     scanBase = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QString("GantryScans"));
     scanTimer = new QTimer(this);
@@ -507,6 +508,10 @@ void LAUGantryMainWindow::onScanFrame(cv::Mat raw16, double exposureMs)
         onSlopFrame(raw16);
         return;
     }
+    if (edgeSloping) {
+        onEdgeFrame(raw16);
+        return;
+    }
     if (!scanning || !waitingForFrame) {
         return;
     }
@@ -616,6 +621,10 @@ void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
     }
     if (sloping) {
         onSlopMoveFinished(ok, message);
+        return;
+    }
+    if (edgeSloping) {
+        onEdgeMoveFinished(ok, message);
         return;
     }
     if (pageMoving) {

@@ -68,6 +68,13 @@ public:
                           cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check = nullptr, double *radiusMM = nullptr,
                           double knownRadiusMM = 0.0) const;   // > 0: the rim's radius is known, fit only its centre (a short arc)
 
+    // A straight page edge across the hole: the edge as a line through sub-pixel edge points (in edge->edgeAt[0],
+    // edgeDir[0], edgePoints[0]), and the hole from the rim's arc over the paper.  along: the edge's direction, roughly;
+    // intoPaper: which side of it the paper is on.
+    bool findHoleAtEdge(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along, cv::Point2d intoPaper,
+                        cv::Point2d *holeCentre, Corner *edge, QString *why, cv::Mat *check = nullptr, double *radiusMM = nullptr,
+                        double knownRadiusMM = 0.0) const;
+
     cv::Point2d boardAxis(int rail) const    // board mm per mm of the rail pair (0) or the single rail (1)
     {
         return rail == 0 ? cv::Point2d(ex[0], ex[1]) : cv::Point2d(ey[0], ey[1]);
@@ -80,6 +87,9 @@ public:
     static constexpr double RES = 0.02, WINDOW_HALF = 9.0;
 
 private:
+    bool holeFromRim(const cv::Mat &L, const cv::Point2d &holeGuess, const cv::Mat &window, double windowMM, bool edgesOk, int edgeCount,
+                     Corner *corner, cv::Point2d *holeCentre, QString *why, cv::Mat *check, double *radiusMM, double knownRadiusMM) const;
+
     bool valid = false;
     cv::Matx33d K = cv::Matx33d::eye(), R = cv::Matx33d::eye();
     double dist[5] = { 0, 0, 0, 0, 0 };
