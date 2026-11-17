@@ -242,6 +242,7 @@ private:
     void onSlopFrame(const cv::Mat &raw16);
     void finishSlop();
     void endSlop(const QString &message);
+    void showSlopPlot(const QString &path);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;
     bool tuning = false;

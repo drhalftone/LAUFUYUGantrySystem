@@ -14,11 +14,11 @@
 // correction to the sign of each slider's last move gives the slop.
 //
 #include "laugantrymainwindow.h"
+#include "lauimageinspectdialog.h"
 
 #include <cmath>
 #include <algorithm>
 #include <QDir>
-#include <QUrl>
 #include <QFile>
 #include <QLabel>
 #include <QTimer>
@@ -38,7 +38,6 @@
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QDoubleSpinBox>
-#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <opencv2/imgproc.hpp>
 
@@ -784,14 +783,27 @@ void LAUGantryMainWindow::finishSlop()
                         "approaches, with %6 mm of X slop left. Results are in %7")
                     .arg(slopMeasured).arg(missRms, 0, 'f', 3).arg(missWorst, 0, 'f', 3).arg(n).arg(slopShots.count())
                     .arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(QDir::toNativeSeparators(folder)));
-        QDesktopServices::openUrl(QUrl::fromLocalFile(plotPath));
+        showSlopPlot(plotPath);
         return;
     }
     endSlop(QString("Slop measured from %1 of %2 approaches: %3 mm in X between +X and -X moves, %4 mm in Y between +Y and -Y; %5 mm left unexplained. "
                     "Results are in %6")
                 .arg(n).arg(slopShots.count()).arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(2.0 * std::abs(fy.at<double>(2)), 0, 'f', 3)
                 .arg(std::hypot(rx, ry), 0, 'f', 3).arg(QDir::toNativeSeparators(folder)));
-    QDesktopServices::openUrl(QUrl::fromLocalFile(plotPath));
+    showSlopPlot(plotPath);
+}
+
+// the plot in the app's own picture viewer, as the merged platen is shown
+void LAUGantryMainWindow::showSlopPlot(const QString &path)
+{
+    const QImage plot(path);
+    if (plot.isNull()) {
+        cameraWidget->showMessage(QString("Couldn't open the slop plot %1").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    LAUImageInspectDialog *inspect = new LAUImageInspectDialog(plot, slopVerify ? QString("Slop Check") : QString("Slop"), this);
+    inspect->setAttribute(Qt::WA_DeleteOnClose);
+    inspect->show();
 }
 
 void LAUGantryMainWindow::endSlop(const QString &message)
