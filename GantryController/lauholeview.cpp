@@ -227,6 +227,20 @@ bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, 
         cv::fillConvexPoly(body, hull, cv::Scalar(255), cv::LINE_8);
     }
     hole->areaMM2 = cv::countNonZero(body) * RES * RES;
+    {
+        // the disc's outline, as an ellipse: ortho pixels run along board X and Y, so the angle carries over
+        std::vector<std::vector<cv::Point>> outline;
+        cv::findContours(body.clone(), outline, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        hole->hasEllipse = false;
+        if (!outline.empty() && outline[0].size() >= 5) {
+            const cv::RotatedRect e = cv::fitEllipse(outline[0]);
+            hole->hasEllipse = true;
+            hole->ellipseCentre = cv::Point2d(guess.x - WINDOW_HALF + e.center.x * RES, guess.y - WINDOW_HALF + e.center.y * RES);
+            hole->ellipseSemiA = 0.5 * e.size.width * RES;
+            hole->ellipseSemiB = 0.5 * e.size.height * RES;
+            hole->ellipseAngleDeg = e.angle;
+        }
+    }
     if (hole->areaMM2 < MIN_DISC_MM2 || hole->areaMM2 > MAX_DISC_MM2) {
         *why = QString("What showed through the hole (%1 mm2) isn't the size of the hole.").arg(hole->areaMM2, 0, 'f', 0);
         return false;

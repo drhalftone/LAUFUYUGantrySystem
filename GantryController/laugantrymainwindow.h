@@ -275,6 +275,9 @@ private:
     cv::Point2d edgeTrackedAperture;
     cv::Point2d edgeReference;               // where the hole was first seen at the spot, relative to the carriage: the bullseye until both sides are known
     bool edgeReferenceSet = false;
+    LAUHoleView::Hole edgeEllipse;           // the last hole found, its ellipse's centre relative to the carriage (rails at zero)
+    bool edgeEllipseValid = false;
+    void keepEdgeEllipse(const LAUHoleView::Hole &hole, double pairMM, double singleMM);
     QList<cv::Point2d> edgeTrail;            // the hole's board position as tracked, latest last
     cv::Point2d edgeMean(int i) const;
     double edgeCorrection(int side) const;   // X, slider mm, to add arriving from this side so the hole lands at the midpoint
@@ -285,6 +288,8 @@ private:
     void onEdgeFrame(const cv::Mat &raw16);
     void trackHoleLive(const cv::Mat &raw16);
     void finishEdgeSlop();
+    void edgeConverged();
+    QString writeEdgeResults(QString *plotOut);
     void edgeAborted();
     void endEdgeSlop(const QString &message);
     bool sloping = false;

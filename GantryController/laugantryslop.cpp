@@ -519,7 +519,23 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
     // tracking: the hole as the camera sees it, a yellow circle and centre, joined to the bullseye's centre
     if (tracking && found) {
         const cv::Scalar yellow(0, 230, 255);
-        drawCircle(hole, 4.9, yellow, 2);
+        if (edgeEllipseValid) {
+            // the best-fit ellipse to the hole's outline, as the camera sees it
+            const cv::Point2d c0 = edgeEllipse.ellipseCentre + ax * pair + ay * single;
+            const double t = edgeEllipse.ellipseAngleDeg * CV_PI / 180.0;
+            const cv::Point2d u(std::cos(t), std::sin(t)), v(-std::sin(t), std::cos(t));
+            std::vector<cv::Point> ring;
+            for (int s = 0; s <= 96; s++) {
+                const double a = s * CV_PI / 48.0;
+                cv::Point p;
+                if (project(c0 + u * (edgeEllipse.ellipseSemiA * std::cos(a)) + v * (edgeEllipse.ellipseSemiB * std::sin(a)), &p)) {
+                    ring.push_back(p);
+                }
+            }
+            cv::polylines(colour, ring, false, yellow, 2, cv::LINE_AA, 4);
+        } else {
+            drawCircle(hole, 4.9, yellow, 2);
+        }
         cv::Point c, b;
         if (project(hole, &c)) {
             cv::line(colour, c - cv::Point(7 * 16, 0), c + cv::Point(7 * 16, 0), yellow, 2, cv::LINE_AA, 4);

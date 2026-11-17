@@ -25,6 +25,7 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QPixmap>
 #include <QLabel>
 #include <QTimer>
 #include <QDialog>
@@ -212,6 +213,7 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     edgeTracked = false;
     edgeTrackedAt = 0;
     edgeReferenceSet = false;
+    edgeEllipseValid = false;
     edgeSpotTry = 0;
     edgeSide = +1;
     slopSeen = LAUHoleView::Corner();
@@ -351,6 +353,7 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
             .save(QDir(edgeFolder).filePath(QString("stop_%1.png").arg(stop, 3, 10, QChar('0'))));
     }
     if (found) {
+        keepEdgeEllipse(hole, pair, single);
         slopAperture = hole.aperture;        // look there next time
         slopSeen = LAUHoleView::Corner();
         slopSeenValid = true;
@@ -429,11 +432,22 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
             }
         }
     } else if (edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries) {
-        finishEdgeSlop();
+        edgeConverged();                     // show the results and ask whether to keep going
         return;
     }
     edgeSide = -edgeSide;                    // move and return, the other way
     edgeNextReturn();
+}
+
+// the hole's ellipse for the close-up, its centre made relative to the carriage so it moves with it
+void LAUGantryMainWindow::keepEdgeEllipse(const LAUHoleView::Hole &hole, double pairMM, double singleMM)
+{
+    if (!hole.hasEllipse) {
+        return;
+    }
+    edgeEllipse = hole;
+    edgeEllipse.ellipseCentre = hole.ellipseCentre - holeView.boardAxis(0) * pairMM - holeView.boardAxis(1) * singleMM;
+    edgeEllipseValid = true;
 }
 
 // The close-up's live tracking: the hole found in the live picture a few times a second, over paper
@@ -456,6 +470,7 @@ void LAUGantryMainWindow::trackHoleLive(const cv::Mat &raw16)
     }
     edgeTracked = true;
     edgeTrackedAperture = hole.aperture;
+    keepEdgeEllipse(hole, pair, single);
     edgeTrail << hole.centre;
     while (edgeTrail.count() > TRAIL) {
         edgeTrail.removeFirst();
@@ -483,7 +498,8 @@ void LAUGantryMainWindow::edgeAborted()
     finishEdgeSlop();
 }
 
-void LAUGantryMainWindow::finishEdgeSlop()
+// the results so far: hole_slop.csv, .json and .png; returns the summary and where the plot is
+QString LAUGantryMainWindow::writeEdgeResults(QString *plotOut)
 {
     const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
     const double det = ax.x * ay.y - ay.x * ax.y;
@@ -622,19 +638,67 @@ void LAUGantryMainWindow::finishEdgeSlop()
         jsonFile.write(QJsonDocument(json).toJson());
     }
 
-    endEdgeSlop(QString("Slop by tracking the hole: arriving moving right the hole sits %1 mm further in X (%2 mm in Y) than arriving moving left, "
-                        "over %3 + %4 returns. %5 Results are in %6")
-                    .arg(slop.x, 0, 'f', 3).arg(slop.y, 0, 'f', 3).arg(edgeApertures[0].count()).arg(edgeApertures[1].count())
-                    .arg(converged ? QString("Corrected returns now land within %1 mm from both sides.").arg(edgeTolerance, 0, 'f', 3)
-                                   : QString("Stopped before corrected returns landed within %1 mm %2 times in a row from both sides.")
-                                         .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries))
-                    .arg(QDir::toNativeSeparators(edgeFolder)));
+    *plotOut = plotPath;
+    return QString("Slop by tracking the hole: arriving moving right the hole sits %1 mm further in X (%2 mm in Y) than arriving moving left, "
+                   "over %3 + %4 returns. %5 Results are in %6")
+        .arg(slop.x, 0, 'f', 3).arg(slop.y, 0, 'f', 3).arg(edgeApertures[0].count()).arg(edgeApertures[1].count())
+        .arg(converged ? QString("Corrected returns now land within %1 mm from both sides.").arg(edgeTolerance, 0, 'f', 3)
+                       : QString("Stopped before corrected returns landed within %1 mm %2 times in a row from both sides.")
+                             .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries))
+        .arg(QDir::toNativeSeparators(edgeFolder));
+}
+
+// stopped (or aborted): save, end, and show the plot
+void LAUGantryMainWindow::finishEdgeSlop()
+{
+    QString plotPath;
+    const QString message = writeEdgeResults(&plotPath);
+    endEdgeSlop(message);
     const QImage shown(plotPath);
     if (!shown.isNull()) {
         LAUImageInspectDialog *inspect = new LAUImageInspectDialog(shown, QString("Slop"), this);
         inspect->setAttribute(Qt::WA_DeleteOnClose);
         inspect->show();
     }
+}
+
+// Converged: corrected returns landed still enough times in a row from both sides.  Save, show the plot, and ask.
+void LAUGantryMainWindow::edgeConverged()
+{
+    QString plotPath;
+    const QString message = writeEdgeResults(&plotPath);
+    QDialog ask(homeDialog ? static_cast<QWidget *>(homeDialog) : static_cast<QWidget *>(this));
+    ask.setWindowTitle(QString("Slop Predicted"));
+    QVBoxLayout *layout = new QVBoxLayout(&ask);
+    QLabel *picture = new QLabel();
+    const QImage plot(plotPath);
+    if (!plot.isNull()) {
+        picture->setPixmap(QPixmap::fromImage(plot.scaledToWidth(std::min(plot.width(), 1000), Qt::SmoothTransformation)));
+    }
+    layout->addWidget(picture);
+    QLabel *text = new QLabel(QString("<b>The slop is being predicted well:</b> corrected returns landed within %1 mm of the bullseye %2 times in a row "
+                                      "from both sides.<br><br>%3<br><br>Keep going to refine it further, or stop here?")
+                                  .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries).arg(message.toHtmlEscaped()));
+    text->setWordWrap(true);
+    layout->addWidget(text);
+    QDialogButtonBox *buttons = new QDialogButtonBox();
+    QPushButton *keep = buttons->addButton(QString("Keep going"), QDialogButtonBox::AcceptRole);
+    QPushButton *stop = buttons->addButton(QString("Stop"), QDialogButtonBox::RejectRole);
+    stop->setDefault(true);
+    connect(keep, &QPushButton::clicked, &ask, &QDialog::accept);
+    connect(stop, &QPushButton::clicked, &ask, &QDialog::reject);
+    layout->addWidget(buttons);
+    const bool keepGoing = ask.exec() == QDialog::Accepted;
+    if (!edgeSloping) {
+        return;
+    }
+    if (!keepGoing || edgeCancelling) {
+        endEdgeSlop(message);                // the results are already saved
+        return;
+    }
+    edgeHits[0] = edgeHits[1] = 0;           // refine until it converges again, then ask again
+    edgeSide = -edgeSide;
+    edgeNextReturn();
 }
 
 void LAUGantryMainWindow::endEdgeSlop(const QString &message)

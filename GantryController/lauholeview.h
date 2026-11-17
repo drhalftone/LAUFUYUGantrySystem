@@ -39,6 +39,10 @@ public:
         cv::Point2d aperture;                // the same, rails at zero: the A0 of this session
         cv::Mat window;                      // the paper seen through it, 8-bit mask around centre (WINDOW_HALF, RES)
         double areaMM2 = 0.0;
+        // the best-fit ellipse to the disc's outline, board mm: the hole as the camera sees it
+        bool hasEllipse = false;
+        cv::Point2d ellipseCentre;
+        double ellipseSemiA = 0.0, ellipseSemiB = 0.0, ellipseAngleDeg = 0.0;   // semi-axes, and the A axis from board X
     };
     // guess: where the calibration puts the hole, board mm
     bool findHole(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &guess, Hole *hole, QString *why, cv::Mat *check = nullptr) const;
