@@ -64,7 +64,7 @@ namespace
 void LAUGantryMainWindow::onCornerTuneRequested()
 {
     const QString title = QString("Fine-tune Page Corners");
-    if (scanning || measuring || merging || returningHome || tuning || railWidget->isHoming()) {
+    if (scanning || measuring || merging || returningHome || tuning || sloping || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
     }
@@ -849,7 +849,7 @@ bool LAUGantryMainWindow::savePageMap(const cv::Matx23d &fix, double *widthMM, d
 void LAUGantryMainWindow::onPagePositionRequested()
 {
     const QString title = QString("Go to Page Position");
-    if (scanning || measuring || merging || returningHome || tuning || pageMoving || railWidget->isHoming()) {
+    if (scanning || measuring || merging || returningHome || tuning || sloping || pageMoving || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
     }

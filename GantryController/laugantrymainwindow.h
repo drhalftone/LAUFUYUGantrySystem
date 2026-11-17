@@ -81,6 +81,7 @@ private slots:
     void onImageScanRequested();
     void onCornerTuneRequested();
     void onPagePositionRequested();
+    void onSlopRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -192,6 +193,36 @@ private:
     bool pageMoving = false;                 // Go to page position: the sliders are on their way
     QString pageMoveMessage;
     void showTuneZoom(const cv::Mat &raw16);
+
+    // Measure slop (laugantryslop.cpp): the i1's hole brought back to one spot on plain paper beside a page corner
+    // from each of the twelve hours of a clock, and where the camera sees the hole each time
+    struct SlopShot
+    {
+        int round = 0, hour = 0;             // hour 12 = from +Y (rail pair), 3 = from +X (single rail)
+        int lastX = 0, lastY = 0;            // the sign of the last move each slider made before the hole was seen
+        bool ok = false;
+        cv::Point2d aperture;                // where the camera saw the hole, board mm, rails at zero
+        QString note;
+    };
+    bool sloping = false;
+    bool slopCancelling = false;
+    bool slopWaitingFrame = false;
+    bool slopAtCentre = false;               // the move under way ends at the centre (else at an hour's start)
+    QTimer *slopTimer = nullptr;
+    LAUPlatenGeometry slopGeometry;
+    double slopSingle = 0.0, slopPair = 0.0; // the spot, slider mm
+    double slopDistance = 10.0;              // each hour's start, this far out from the spot
+    int slopRounds = 3, slopStep = 0;
+    double slopAtSingle = 0.0, slopAtPair = 0.0;   // where the sliders were last sent
+    int slopLastX = 0, slopLastY = 0;
+    QString slopCorner, slopScan;
+    QList<SlopShot> slopShots;
+    void slopNextMove();
+    void onSlopMoveFinished(bool ok, const QString &message);
+    void onSlopTimer();
+    void onSlopFrame(const cv::Mat &raw16);
+    void finishSlop();
+    void endSlop(const QString &message);
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;
     bool tuning = false;
