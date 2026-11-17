@@ -212,6 +212,8 @@ void LAUGantryMainWindow::goToTuneCorner()
     c.pair = c.nearPair;
     c.moves = 0;
     c.insetTry = 0;
+    tuneSeenValid = false;
+    tuneSeenWhy.clear();
     if (holeView.isValid() && !c.insets.isEmpty()) {
         tuneStage = TuneToInset;
         tuneDialog->setMessage(QString("The page's %1 corner: finding the hole on plain paper next to it...").arg(c.name));
@@ -342,6 +344,9 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     QString why;
     cv::Mat check;
     const bool ok = holeView.findCorner(gray, pair, single, hole, tuneWindow, c.board, along1, along2, &found, &why, &check);
+    tuneSeen = found;
+    tuneSeenValid = true;
+    tuneSeenWhy = ok ? QString() : why;
     if (!check.empty()) {
         QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
     }
@@ -365,7 +370,23 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         c.pair += dPair;
         c.automatic = true;
         c.confirmed = true;
-        tuneOutOfReach(true, QString("the sliders stop %1 mm short of it").arg(c.missMM, 0, 'f', 1));
+        // which limit slider is in the way
+        QStringList limits;
+        const double wantSingle = c.single, wantPair = c.pair;   // the miss already added above
+        if (wantSingle < tuneGeometry.singleLow) {
+            limits << QString("X needs %1 mm, below its limit of %2 mm").arg(wantSingle, 0, 'f', 2).arg(tuneGeometry.singleLow, 0, 'f', 2);
+        }
+        if (wantSingle > tuneGeometry.singleHigh) {
+            limits << QString("X needs %1 mm, past its limit of %2 mm").arg(wantSingle, 0, 'f', 2).arg(tuneGeometry.singleHigh, 0, 'f', 2);
+        }
+        if (wantPair < tuneGeometry.pairLow) {
+            limits << QString("Y needs %1 mm, below its limit of %2 mm").arg(wantPair, 0, 'f', 2).arg(tuneGeometry.pairLow, 0, 'f', 2);
+        }
+        if (wantPair > tuneGeometry.pairHigh) {
+            limits << QString("Y needs %1 mm, past its limit of %2 mm").arg(wantPair, 0, 'f', 2).arg(tuneGeometry.pairHigh, 0, 'f', 2);
+        }
+        tuneOutOfReach(true, QString("the camera sees it %1 mm from the hole's centre, and the sliders can't move that far (%2)")
+                                 .arg(c.missMM, 0, 'f', 2).arg(limits.isEmpty() ? QString("the move left is too small to make") : limits.join(QString("; "))));
         return;
     }
     if (c.missMM < TOLERANCE_MM || c.moves >= MAX_MOVES) {
@@ -442,6 +463,64 @@ void LAUGantryMainWindow::showTuneZoom(const cv::Mat &raw16)
         cv::line(colour, k - cv::Point(arm / 2, arm / 2), k + cv::Point(arm / 2, arm / 2), yellow, 2, cv::LINE_AA, 4);
         cv::line(colour, k - cv::Point(arm / 2, -arm / 2), k + cv::Point(arm / 2, -arm / 2), yellow, 2, cv::LINE_AA, 4);
     }
+
+    // a board-mm polyline, projected where it is near the hole (the lens bends straight lines a little)
+    const auto drawBoard = [&](const cv::Point2d &from, const cv::Point2d &to, const cv::Scalar &colourOf, int thickness) {
+        const double length = cv::norm(to - from);
+        const int steps = std::max(1, (int)std::ceil(length / 0.25));
+        std::vector<cv::Point> run;
+        for (int s = 0; s <= steps; s++) {
+            const cv::Point2d b = from + (to - from) * (s / (double)steps);
+            cv::Point2d p;
+            if (cv::norm(b - hole) < 1.6 * ZOOM_HALF_MM && platenOverlay.project(b, pair, single, &p)) {
+                run.push_back(at(p));
+            } else if (!run.empty()) {
+                cv::polylines(colour, run, false, colourOf, thickness, cv::LINE_AA, 4);
+                run.clear();
+            }
+        }
+        if (!run.empty()) {
+            cv::polylines(colour, run, false, colourOf, thickness, cv::LINE_AA, 4);
+        }
+    };
+
+    // red: as far as the hole's centre can go with the limit sliders where they are; the corner must be inside it
+    const cv::Scalar red(40, 40, 255), cyan(255, 255, 0), magenta(255, 0, 255);
+    const cv::Point2d reach[4] = { aperture + ax * tuneGeometry.pairLow + ay * tuneGeometry.singleLow,
+                                   aperture + ax * tuneGeometry.pairHigh + ay * tuneGeometry.singleLow,
+                                   aperture + ax * tuneGeometry.pairHigh + ay * tuneGeometry.singleHigh,
+                                   aperture + ax * tuneGeometry.pairLow + ay * tuneGeometry.singleHigh };
+    for (int k = 0; k < 4; k++) {
+        drawBoard(reach[k], reach[(k + 1) % 4], red, 2);
+    }
+
+    // cyan: the paper edges the camera found (its edge points as dots, the lines through them), magenta where they meet
+    if (tuneSeenValid) {
+        for (int e = 0; e < 2; e++) {
+            for (const cv::Point2d &b : tuneSeen.edgePoints[e]) {
+                cv::Point2d p;
+                if (platenOverlay.project(b, pair, single, &p)) {
+                    cv::circle(colour, at(p), 16, cyan, 1, cv::LINE_AA, 4);
+                }
+            }
+            if (tuneSeen.edgeFitted[e]) {
+                drawBoard(tuneSeen.edgeAt[e] - tuneSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, tuneSeen.edgeAt[e] + tuneSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, cyan, 1);
+            }
+        }
+        cv::Point2d p;
+        if (tuneSeen.atValid && platenOverlay.project(tuneSeen.at, pair, single, &p)) {
+            const cv::Point k = at(p);
+            cv::circle(colour, k, 6 * 16, magenta, 2, cv::LINE_AA, 4);
+            const double miss = cv::norm(tuneSeen.at - hole);
+            cv::putText(colour, QString("found corner: %1 mm from the hole's centre").arg(miss, 0, 'f', 2).toStdString(), cv::Point(10, 46),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, magenta, 1, cv::LINE_AA);
+        }
+        if (!tuneSeenWhy.isEmpty()) {
+            cv::putText(colour, tuneSeenWhy.left(60).toStdString(), cv::Point(10, 66), cv::FONT_HERSHEY_SIMPLEX, 0.4, cyan, 1, cv::LINE_AA);
+        }
+    }
+    cv::putText(colour, "green hole  yellow expected  cyan edges  magenta found  red reach", cv::Point(10, size - 32), cv::FONT_HERSHEY_SIMPLEX, 0.38,
+                cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
     cv::putText(colour, QString("%1 corner").arg(tuneCorners[tuneIndex].name).toStdString(), cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX, 0.6,
                 cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
     cv::putText(colour, QString("%1 mm across").arg(2 * ZOOM_HALF_MM, 0, 'f', 0).toStdString(), cv::Point(10, size - 12), cv::FONT_HERSHEY_SIMPLEX, 0.5,

@@ -181,6 +181,9 @@ private:
     LAUHoleView holeView;
     QList<cv::Point2d> tuneApertures;        // the hole, rails at zero, each time it was seen this session
     cv::Mat tuneWindow;                      // the paper seen through the hole
+    LAUHoleView::Corner tuneSeen;            // what the camera last found of this corner's edges, drawn on the zoom
+    bool tuneSeenValid = false;
+    QString tuneSeenWhy;                     // and why it wasn't the corner, if it wasn't
     void onTuneTimer();
     void onTuneFrame(const cv::Mat &raw16);
     void tuneByHand(const QString &reason);

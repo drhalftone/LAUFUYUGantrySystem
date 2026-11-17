@@ -17,6 +17,7 @@
 #ifndef LAUHOLEVIEW_H
 #define LAUHOLEVIEW_H
 
+#include <vector>
 #include <QString>
 #include <opencv2/core.hpp>
 
@@ -48,6 +49,12 @@ public:
         double rmsMM = 0.0;                  // of the edge points about their lines
         int points[2] = { 0, 0 };
         double angleDeg = 0.0;               // between the edges
+        // what was seen of each edge, kept even when the corner isn't found, so it can be drawn: its sub-pixel
+        // points (board mm) and, when enough of them lined up, the line through them
+        std::vector<cv::Point2d> edgePoints[2];
+        bool edgeFitted[2] = { false, false };
+        cv::Point2d edgeAt[2], edgeDir[2];
+        bool atValid = false;                // the two lines met at 'at'
     };
     // holeCentre: the hole at these rails; expected: the corner, roughly; along1, along2: the page's edges leaving it
     bool findCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeCentre, const cv::Mat &window,

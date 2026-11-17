@@ -310,6 +310,7 @@ bool LAUHoleView::findCorner(const cv::Mat &gray, double pairMM, double singleMM
         *why = QString("The hole hasn't been seen yet.");
         return false;
     }
+    *corner = Corner();
     const cv::Mat L = ortho(gray, pairMM, singleMM, holeCentre, WINDOW_HALF, RES);
     const int n = L.cols;
     const auto toPixel = [&](const cv::Point2d &b) {
@@ -430,16 +431,24 @@ bool LAUHoleView::findCorner(const cv::Mat &gray, double pairMM, double singleMM
                 const double s = -PROFILE_HALF_MM + (k + ((den != 0.0) ? 0.5 * (g0 - g2) / den : 0.0)) * RES;
                 points.push_back(base + m * s);
             }
+            corner->edgePoints[e] = points;
+            corner->edgeFitted[e] = false;
             if ((int)points.size() < MIN_EDGE_POINTS || !fitLine(points, &lines[e]) || lines[e].points < MIN_EDGE_POINTS) {
-                *why = QString("Couldn't see enough of the page's %1 edge through the hole.").arg(e ? QString("second") : QString("first"));
+                *why = QString("Couldn't see enough of the page's %1 edge through the hole (%2 edge points, %3 needed).")
+                           .arg(e ? QString("second") : QString("first")).arg(points.size()).arg(MIN_EDGE_POINTS);
                 return false;
             }
+            corner->edgeFitted[e] = true;
+            corner->edgeAt[e] = lines[e].c;
+            corner->edgeDir[e] = lines[e].d;
         }
         cv::Point2d next;
         if (!intersect(lines[0], lines[1], &next)) {
             *why = QString("The page's two edges came out parallel.");
             return false;
         }
+        corner->at = next;
+        corner->atValid = true;
         along1 = (lines[0].d.dot(along1) < 0.0) ? -lines[0].d : lines[0].d;
         along2 = (lines[1].d.dot(along2) < 0.0) ? -lines[1].d : lines[1].d;
         m1 = inward(along1, along2);
