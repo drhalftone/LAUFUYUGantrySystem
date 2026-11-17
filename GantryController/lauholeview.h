@@ -60,6 +60,13 @@ public:
     bool findCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeCentre, const cv::Mat &window,
                     const cv::Point2d &expected, cv::Point2d along1, cv::Point2d along2, Corner *corner, QString *why, cv::Mat *check = nullptr) const;
 
+    // A page corner inside the hole, a little off the hole's centre so the paper fills most of it: the corner from its
+    // two edges (findCorner), and the hole from a circle through the rim's arc where it crosses the paper.  Both in
+    // board mm.  The circle is the rim as the camera sees it, a fixed shift from the true hole, so differences between
+    // views are true to the hole's movement.
+    bool findHoleAtCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along1, cv::Point2d along2,
+                          cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check = nullptr) const;
+
     cv::Point2d boardAxis(int rail) const    // board mm per mm of the rail pair (0) or the single rail (1)
     {
         return rail == 0 ? cv::Point2d(ex[0], ex[1]) : cv::Point2d(ey[0], ey[1]);

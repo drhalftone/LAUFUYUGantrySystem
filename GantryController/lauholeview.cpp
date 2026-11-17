@@ -491,3 +491,155 @@ bool LAUHoleView::findCorner(const cv::Mat &gray, double pairMM, double singleMM
     }
     return true;
 }
+
+bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along1,
+                                   cv::Point2d along2, cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check) const
+{
+    if (!valid) {
+        *why = QString("There's no platen calibration to see the hole with.");
+        return false;
+    }
+    const double WINDOW_MM = APERTURE_RADIUS_MM + 2.0;   // room for the hole to be off the guess
+    const double OFF_EDGE_MM = 0.3;                      // rim points this close to a paper edge are the edge's
+    const cv::Mat L = ortho(gray, pairMM, singleMM, holeGuess, WINDOW_HALF, RES);
+    const int n = L.cols;
+    cv::Mat window = cv::Mat::zeros(n, n, CV_8U);
+    cv::circle(window, cv::Point(n / 2, n / 2), (int)std::lround(WINDOW_MM / RES), cv::Scalar(255), cv::FILLED);
+    const auto toBoard = [&](double c, double r) {
+        return cv::Point2d(holeGuess.x - WINDOW_HALF + c * RES, holeGuess.y - WINDOW_HALF + r * RES);
+    };
+    const auto toPixel = [&](const cv::Point2d &b) {
+        return cv::Point((int)std::lround((b.x - holeGuess.x + WINDOW_HALF) / RES), (int)std::lround((b.y - holeGuess.y + WINDOW_HALF) / RES));
+    };
+
+    // the corner, from its two edges inside the window
+    const bool cornerOk = findCorner(gray, pairMM, singleMM, holeGuess, window, holeGuess, along1, along2, corner, why);
+
+    // the paper seen through the hole: the bright region nearest the middle
+    cv::Mat soft, bw;
+    cv::GaussianBlur(L, soft, cv::Size(0, 0), 1.5);
+    soft.convertTo(soft, CV_8U);
+    cv::threshold(soft, bw, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+    bw &= window;
+    cv::Mat lab, stats, centroids;
+    const int count = cv::connectedComponentsWithStats(bw, lab, stats, centroids);
+    int best = -1, bestArea = 0;
+    for (int k = 1; k < count; k++) {
+        if (stats.at<int>(k, cv::CC_STAT_AREA) > bestArea) {
+            bestArea = stats.at<int>(k, cv::CC_STAT_AREA);
+            best = k;
+        }
+    }
+
+    // the rim: the paper's outline, less what lies on the two paper edges and what the window cut off
+    std::vector<cv::Point2d> rim;
+    std::vector<cv::Point> outline;
+    if (best > 0 && cornerOk) {
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(cv::Mat(lab == best), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        for (const std::vector<cv::Point> &contour : contours) {
+            for (const cv::Point &p : contour) {
+                const cv::Point2d b = toBoard(p.x, p.y);
+                bool keep = cv::norm(b - holeGuess) < WINDOW_MM - 0.1;
+                for (int e = 0; e < 2 && keep; e++) {
+                    const cv::Point2d q = b - corner->edgeAt[e];
+                    keep = std::abs(q.x * corner->edgeDir[e].y - q.y * corner->edgeDir[e].x) > OFF_EDGE_MM;
+                }
+                if (keep) {
+                    rim.push_back(b);
+                    outline.push_back(p);
+                }
+            }
+        }
+    }
+
+    // a circle through the rim (algebraic fit, refitted on the points within three robust sigmas)
+    cv::Point2d centre(0, 0);
+    double radius = 0.0;
+    bool fitted = false;
+    if ((int)rim.size() >= 60) {
+        std::vector<bool> keep(rim.size(), true);
+        for (int iteration = 0; iteration < 4; iteration++) {
+            cv::Point2d o(0, 0);
+            int m = 0;
+            for (size_t i = 0; i < rim.size(); i++) {
+                if (keep[i]) {
+                    o += rim[i];
+                    m++;
+                }
+            }
+            if (m < 30) {
+                break;
+            }
+            o *= 1.0 / m;                    // centred, for a well-conditioned solve
+            cv::Mat A(m, 3, CV_64F), b(m, 1, CV_64F);
+            int row = 0;
+            for (size_t i = 0; i < rim.size(); i++) {
+                if (keep[i]) {
+                    const cv::Point2d q = rim[i] - o;
+                    A.at<double>(row, 0) = q.x;
+                    A.at<double>(row, 1) = q.y;
+                    A.at<double>(row, 2) = 1.0;
+                    b.at<double>(row) = -(q.x * q.x + q.y * q.y);
+                    row++;
+                }
+            }
+            cv::Mat f;
+            cv::solve(A, b, f, cv::DECOMP_SVD);
+            const cv::Point2d c(-0.5 * f.at<double>(0), -0.5 * f.at<double>(1));
+            const double r2 = c.x * c.x + c.y * c.y - f.at<double>(2);
+            if (r2 <= 0.0) {
+                break;
+            }
+            centre = o + c;
+            radius = std::sqrt(r2);
+            fitted = true;
+            std::vector<double> residual, kept;
+            for (size_t i = 0; i < rim.size(); i++) {
+                residual.push_back(std::abs(cv::norm(rim[i] - centre) - radius));
+                if (keep[i]) {
+                    kept.push_back(residual.back());
+                }
+            }
+            const double limit = std::max(0.03, 3.0 * 1.4826 * percentileOf(kept, 50.0));
+            for (size_t i = 0; i < rim.size(); i++) {
+                keep[i] = residual[i] < limit;
+            }
+        }
+    }
+
+    if (check) {
+        *check = colourOf(L);
+        if (!outline.empty()) {
+            for (const cv::Point &p : outline) {
+                cv::circle(*check, p, 1, cv::Scalar(0, 140, 255), cv::FILLED);
+            }
+        }
+        for (int e = 0; e < 2; e++) {
+            if (corner->edgeFitted[e]) {
+                cv::line(*check, toPixel(corner->edgeAt[e] - corner->edgeDir[e] * 2.0 * WINDOW_HALF),
+                         toPixel(corner->edgeAt[e] + corner->edgeDir[e] * 2.0 * WINDOW_HALF), cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+            }
+        }
+        if (corner->atValid) {
+            cv::drawMarker(*check, toPixel(corner->at), cv::Scalar(0, 255, 255), cv::MARKER_CROSS, 40, 2);
+        }
+        if (fitted) {
+            cv::circle(*check, toPixel(centre), (int)std::lround(radius / RES), cv::Scalar(0, 200, 0), 2, cv::LINE_AA);
+            cv::drawMarker(*check, toPixel(centre), cv::Scalar(0, 200, 0), cv::MARKER_CROSS, 40, 2);
+        }
+    }
+    if (!cornerOk) {
+        return false;
+    }
+    if (!fitted) {
+        *why = QString("Too little of the hole's rim crossed the paper (%1 points).").arg(rim.size());
+        return false;
+    }
+    if (radius < APERTURE_RADIUS_MM - 1.5 || radius > APERTURE_RADIUS_MM + 1.5) {
+        *why = QString("The circle through the rim is %1 mm across, not the hole.").arg(2.0 * radius, 0, 'f', 2);
+        return false;
+    }
+    *holeCentre = centre;
+    return true;
+}

@@ -3,14 +3,15 @@
  *********************************************************************************/
 //
 // Measure slop: the i1's holder can turn a little on its bracket, so where its hole ends up depends on the way the
-// sliders were moving when they stopped.  The camera rides on the carriage, not the holder, so it sees that directly:
-// over plain paper the hole is a bright disc, and LAUHoleView::findHole says where its centre is.
+// sliders were moving when they stopped.  The camera rides on the carriage, not the holder, so it sees the hole move.
 //
-// One spot on plain paper, in from a corner of the last page found, is visited from each of the twelve hours of a
-// clock (in slider space: 12 o'clock is +Y, the rail pair; 3 o'clock is +X, the single rail), a few rounds over.  For
-// each hour the sliders go out to that hour, the given distance away, then back to the spot, settle, and the hole is
-// found.  The hole's offset from its average is turned into the correction the sliders need, in slider mm, and
-// plotted around a clock face; a fit of that correction to the sign of each slider's last move gives the slop.
+// The hole is put over a corner of the last page found, the corner a little in from the hole's centre, from each of
+// the twelve hours of a clock (in slider space: 12 o'clock is +Y, the rail pair; 3 o'clock is +X, the single rail), a
+// few rounds over.  For each hour the sliders go out to that hour, the given distance away, then back, settle, and
+// LAUHoleView::findHoleAtCorner finds the corner from its two edges and the hole from its rim over the paper.  The
+// hole's offset from the corner -- where the i1 lands on the page, carriage and holder both -- against its average is
+// turned into the correction the sliders need, in slider mm, and plotted around a clock face; a fit of that
+// correction to the sign of each slider's last move gives the slop.
 //
 #include "laugantrymainwindow.h"
 
@@ -46,6 +47,7 @@ namespace
     const int SETTLE_MS = 500;
     const int FRAME_TIMEOUT_MS = 15000;
     const double MOVED_MM = 0.005;           // a slider that moved less than this didn't move
+    const double CORNER_IN_MM = 2.0;         // the hole's centre, this far in from the corner along both edges
 
     cv::Point2d unitOf(const cv::Point2d &v)
     {
@@ -121,9 +123,9 @@ void LAUGantryMainWindow::onSlopRequested()
         const cv::Point2d spot = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * in + unitOf(P[(k + 3) % 4] - P[k]) * in;
         slopGeometry.railsFor(spot, single, pair, true);
     };
-    const auto fits = [&](int k, double in, double out) {
+    const auto fits = [&](int k, double out) {
         double single = 0.0, pair = 0.0;
-        spotFor(k, in, &single, &pair);
+        spotFor(k, CORNER_IN_MM, &single, &pair);
         if (!slopGeometry.reachable(single, pair)) {
             return false;
         }
@@ -139,20 +141,18 @@ void LAUGantryMainWindow::onSlopRequested()
     QDialog dialog(this);
     dialog.setWindowTitle(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
-    QLabel *label = new QLabel(QString("The sliders bring the i1's hole back to one spot on plain paper beside a corner of the page found in scan %1, "
-                                       "from each of the twelve hours of a clock, and the camera sees where the hole lands each time.\n\n"
+    QLabel *label = new QLabel(QString("The sliders bring the i1's hole back over a corner of the page found in scan %1, with the corner %2 mm in from "
+                                       "the hole's centre along both edges, from each of the twelve hours of a clock. Each time the camera finds the "
+                                       "corner and the hole's rim, and how far the hole lands from the corner shows the slop.\n\n"
                                        "Take the i1 Pro out of its holder first so the camera sees the paper through the hole, and don't move the page.")
-                                   .arg(slopScan));
+                                   .arg(slopScan).arg(CORNER_IN_MM, 0, 'f', 1));
     label->setWordWrap(true);
     layout->addWidget(label);
     QFormLayout *form = new QFormLayout();
     QComboBox *corner = new QComboBox();
     corner->addItems(names);
     corner->setCurrentIndex(std::clamp(settings.value(QString("LAUGantryMainWindow::slopCorner"), 0).toInt(), 0, 3));
-    QDoubleSpinBox *inset = new QDoubleSpinBox(), *distance = new QDoubleSpinBox(), *rounds = new QDoubleSpinBox();
-    inset->setRange(8.0, 60.0);
-    inset->setSuffix(QString(" mm"));
-    inset->setValue(settings.value(QString("LAUGantryMainWindow::slopInset"), 20.0).toDouble());
+    QDoubleSpinBox *distance = new QDoubleSpinBox(), *rounds = new QDoubleSpinBox();
     distance->setRange(0.5, 50.0);
     distance->setSuffix(QString(" mm"));
     distance->setValue(settings.value(QString("LAUGantryMainWindow::slopDistance"), 10.0).toDouble());
@@ -160,7 +160,6 @@ void LAUGantryMainWindow::onSlopRequested()
     rounds->setDecimals(0);
     rounds->setValue(settings.value(QString("LAUGantryMainWindow::slopRounds"), 3).toInt());
     form->addRow(QString("Corner"), corner);
-    form->addRow(QString("Spot, in from both edges"), inset);
     form->addRow(QString("Approach from"), distance);
     form->addRow(QString("Rounds of the clock"), rounds);
     layout->addLayout(form);
@@ -178,7 +177,7 @@ void LAUGantryMainWindow::onSlopRequested()
     const auto refresh = [&]() {
         int first = -1;
         for (int k = 0; k < 4; k++) {
-            const bool ok = fits(k, inset->value(), distance->value());
+            const bool ok = fits(k, distance->value());
             model->item(k)->setEnabled(ok);
             model->item(k)->setText(ok ? names[k] : names[k] + QString("  (too close to the edge of the travel)"));
             if (ok && first < 0) {
@@ -190,29 +189,42 @@ void LAUGantryMainWindow::onSlopRequested()
         }
         buttons->button(QDialogButtonBox::Ok)->setEnabled(first >= 0);
         none->setText(first >= 0 ? QString()
-                                 : QString("Every corner is too close to the edge of the travel for this spot and approach. "
-                                           "Move the spot further in, approach from closer, or widen the limit sliders."));
+                                 : QString("Every corner is too close to the edge of the travel for this approach. "
+                                           "Approach from closer, or widen the limit sliders."));
         none->setVisible(first < 0);
     };
-    connect(inset, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
     connect(distance, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
     refresh();
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
     const int k = corner->currentIndex();
-    if (!fits(k, inset->value(), distance->value())) {
+    if (!fits(k, distance->value())) {
         return;
     }
     settings.setValue(QString("LAUGantryMainWindow::slopCorner"), k);
-    settings.setValue(QString("LAUGantryMainWindow::slopInset"), inset->value());
     settings.setValue(QString("LAUGantryMainWindow::slopDistance"), distance->value());
     settings.setValue(QString("LAUGantryMainWindow::slopRounds"), (int)rounds->value());
     slopCorner = names[k];
     slopDistance = distance->value();
     slopRounds = (int)rounds->value();
 
-    spotFor(k, inset->value(), &slopSingle, &slopPair);
+    spotFor(k, CORNER_IN_MM, &slopSingle, &slopPair);
+    slopAlong1 = P[(k + 1) % 4] - P[k];
+    slopAlong2 = P[(k + 3) % 4] - P[k];
+    slopAperture = holeView.calibratedAperture();
+    QFile tuned(QDir(folder).filePath(QString("corner_tune.json")));
+    if (tuned.open(QIODevice::ReadOnly)) {
+        const QJsonArray seen = QJsonDocument::fromJson(tuned.readAll()).object()["hole_seen_at_rails_zero_mm"].toArray();
+        if (!seen.isEmpty()) {
+            slopAperture = cv::Point2d(0, 0);
+            for (const QJsonValue &a : seen) {
+                slopAperture += cv::Point2d(a.toArray().at(0).toDouble(), a.toArray().at(1).toDouble()) * (1.0 / seen.count());
+            }
+        }
+    }
+    slopFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_slop"));
+    QDir().mkpath(slopFolder);
 
     if (!slopTimer) {
         slopTimer = new QTimer(this);
@@ -325,24 +337,31 @@ void LAUGantryMainWindow::onSlopFrame(const cv::Mat &raw16)
     shot.lastX = slopLastX;
     shot.lastY = slopLastY;
     const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
-    cv::Point2d aperture = holeView.calibratedAperture();
+    // where to look: where the hole has been seen so far, else where the fine-tune saw it
+    cv::Point2d guess = slopAperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single;
     int seen = 0;
     cv::Point2d sum(0, 0);
     for (const SlopShot &s : slopShots) {
         if (s.ok) {
-            sum += s.aperture;
+            sum += s.hole;
             seen++;
         }
     }
     if (seen) {
-        aperture = sum * (1.0 / seen);
+        guess = sum * (1.0 / seen);
     }
-    LAUHoleView::Hole hole;
+    LAUHoleView::Corner corner;
     QString why;
-    shot.ok = holeView.findHole(gray, pair, single, aperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single, &hole, &why);
-    shot.aperture = hole.aperture;
+    cv::Mat check;
+    shot.ok = holeView.findHoleAtCorner(gray, pair, single, guess, slopAlong1, slopAlong2, &shot.hole, &corner, &why, &check);
+    shot.corner = corner.at;
+    shot.offset = shot.hole - shot.corner;
     shot.note = why;
     slopShots << shot;
+    if (!check.empty()) {
+        QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888)
+            .save(QDir(slopFolder).filePath(QString("shot_r%1_h%2.png").arg(shot.round).arg(shot.hour, 2, 10, QChar('0'))));
+    }
 
     slopStep++;
     slopAtCentre = false;
@@ -367,15 +386,16 @@ void LAUGantryMainWindow::finishSlop()
         return;
     }
 
-    // each shot's hole offset from the average, as the slider move that would undo it: ax * dPair + ay * dSingle = -offset
+    // each shot's hole-from-corner offset against the average, as the slider move that would undo it:
+    // ax * dPair + ay * dSingle = mean - offset
     cv::Point2d mean(0, 0);
     for (const SlopShot &s : good) {
-        mean += s.aperture * (1.0 / good.count());
+        mean += s.offset * (1.0 / good.count());
     }
     const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
     const double det = ax.x * ay.y - ay.x * ax.y;
     const auto correctionOf = [&](const SlopShot &s) {
-        const cv::Point2d m = mean - s.aperture;
+        const cv::Point2d m = mean - s.offset;
         return cv::Point2d((ax.x * m.y - m.x * ax.y) / det, (m.x * ay.y - ay.x * m.y) / det);   // (single, pair)
     };
 
@@ -405,19 +425,19 @@ void LAUGantryMainWindow::finishSlop()
     ry = std::sqrt(ry);
 
     // ---- the results folder
-    const QString folder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_slop"));
-    QDir().mkpath(folder);
+    const QString folder = slopFolder;
     QFile csv(QDir(folder).filePath(QString("slop.csv")));
     if (csv.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QTextStream out(&csv);
-        out << "round,hour,from_x_mm,from_y_mm,last_x_sign,last_y_sign,found,hole_at_rails_zero_board_x_mm,hole_at_rails_zero_board_y_mm,"
+        out << "round,hour,from_x_mm,from_y_mm,last_x_sign,last_y_sign,found,hole_board_x_mm,hole_board_y_mm,corner_board_x_mm,corner_board_y_mm,"
                "correction_x_mm,correction_y_mm,note\n";
+        const auto mm = [](double v) { return QString::number(v, 'f', 4); };
         for (const SlopShot &s : slopShots) {
             const cv::Point2d d = hourDirection(s.hour) * slopDistance;
             const cv::Point2d c = s.ok ? correctionOf(s) : cv::Point2d(0, 0);
             out << s.round << ',' << s.hour << ',' << QString::number(d.x, 'f', 3) << ',' << QString::number(d.y, 'f', 3) << ',' << s.lastX << ','
-                << s.lastY << ',' << (s.ok ? 1 : 0) << ',' << QString::number(s.aperture.x, 'f', 4) << ',' << QString::number(s.aperture.y, 'f', 4)
-                << ',' << (s.ok ? QString::number(c.x, 'f', 4) : QString()) << ',' << (s.ok ? QString::number(c.y, 'f', 4) : QString()) << ",\""
+                << s.lastY << ',' << (s.ok ? 1 : 0) << ',' << mm(s.hole.x) << ',' << mm(s.hole.y) << ',' << mm(s.corner.x) << ',' << mm(s.corner.y)
+                << ',' << (s.ok ? mm(c.x) : QString()) << ',' << (s.ok ? mm(c.y) : QString()) << ",\""
                 << QString(s.note).replace(QChar('"'), QChar('\'')) << "\"\n";
         }
     }

@@ -201,9 +201,13 @@ private:
         int round = 0, hour = 0;             // hour 12 = from +Y (rail pair), 3 = from +X (single rail)
         int lastX = 0, lastY = 0;            // the sign of the last move each slider made before the hole was seen
         bool ok = false;
-        cv::Point2d aperture;                // where the camera saw the hole, board mm, rails at zero
+        cv::Point2d hole, corner;            // where the camera saw the hole and the page's corner, board mm
+        cv::Point2d offset;                  // hole - corner: what the slop moves
         QString note;
     };
+    cv::Point2d slopAperture;                // the hole at rails zero, as the corner fine-tune saw it (else the calibration's)
+    cv::Point2d slopAlong1, slopAlong2;      // the page's two edges leaving the corner
+    QString slopFolder;
     bool sloping = false;
     bool slopCancelling = false;
     bool slopWaitingFrame = false;
