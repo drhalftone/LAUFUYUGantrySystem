@@ -479,18 +479,22 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
         }
     }
 
-    // the i1's hole: a bullseye where its rim was found, else a grey ring where it is expected
-    if (found) {
-        const double r = (slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
+    // the i1's hole, always as a bullseye: bright where its rim was found, dim where it is expected until then
+    {
+        const double r = (found && slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
+        const cv::Scalar ink = found ? green : cv::Scalar(0, 150, 0);
         for (double f : { 1.0, 2.0 / 3.0, 1.0 / 3.0 }) {
-            drawCircle(hole, r * f, green, f == 1.0 ? 2 : 1);
+            drawCircle(hole, r * f, ink, f == 1.0 ? 2 : 1);
         }
         cv::Point c;
         if (project(hole, &c)) {
-            cv::circle(colour, c, 3 * 16, green, cv::FILLED, cv::LINE_AA, 4);
+            cv::circle(colour, c, 3 * 16, ink, cv::FILLED, cv::LINE_AA, 4);
         }
-        drawLine(hole - cv::Point2d(r, 0), hole + cv::Point2d(r, 0), green, 1);
-        drawLine(hole - cv::Point2d(0, r), hole + cv::Point2d(0, r), green, 1);
+        drawLine(hole - cv::Point2d(r, 0), hole + cv::Point2d(r, 0), ink, 1);
+        drawLine(hole - cv::Point2d(0, r), hole + cv::Point2d(0, r), ink, 1);
+    }
+    if (found) {
+        cv::Point c;
         if (slopSeen.atValid) {
             cv::Point k;
             if (project(slopSeen.at, &k) && project(hole, &c)) {
@@ -500,8 +504,6 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
             cv::putText(colour, QString("hole from corner: %1, %2 mm").arg(d.x, 0, 'f', 3).arg(d.y, 0, 'f', 3).toStdString(), cv::Point(10, 46),
                         cv::FONT_HERSHEY_SIMPLEX, 0.5, green, 1, cv::LINE_AA);
         }
-    } else {
-        drawCircle(hole, 4.9, grey160, 1);
     }
 
     QString title = QString("%1 corner").arg(slopCorner);

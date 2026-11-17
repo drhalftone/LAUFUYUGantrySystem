@@ -254,7 +254,7 @@ private:
     bool edgeSloping = false, edgeCancelling = false, edgeWaitingFrame = false, edgeLearning = true;
     QTimer *edgeTimer = nullptr;
     EdgeStage edgeStage = EdgeOut;
-    int edgeSide = 1, edgeCreeps = 0, edgeRestarts = 0, edgeTries = 8;
+    int edgeSide = 1, edgeCreeps = 0, edgeRestarts = 0, edgeTries = 3;      // edgeTries: single moves in a row on the edge, from each side, to finish
     int edgeHits[2] = { 0, 0 }, edgeSingles[2] = { 0, 0 };   // [0] arriving moving left, [1] moving right
     QList<double> edgeOnEdge[2];             // X where the hole's centre was on the edge, each arrival
     double edgeAway = 25.4, edgeShort = 3.175, edgeTolerance = 0.02;
@@ -271,6 +271,9 @@ private:
     void onEdgeTimer();
     void onEdgeFrame(const cv::Mat &raw16);
     void finishEdgeSlop();
+    void edgeAborted();
+    bool edgeWasAborted = false;
+    int edgeFailures = 0;                    // frames in a row the camera couldn't find the hole on the edge in
     void endEdgeSlop(const QString &message);
     bool sloping = false;
     bool slopCancelling = false;

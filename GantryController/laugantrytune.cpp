@@ -469,7 +469,19 @@ void LAUGantryMainWindow::showTuneZoom(const cv::Mat &raw16)
             ring.push_back(at(p));
         }
     }
-    cv::polylines(colour, ring, false, green, 1, cv::LINE_AA, 4);
+    cv::polylines(colour, ring, false, green, 2, cv::LINE_AA, 4);
+    // the bullseye's inner rings and centre
+    for (double f : { 2.0 / 3.0, 1.0 / 3.0 }) {
+        std::vector<cv::Point> inner;
+        for (int n = 0; n <= 48; n++) {
+            cv::Point2d p;
+            if (platenOverlay.project(hole + cv::Point2d(std::cos(n * CV_PI / 24.0), std::sin(n * CV_PI / 24.0)) * (4.9 * f), pair, single, &p)) {
+                inner.push_back(at(p));
+            }
+        }
+        cv::polylines(colour, inner, false, green, 1, cv::LINE_AA, 4);
+    }
+    cv::circle(colour, at(centre), 3 * 16, green, cv::FILLED, cv::LINE_AA, 4);
     const cv::Point c = at(centre);
     const int arm = 14 * 16;
     cv::line(colour, c - cv::Point(arm, 0), c + cv::Point(arm, 0), green, 1, cv::LINE_AA, 4);

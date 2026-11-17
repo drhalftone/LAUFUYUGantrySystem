@@ -49,8 +49,7 @@ namespace
     const double CREEP_SHARE = 0.7;          // each creep covers this share of the miss, so it never overshoots
     const double SMALLEST_STEP_MM = 0.005;   // a creep smaller than this is made as the whole miss
     const int MAX_CREEPS = 25;
-    const int MAX_RESTARTS = 3;              // overshot while creeping: start that side again
-    const int HITS_NEEDED = 2;               // single moves in a row within tolerance, from each side
+    const int MAX_RESTARTS = 10;             // overshot while creeping: start that side again
 
     cv::Point2d unitOf(const cv::Point2d &v)
     {
@@ -138,13 +137,13 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     tolerance->setSingleStep(0.005);
     tolerance->setSuffix(QString(" mm"));
     tolerance->setValue(settings.value(QString("LAUGantryMainWindow::edgeTolerance"), 0.02).toDouble());
-    tries->setRange(2, 20);
+    tries->setRange(1, 20);
     tries->setDecimals(0);
-    tries->setValue(settings.value(QString("LAUGantryMainWindow::edgeTries"), 8).toInt());
+    tries->setValue(settings.value(QString("LAUGantryMainWindow::edgeHitsNeeded"), 3).toInt());
     form->addRow(QString("Start past the edge"), away);
     form->addRow(QString("First stop short of it"), shortOf);
     form->addRow(QString("On the edge within"), tolerance);
-    form->addRow(QString("Single moves, at most, per side"), tries);
+    form->addRow(QString("Done after this many single moves in a row on the edge, from each side"), tries);
     layout->addLayout(form);
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(QString("Start"));
@@ -157,7 +156,7 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     settings.setValue(QString("LAUGantryMainWindow::edgeAway"), away->value());
     settings.setValue(QString("LAUGantryMainWindow::edgeShort"), shortOf->value());
     settings.setValue(QString("LAUGantryMainWindow::edgeTolerance"), tolerance->value());
-    settings.setValue(QString("LAUGantryMainWindow::edgeTries"), (int)tries->value());
+    settings.setValue(QString("LAUGantryMainWindow::edgeHitsNeeded"), (int)tries->value());
     edgeAway = away->value();
     edgeShort = shortOf->value();
     edgeTolerance = tolerance->value();
@@ -231,6 +230,8 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     edgeSide = +1;                           // learn the right side first: from the paper, moving left onto the edge
     edgeLearning = true;
     edgeRestarts = 0;
+    edgeWasAborted = false;
+    edgeFailures = 0;
     slopSeenValid = false;
     slopSeenHole = false;
     slopSeenWhy.clear();
@@ -245,7 +246,7 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
         if (railWidget->isHoming()) {
             railWidget->abortHome();         // onEdgeMoveFinished ends it once they have stopped
         } else if (!edgeWaitingFrame && !edgeTimer->isActive()) {
-            endEdgeSlop(QString("Measuring the X slop was cancelled."));
+            edgeAborted();
         }
     });
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, homeDialog, [this](cv::Mat raw16) { showSlopZoom(raw16); });
@@ -288,7 +289,7 @@ void LAUGantryMainWindow::edgeStartSide()
 void LAUGantryMainWindow::onEdgeMoveFinished(bool ok, const QString &message)
 {
     if (edgeCancelling) {
-        endEdgeSlop(QString("Measuring the X slop was cancelled."));
+        edgeAborted();
         return;
     }
     if (!ok) {
@@ -300,8 +301,11 @@ void LAUGantryMainWindow::onEdgeMoveFinished(bool ok, const QString &message)
             edgeMoveTo(edgeEstimate(edgeSide) + edgeSide * edgeShort, EdgeShort,
                        QString("Learning %1: to %2 mm short of the edge...").arg(sideName(edgeSide)).arg(edgeShort, 0, 'f', 3));
         } else {
-            edgeMoveTo(edgeEstimate(edgeSide), EdgeSingle, QString("Single move %1: straight to where it lands on the edge, X %2 mm...")
-                                                                .arg(sideName(edgeSide)).arg(edgeEstimate(edgeSide), 0, 'f', 3));
+            edgeMoveTo(edgeEstimate(edgeSide), EdgeSingle,
+                       QString("Single move %1: straight to where it lands on the edge, X %2 mm.\n"
+                               "On the edge in a row: %3 of %4 moving left, %5 of %6 moving right. Slop so far %7 mm.")
+                           .arg(sideName(edgeSide)).arg(edgeEstimate(edgeSide), 0, 'f', 3).arg(edgeHits[0]).arg(edgeTries)
+                           .arg(edgeHits[1]).arg(edgeTries).arg(edgeEstimate(-1) - edgeEstimate(+1), 0, 'f', 3));
         }
         return;
     }
@@ -314,7 +318,7 @@ void LAUGantryMainWindow::onEdgeTimer()
         return;
     }
     if (edgeCancelling) {
-        endEdgeSlop(QString("Measuring the X slop was cancelled."));
+        edgeAborted();
         return;
     }
     if (edgeWaitingFrame) {
@@ -335,7 +339,7 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
     edgeWaitingFrame = false;
     edgeTimer->stop();
     if (edgeCancelling) {
-        endEdgeSlop(QString("Measuring the X slop was cancelled."));
+        edgeAborted();
         return;
     }
     cv::Mat gray;
@@ -376,6 +380,11 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
             why = QString("The edge runs along the X travel, so X can't put the hole on it.");
         }
     }
+    if (!found && ++edgeFailures <= 3) {
+        edgeTimer->start(SETTLE_MS);         // look again: a frame taken while something was still settling
+        return;
+    }
+    edgeFailures = 0;
     EdgeStop s;
     s.stage = edgeStage;
     s.side = edgeSide;
@@ -388,8 +397,9 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
     slopZoomNote = found ? QString("hole's centre to the edge: %1 mm in X").arg(miss, 0, 'f', 3) : QString();
 
     if (!found) {
-        endEdgeSlop(QString("Measuring the X slop stopped: the camera couldn't find the hole on the edge (%1). Its view is saved as stop_%2.png in %3")
-                        .arg(why).arg(stop, 3, 10, QChar('0')).arg(QDir::toNativeSeparators(edgeFolder)));
+        cameraWidget->showMessage(QString("The camera couldn't find the hole on the edge (%1). Its view is saved as stop_%2.png in %3")
+                                      .arg(why).arg(stop, 3, 10, QChar('0')).arg(QDir::toNativeSeparators(edgeFolder)));
+        edgeAborted();                       // what was measured is still kept
         return;
     }
     const int i = sideIndex(edgeSide);
@@ -442,23 +452,32 @@ void LAUGantryMainWindow::edgeNextSide()
         edgeStartSide();
         return;
     }
-    const bool done = (edgeHits[0] >= HITS_NEEDED && edgeHits[1] >= HITS_NEEDED) || (edgeSingles[0] >= edgeTries && edgeSingles[1] >= edgeTries);
+    const bool done = edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries;   // however many single moves it takes
     if (done) {
         finishEdgeSlop();
         return;
     }
-    edgeSide = -edgeSide;
-    if (edgeSingles[sideIndex(edgeSide)] >= edgeTries || edgeHits[sideIndex(edgeSide)] >= HITS_NEEDED) {
-        edgeSide = -edgeSide;                // that side is done: keep at this one
-    }
+    edgeSide = -edgeSide;                   // move and return, from the other side
     edgeStartSide();
+}
+
+// Abort: the sliders have stopped; whatever was measured is still saved and plotted, if both sides were learned
+void LAUGantryMainWindow::edgeAborted()
+{
+    if (edgeOnEdge[0].isEmpty() || edgeOnEdge[1].isEmpty()) {
+        endEdgeSlop(QString("Measuring the X slop was aborted before both sides were learned, so there's no slop to report. "
+                            "The stops so far are in %1").arg(QDir::toNativeSeparators(edgeFolder)));
+        return;
+    }
+    edgeWasAborted = true;
+    finishEdgeSlop();
 }
 
 void LAUGantryMainWindow::finishEdgeSlop()
 {
     const double xl = edgeEstimate(+1), xr = edgeEstimate(-1);
     const double slop = xr - xl;
-    const bool converged = edgeHits[0] >= HITS_NEEDED && edgeHits[1] >= HITS_NEEDED;
+    const bool converged = edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries;
 
     // ---- the log
     QFile csv(QDir(edgeFolder).filePath(QString("edge_slop.csv")));
@@ -519,7 +538,7 @@ void LAUGantryMainWindow::finishEdgeSlop()
         QString("arriving moving left  X_L = %1 mm      arriving moving right  X_R = %2 mm").arg(xl, 0, 'f', 3).arg(xr, 0, 'f', 3),
         QString("slop X_R - X_L = %1 mm     %2").arg(slop, 0, 'f', 3)
             .arg(converged ? QString("single moves land within %1 mm from both sides").arg(edgeTolerance, 0, 'f', 3)
-                           : QString("NOT converged within %1 single moves a side").arg(edgeTries)),
+                           : QString("ABORTED before converging: %1 and %2 in a row on the edge, %3 needed").arg(edgeHits[0]).arg(edgeHits[1]).arg(edgeTries)),
         QString("open circles: learning (short stop, creeps); filled: single moves.  blue: moving left   orange: moving right"),
     };
     for (int k = 0; k < lines.count(); k++) {
@@ -539,6 +558,9 @@ void LAUGantryMainWindow::finishEdgeSlop()
     json["x_slop_mm"] = slop;
     json["per_last_x_sign_mm"] = 0.5 * slop;   // add lastX * this to the midpoint of the two
     json["converged"] = converged;
+    json["aborted"] = edgeWasAborted;
+    json["in_a_row_needed"] = edgeTries;
+    json["in_a_row_reached"] = QJsonArray{ edgeHits[0], edgeHits[1] };
     json["tolerance_mm"] = edgeTolerance;
     json["away_mm"] = edgeAway;
     json["short_mm"] = edgeShort;
@@ -561,7 +583,8 @@ void LAUGantryMainWindow::finishEdgeSlop()
                         "Results are in %6")
                     .arg(edgeName).arg(slop, 0, 'f', 3).arg(xl, 0, 'f', 3).arg(xr, 0, 'f', 3)
                     .arg(converged ? QString("Single moves now land within %1 mm from both sides.").arg(edgeTolerance, 0, 'f', 3)
-                                   : QString("Single moves didn't all land within %1 mm.").arg(edgeTolerance, 0, 'f', 3))
+                                   : QString("Aborted before single moves landed within %1 mm %2 times in a row from both sides (%3 moving left, %4 moving right).")
+                                       .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries).arg(edgeHits[0]).arg(edgeHits[1]))
                     .arg(QDir::toNativeSeparators(edgeFolder)));
     const QImage shown(plotPath);
     if (!shown.isNull()) {
