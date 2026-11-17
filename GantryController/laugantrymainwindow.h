@@ -240,40 +240,50 @@ private:
     void showSlopZoom(const cv::Mat &raw16);
     QString slopZoomTitle, slopZoomNote;     // set: the zoom's header and an extra line, for the edge test
 
-    // Measure X slop on the page edge (laugantryedgeslop.cpp): the hole's centre put exactly on a page edge across the
-    // X travel, arriving moving left and moving right, by creeping without reversing; then single moves refined
-    enum EdgeStage { EdgeOut, EdgeShort, EdgeCreep, EdgeSingle };
+    // Measure slop by tracking the hole (laugantryedgeslop.cpp): the camera rides on the carriage and the i1 holder
+    // swings on it, so where the hole lands in the camera's view after a move IS the slop.  Over plain paper the hole
+    // is a bright disc; the sliders move 1" right and back, 1" left and back, and the hole's place relative to the
+    // carriage is compared between the two directions of arrival, then predicted and refined until it lands still.
+    enum EdgeStage { EdgeSpot, EdgeOut, EdgeBack };
     struct EdgeStop
     {
-        EdgeStage stage = EdgeOut;
+        bool predicting = false;
         int side = 1;                        // +1 arrived from the right, moving left; -1 from the left, moving right
-        double commanded = 0.0, reported = 0.0, miss = 0.0;   // X, slider mm; miss: the X move that puts the hole on the edge
+        double commandedX = 0.0, reportedX = 0.0, reportedY = 0.0;
         bool found = false;
+        cv::Point2d aperture;                // where the hole was relative to the carriage: board mm, rails at zero
+        double missX = 0.0;                  // predicting: X, slider mm, still needed to land where the midpoint puts it
         QString note;
     };
     bool edgeSloping = false, edgeCancelling = false, edgeWaitingFrame = false, edgeLearning = true;
     QTimer *edgeTimer = nullptr;
-    EdgeStage edgeStage = EdgeOut;
-    int edgeSide = 1, edgeCreeps = 0, edgeRestarts = 0, edgeTries = 3;      // edgeTries: single moves in a row on the edge, from each side, to finish
-    int edgeHits[2] = { 0, 0 }, edgeSingles[2] = { 0, 0 };   // [0] arriving moving left, [1] moving right
-    QList<double> edgeOnEdge[2];             // X where the hole's centre was on the edge, each arrival
-    double edgeAway = 25.4, edgeShort = 3.175, edgeTolerance = 0.02;
-    double edgeX = 0.0, edgeY = 0.0, edgeModelX = 0.0;
-    cv::Point2d edgeAlong, edgeIntoPaper;
-    QString edgeFolder, edgeScan, edgeName;
+    EdgeStage edgeStage = EdgeSpot;
+    int edgeSide = 1, edgeTries = 3;         // edgeTries: predicted returns in a row within tolerance, from each side, to finish
+    int edgeHits[2] = { 0, 0 };              // [0] arriving moving left, [1] moving right
+    QList<cv::Point2d> edgeApertures[2];     // the hole relative to the carriage, each arrival from that side
+    double edgeAway = 25.4, edgeTolerance = 0.02;
+    double edgeSpotX = 0.0, edgeY = 0.0, edgeX = 0.0;
+    QList<cv::Point2d> edgeSpots;            // plain-paper spots to try, slider mm (X, Y)
+    int edgeSpotTry = 0;
+    QString edgeFolder, edgeScan;
     QList<EdgeStop> edgeStops;
-    QJsonArray edgeLog;
-    double edgeEstimate(int side) const;
+    bool edgeWasAborted = false;
+    int edgeFailures = 0;                    // frames in a row the camera couldn't find the hole in
+    // live tracking: the hole found in the live picture a few times a second, for the close-up
+    qint64 edgeTrackedAt = 0;
+    bool edgeTracked = false;
+    cv::Point2d edgeTrackedAperture;
+    QList<cv::Point2d> edgeTrail;            // the hole's board position as tracked, latest last
+    cv::Point2d edgeMean(int i) const;
+    double edgeCorrection(int side) const;   // X, slider mm, to add arriving from this side so the hole lands at the midpoint
     void edgeMoveTo(double x, EdgeStage stage, const QString &message);
-    void edgeStartSide();
-    void edgeNextSide();
+    void edgeNextReturn();
     void onEdgeMoveFinished(bool ok, const QString &message);
     void onEdgeTimer();
     void onEdgeFrame(const cv::Mat &raw16);
+    void trackHoleLive(const cv::Mat &raw16);
     void finishEdgeSlop();
     void edgeAborted();
-    bool edgeWasAborted = false;
-    int edgeFailures = 0;                    // frames in a row the camera couldn't find the hole on the edge in
     void endEdgeSlop(const QString &message);
     bool sloping = false;
     bool slopCancelling = false;

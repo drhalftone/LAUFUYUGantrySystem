@@ -2,19 +2,20 @@
  * Copyright (c) 2026, Dr. Daniel L. Lau -- All rights reserved.                 *
  *********************************************************************************/
 //
-// Measure X slop on the page's edge.  Slop is taken up when the head changes direction, not while it keeps moving the
-// same way, so it can be measured without any model: put the hole's centre exactly on a straight page edge across the
-// X travel, arriving once moving left and once moving right, and the two slider positions differ by the slop.
+// Measure slop by tracking the hole.  The camera rides on the carriage and the i1 holder swings a little on it, so
+// where the hole lands in the camera's view after a move is the slop itself: no page edge or corner is needed, only
+// plain paper under the hole, where the hole is a bright disc (LAUHoleView::findHole) whose centre, less where the
+// sliders are, is the hole's place relative to the carriage.
 //
-//   Learn a side:  out 1" past the edge on that side, back to 1/8" short of it in one move, then creep toward the edge
-//                  in steps that always fall short (a share of the miss the camera sees), never reversing, until the
-//                  hole's centre is on the edge.  That X is where the hole lands arriving from that side.
-//   Predict:       then alternately from each side, out 1" and back in ONE move straight to that side's X; the camera's
-//                  miss refines it (each side's X is the mean of where the hole was on the edge), until single moves
-//                  land on the edge within tolerance from both sides.
+//   Spot:     a patch of plain paper in from a page corner (12, 20 or 30 mm, as the corner fine-tune uses), with room
+//             to move 1" each way in X.
+//   Learn:    move and return: 1" right and back to the spot (arriving moving left), 1" left and back (arriving
+//             moving right), the hole found after each return, until the shift between the two is pinned down.
+//   Predict:  keep moving and returning, but add to each return the X correction that should put the hole at the
+//             midpoint of the two, and see where it lands; each landing refines that side's estimate, until both
+//             sides land within tolerance a few times in a row.  Abort stops it and keeps what was measured.
 //
-// X is the single rail.  Arriving moving left (-X) and moving right (+X) give X_L and X_R; the slop is X_R - X_L, and
-// a target found without regard to direction is reached by adding lastX * (X_R - X_L) / 2 to its midpoint.
+// The close-up tracks the hole live, a few times a second, with a bullseye and a trail.
 //
 #include "laugantrymainwindow.h"
 #include "lauimageinspectdialog.h"
@@ -46,17 +47,18 @@ namespace
 {
     const int SETTLE_MS = 500;
     const int FRAME_TIMEOUT_MS = 15000;
-    const double CREEP_SHARE = 0.7;          // each creep covers this share of the miss, so it never overshoots
-    const double SMALLEST_STEP_MM = 0.005;   // a creep smaller than this is made as the whole miss
-    const int MAX_CREEPS = 25;
-    const int MAX_RESTARTS = 10;             // overshot while creeping: start that side again
+    const int MIN_LEARN = 3;                 // returns from each side before the slop is trusted
+    const int MAX_LEARN = 12;                // and at most, before predicting anyway
+    const int TRACK_EVERY_MS = 200;          // live tracking, a few times a second
+    const int TRAIL = 150;
+    const double INSETS_MM[] = { 12.0, 20.0, 30.0 };
 
     cv::Point2d unitOf(const cv::Point2d &v)
     {
         return v * (1.0 / std::max(cv::norm(v), 1e-12));
     }
 
-    int sideIndex(int side)                  // side +1 comes from the right moving left: X_L, index 0
+    int sideIndex(int side)                  // side +1 comes from the right, moving left: index 0
     {
         return side > 0 ? 0 : 1;
     }
@@ -69,7 +71,7 @@ namespace
 
 void LAUGantryMainWindow::onEdgeSlopRequested()
 {
-    const QString title = QString("Measure X Slop on the Page Edge");
+    const QString title = QString("Measure Slop by Tracking the Hole");
     if (scanning || measuring || merging || returningHome || tuning || sloping || edgeSloping || pageMoving || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
@@ -116,34 +118,29 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     QDialog dialog(this);
     dialog.setWindowTitle(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
-    QLabel *label = new QLabel(QString("The hole's centre is put exactly on the page's left edge (or its right edge, if the left can't be reached), "
-                                       "arriving once moving left and once moving right. Each side starts 1\" past the edge, comes back to 1/8\" "
-                                       "short of it in one move, then creeps toward it without ever reversing. Then single moves from each side, "
-                                       "straight to where that side put the hole on the edge, are refined until they land on it.\n\n"
+    QLabel *label = new QLabel(QString("The camera rides on the carriage, so where the i1's hole lands in its view after a move is the slop. Over a patch "
+                                       "of plain paper near a page corner, the sliders move 1\" right and back, then 1\" left and back, and the camera "
+                                       "finds the hole after each return. Once the shift between the two directions is known, each return is corrected "
+                                       "for it, and refined, until the hole lands in the same place from both sides. The close-up tracks the hole live.\n\n"
                                        "Take the i1 Pro out of its holder first so the camera sees the paper through the hole, and don't move the page."));
     label->setWordWrap(true);
     layout->addWidget(label);
     QFormLayout *form = new QFormLayout();
-    QDoubleSpinBox *away = new QDoubleSpinBox(), *shortOf = new QDoubleSpinBox(), *tolerance = new QDoubleSpinBox(), *tries = new QDoubleSpinBox();
-    away->setRange(5.0, 60.0);
+    QDoubleSpinBox *away = new QDoubleSpinBox(), *tolerance = new QDoubleSpinBox(), *inRow = new QDoubleSpinBox();
+    away->setRange(2.0, 60.0);
     away->setSuffix(QString(" mm"));
     away->setValue(settings.value(QString("LAUGantryMainWindow::edgeAway"), 25.4).toDouble());
-    shortOf->setRange(0.5, 10.0);
-    shortOf->setDecimals(3);
-    shortOf->setSuffix(QString(" mm"));
-    shortOf->setValue(settings.value(QString("LAUGantryMainWindow::edgeShort"), 3.175).toDouble());
     tolerance->setRange(0.005, 0.5);
     tolerance->setDecimals(3);
     tolerance->setSingleStep(0.005);
     tolerance->setSuffix(QString(" mm"));
     tolerance->setValue(settings.value(QString("LAUGantryMainWindow::edgeTolerance"), 0.02).toDouble());
-    tries->setRange(1, 20);
-    tries->setDecimals(0);
-    tries->setValue(settings.value(QString("LAUGantryMainWindow::edgeHitsNeeded"), 3).toInt());
-    form->addRow(QString("Start past the edge"), away);
-    form->addRow(QString("First stop short of it"), shortOf);
-    form->addRow(QString("On the edge within"), tolerance);
-    form->addRow(QString("Done after this many single moves in a row on the edge, from each side"), tries);
+    inRow->setRange(1, 20);
+    inRow->setDecimals(0);
+    inRow->setValue(settings.value(QString("LAUGantryMainWindow::edgeHitsNeeded"), 3).toInt());
+    form->addRow(QString("Move each way"), away);
+    form->addRow(QString("Lands still within"), tolerance);
+    form->addRow(QString("Done after this many in a row, from each side"), inRow);
     layout->addLayout(form);
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(QString("Start"));
@@ -154,50 +151,33 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
         return;
     }
     settings.setValue(QString("LAUGantryMainWindow::edgeAway"), away->value());
-    settings.setValue(QString("LAUGantryMainWindow::edgeShort"), shortOf->value());
     settings.setValue(QString("LAUGantryMainWindow::edgeTolerance"), tolerance->value());
-    settings.setValue(QString("LAUGantryMainWindow::edgeHitsNeeded"), (int)tries->value());
+    settings.setValue(QString("LAUGantryMainWindow::edgeHitsNeeded"), (int)inRow->value());
     edgeAway = away->value();
-    edgeShort = shortOf->value();
     edgeTolerance = tolerance->value();
-    edgeTries = (int)tries->value();
+    edgeTries = (int)inRow->value();
 
-    // the page edges that cross the X travel (most nearly square to the single rail), the left one first
+    // plain-paper spots: in from each corner, with room to move each way in X
     std::vector<cv::Point2d> P;
-    cv::Point2d middle(0, 0);
     for (int k = 0; k < 4; k++) {
         P.emplace_back(corners[k].toArray().at(0).toDouble(), corners[k].toArray().at(1).toDouble());
-        middle += P.back() * 0.25;
     }
-    const cv::Point2d xDir = unitOf(holeView.boardAxis(1));   // board direction of +X (the single rail)
-    std::vector<int> crossing{ 0, 1, 2, 3 };
-    std::sort(crossing.begin(), crossing.end(), [&](int a, int b) {
-        return std::abs(unitOf(P[(a + 1) % 4] - P[a]).dot(xDir)) < std::abs(unitOf(P[(b + 1) % 4] - P[b]).dot(xDir));
-    });
-    crossing.resize(2);
-    std::vector<double> xOf(4, 0.0), yOf(4, 0.0);
-    for (int k : crossing) {
-        slopGeometry.railsFor((P[k] + P[(k + 1) % 4]) * 0.5, &xOf[k], &yOf[k], true);
-    }
-    std::sort(crossing.begin(), crossing.end(), [&](int a, int b) { return xOf[a] < xOf[b]; });
-    int chosen = -1;
-    for (int k : crossing) {
-        const double margin = edgeAway + 2.0;
-        if (slopGeometry.reachable(xOf[k] - margin, yOf[k]) && slopGeometry.reachable(xOf[k] + margin, yOf[k])) {
-            chosen = k;
-            break;
+    edgeSpots.clear();
+    for (double inset : INSETS_MM) {
+        for (int k = 0; k < 4; k++) {
+            const cv::Point2d at = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * inset + unitOf(P[(k + 3) % 4] - P[k]) * inset;
+            double x = 0.0, y = 0.0;
+            slopGeometry.railsFor(at, &x, &y, true);
+            if (slopGeometry.reachable(x - edgeAway - 1.0, y) && slopGeometry.reachable(x + edgeAway + 1.0, y)) {
+                edgeSpots << cv::Point2d(x, y);
+            }
         }
     }
-    if (chosen < 0) {
-        QMessageBox::warning(this, title, QString("Neither page edge across the X travel can be reached %1 mm to both sides with the limit sliders "
-                                                  "where they are. Start closer to the edge, or widen the limit sliders.").arg(edgeAway, 0, 'f', 1));
+    if (edgeSpots.isEmpty()) {
+        QMessageBox::warning(this, title, QString("No spot near a page corner leaves room to move %1 mm each way in X with the limit sliders where they are. "
+                                                  "Move less, or widen the limit sliders.").arg(edgeAway, 0, 'f', 1));
         return;
     }
-    edgeName = (chosen == crossing[0]) ? QString("left") : QString("right");
-    edgeAlong = P[(chosen + 1) % 4] - P[chosen];
-    edgeIntoPaper = middle - (P[chosen] + P[(chosen + 1) % 4]) * 0.5;
-    edgeY = yOf[chosen];
-    edgeModelX = xOf[chosen];
 
     slopAperture = holeView.calibratedAperture();
     QFile tuned(QDir(folder).filePath(QString("corner_tune.json")));
@@ -210,7 +190,7 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
             }
         }
     }
-    edgeFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_edgeslop"));
+    edgeFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_holeslop"));
     QDir().mkpath(edgeFolder);
 
     if (!edgeTimer) {
@@ -221,21 +201,23 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
     edgeSloping = true;
     edgeCancelling = false;
     edgeWaitingFrame = false;
-    edgeOnEdge[0].clear();
-    edgeOnEdge[1].clear();
-    edgeHits[0] = edgeHits[1] = 0;
-    edgeSingles[0] = edgeSingles[1] = 0;
-    edgeLog = QJsonArray();
-    edgeStops.clear();
-    edgeSide = +1;                           // learn the right side first: from the paper, moving left onto the edge
-    edgeLearning = true;
-    edgeRestarts = 0;
     edgeWasAborted = false;
+    edgeLearning = true;
     edgeFailures = 0;
+    edgeApertures[0].clear();
+    edgeApertures[1].clear();
+    edgeHits[0] = edgeHits[1] = 0;
+    edgeStops.clear();
+    edgeTrail.clear();
+    edgeTracked = false;
+    edgeTrackedAt = 0;
+    edgeSpotTry = 0;
+    edgeSide = +1;
+    slopSeen = LAUHoleView::Corner();
     slopSeenValid = false;
     slopSeenHole = false;
     slopSeenWhy.clear();
-    slopZoomTitle = QString("%1 edge").arg(edgeName);
+    slopZoomTitle = QString("tracking the hole");
     slopZoomNote.clear();
     cameraWidget->lockScanActions(true);
     railBox->setEnabled(false);
@@ -249,24 +231,34 @@ void LAUGantryMainWindow::onEdgeSlopRequested()
             edgeAborted();
         }
     });
-    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, homeDialog, [this](cv::Mat raw16) { showSlopZoom(raw16); });
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, homeDialog, [this](cv::Mat raw16) {
+        trackHoleLive(raw16);
+        showSlopZoom(raw16);
+    });
     homeDialog->open();
-    edgeStartSide();
+    edgeY = edgeSpots[0].y;
+    edgeMoveTo(edgeSpots[0].x, EdgeSpot, QString("Looking for plain paper to see the hole on (spot 1 of %1)...").arg(edgeSpots.count()));
 }
 
-// where this side puts the hole on the edge: what it has measured so far, else what the other side has, else the model
-double LAUGantryMainWindow::edgeEstimate(int side) const
+// the hole relative to the carriage, arriving from side i, on average
+cv::Point2d LAUGantryMainWindow::edgeMean(int i) const
 {
-    const QList<double> &own = edgeOnEdge[sideIndex(side)], &other = edgeOnEdge[sideIndex(-side)];
-    const QList<double> &use = !own.isEmpty() ? own : other;
-    if (use.isEmpty()) {
-        return edgeModelX;
+    cv::Point2d mean(0, 0);
+    for (const cv::Point2d &a : edgeApertures[i]) {
+        mean += a * (1.0 / edgeApertures[i].count());
     }
-    double sum = 0.0;
-    for (double x : use) {
-        sum += x;
+    return mean;
+}
+
+// the X, slider mm, to add arriving from this side so the hole lands at the midpoint of the two sides
+double LAUGantryMainWindow::edgeCorrection(int side) const
+{
+    if (edgeApertures[0].isEmpty() || edgeApertures[1].isEmpty()) {
+        return 0.0;
     }
-    return sum / use.count();
+    const cv::Point2d ay = holeView.boardAxis(1);
+    const cv::Point2d middle = (edgeMean(0) + edgeMean(1)) * 0.5;
+    return (middle - edgeMean(sideIndex(side))).dot(ay) / ay.dot(ay);
 }
 
 void LAUGantryMainWindow::edgeMoveTo(double x, EdgeStage stage, const QString &message)
@@ -277,13 +269,22 @@ void LAUGantryMainWindow::edgeMoveTo(double x, EdgeStage stage, const QString &m
     railWidget->moveRails(x, edgeY);         // answers with emitHomeFinished -> onEdgeMoveFinished
 }
 
-// out past the edge on this side
-void LAUGantryMainWindow::edgeStartSide()
+// out 1" on this side, then back
+void LAUGantryMainWindow::edgeNextReturn()
 {
-    const double x = edgeEstimate(edgeSide) + edgeSide * edgeAway;
-    edgeCreeps = 0;
-    edgeMoveTo(x, EdgeOut, QString("%1 %2: out %3 mm past the edge...").arg(edgeLearning ? QString("Learning") : QString("Single move"))
-                               .arg(sideName(edgeSide)).arg(edgeAway, 0, 'f', 1));
+    const cv::Point2d ay = holeView.boardAxis(1);
+    const double slop = (edgeApertures[0].isEmpty() || edgeApertures[1].isEmpty()) ? 0.0 : (edgeMean(1) - edgeMean(0)).dot(ay) / ay.dot(ay);
+    QString message = edgeLearning ? QString("Learning: out %1 mm %2, then back to the spot.\nReturns so far: %3 moving left, %4 moving right.")
+                                         .arg(edgeAway, 0, 'f', 1).arg(edgeSide > 0 ? QString("right") : QString("left"))
+                                         .arg(edgeApertures[0].count()).arg(edgeApertures[1].count())
+                                   : QString("Predicting: out %1 mm %2, then back with %3 mm added for the slop.\n"
+                                             "Landed still in a row: %4 of %5 moving left, %6 of %5 moving right.")
+                                         .arg(edgeAway, 0, 'f', 1).arg(edgeSide > 0 ? QString("right") : QString("left"))
+                                         .arg(edgeCorrection(edgeSide), 0, 'f', 3).arg(edgeHits[0]).arg(edgeTries).arg(edgeHits[1]);
+    if (!edgeApertures[0].isEmpty() && !edgeApertures[1].isEmpty()) {
+        message += QString("\nX slop so far: %1 mm.").arg(slop, 0, 'f', 3);
+    }
+    edgeMoveTo(edgeSpotX + edgeSide * edgeAway, EdgeOut, message);
 }
 
 void LAUGantryMainWindow::onEdgeMoveFinished(bool ok, const QString &message)
@@ -293,23 +294,15 @@ void LAUGantryMainWindow::onEdgeMoveFinished(bool ok, const QString &message)
         return;
     }
     if (!ok) {
-        endEdgeSlop(QString("Measuring the X slop stopped: %1").arg(message));
+        endEdgeSlop(QString("Measuring the slop stopped: %1").arg(message));
         return;
     }
     if (edgeStage == EdgeOut) {
-        if (edgeLearning) {
-            edgeMoveTo(edgeEstimate(edgeSide) + edgeSide * edgeShort, EdgeShort,
-                       QString("Learning %1: to %2 mm short of the edge...").arg(sideName(edgeSide)).arg(edgeShort, 0, 'f', 3));
-        } else {
-            edgeMoveTo(edgeEstimate(edgeSide), EdgeSingle,
-                       QString("Single move %1: straight to where it lands on the edge, X %2 mm.\n"
-                               "On the edge in a row: %3 of %4 moving left, %5 of %6 moving right. Slop so far %7 mm.")
-                           .arg(sideName(edgeSide)).arg(edgeEstimate(edgeSide), 0, 'f', 3).arg(edgeHits[0]).arg(edgeTries)
-                           .arg(edgeHits[1]).arg(edgeTries).arg(edgeEstimate(-1) - edgeEstimate(+1), 0, 'f', 3));
-        }
+        const double back = edgeSpotX + (edgeLearning ? 0.0 : edgeCorrection(edgeSide));
+        edgeMoveTo(back, EdgeBack, QString("Back to the spot %1...").arg(sideName(edgeSide)));
         return;
     }
-    edgeTimer->start(SETTLE_MS);             // then a frame of the edge
+    edgeTimer->start(SETTLE_MS);             // then a frame of the hole
 }
 
 void LAUGantryMainWindow::onEdgeTimer()
@@ -323,7 +316,7 @@ void LAUGantryMainWindow::onEdgeTimer()
     }
     if (edgeWaitingFrame) {
         edgeWaitingFrame = false;
-        endEdgeSlop(QString("Measuring the X slop stopped: the camera stopped delivering frames."));
+        endEdgeSlop(QString("Measuring the slop stopped: the camera stopped delivering frames."));
         return;
     }
     edgeWaitingFrame = true;
@@ -346,126 +339,140 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
     raw16.convertTo(gray, CV_8U, 0.25);      // Mono10 -> 8 bits, as the scans are saved
     const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
     const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
-    const cv::Point2d guess = slopAperture + ax * pair + ay * single;
-    LAUHoleView::Corner edge;
-    cv::Point2d hole;
+    const cv::Point2d guess = (edgeTracked ? edgeTrackedAperture : slopAperture) + ax * pair + ay * single;
+    LAUHoleView::Hole hole;
     QString why;
     cv::Mat check;
-    double radius = 0.0;
-    bool found = holeView.findHoleAtEdge(gray, pair, single, guess, edgeAlong, edgeIntoPaper, &hole, &edge, &why, &check, &radius);
-    slopSeen = edge;
-    slopSeenValid = true;
-    slopSeenHole = found;
-    slopSeenWhy = why;
-    slopSeenRadius = radius;
-    if (found) {
-        slopSeenAperture = hole - ax * pair - ay * single;
-        slopAperture = slopSeenAperture;     // look there next time
-    }
+    const bool found = holeView.findHole(gray, pair, single, guess, &hole, &why, &check);
     const int stop = edgeStops.count() + 1;
     if (!check.empty()) {
         QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888)
             .save(QDir(edgeFolder).filePath(QString("stop_%1.png").arg(stop, 3, 10, QChar('0'))));
     }
-
-    // the X move that puts the hole's centre on the edge: n . (hole + ay * dX - edge) = 0
-    double miss = 0.0;
     if (found) {
-        const cv::Point2d n(-edge.edgeDir[0].y, edge.edgeDir[0].x);
-        const double across = n.dot(ay);
-        found = std::abs(across) > 1e-6;
-        if (found) {
-            miss = -n.dot(hole - edge.edgeAt[0]) / across;
-        } else {
-            why = QString("The edge runs along the X travel, so X can't put the hole on it.");
-        }
+        slopAperture = hole.aperture;        // look there next time
+        slopSeen = LAUHoleView::Corner();
+        slopSeenValid = true;
+        slopSeenHole = true;
+        slopSeenAperture = hole.aperture;
+        slopSeenRadius = 0.0;
     }
+
+    // finding a spot: plain paper under the hole, or on to the next spot
+    if (edgeStage == EdgeSpot) {
+        if (found) {
+            edgeSpotX = edgeX;
+            edgeSide = +1;
+            edgeNextReturn();
+            return;
+        }
+        if (++edgeSpotTry >= edgeSpots.count()) {
+            endEdgeSlop(QString("No plain paper was found under the hole at any of the %1 spots near the page's corners (last: %2). "
+                                "The views are saved in %3").arg(edgeSpots.count()).arg(why).arg(QDir::toNativeSeparators(edgeFolder)));
+            return;
+        }
+        edgeY = edgeSpots[edgeSpotTry].y;
+        edgeMoveTo(edgeSpots[edgeSpotTry].x, EdgeSpot, QString("Looking for plain paper to see the hole on (spot %1 of %2)...")
+                                                           .arg(edgeSpotTry + 1).arg(edgeSpots.count()));
+        return;
+    }
+
     if (!found && ++edgeFailures <= 3) {
-        edgeTimer->start(SETTLE_MS);         // look again: a frame taken while something was still settling
+        edgeTimer->start(SETTLE_MS);         // look again
         return;
     }
     edgeFailures = 0;
     EdgeStop s;
-    s.stage = edgeStage;
+    s.predicting = !edgeLearning;
     s.side = edgeSide;
-    s.commanded = edgeX;
-    s.reported = single;
+    s.commandedX = edgeX;
+    s.reportedX = single;
+    s.reportedY = pair;
     s.found = found;
-    s.miss = miss;
+    s.aperture = hole.aperture;
     s.note = why;
-    edgeStops << s;
-    slopZoomNote = found ? QString("hole's centre to the edge: %1 mm in X").arg(miss, 0, 'f', 3) : QString();
-
     if (!found) {
-        cameraWidget->showMessage(QString("The camera couldn't find the hole on the edge (%1). Its view is saved as stop_%2.png in %3")
+        edgeStops << s;
+        cameraWidget->showMessage(QString("The camera couldn't find the hole (%1). Its view is saved as stop_%2.png in %3")
                                       .arg(why).arg(stop, 3, 10, QChar('0')).arg(QDir::toNativeSeparators(edgeFolder)));
         edgeAborted();                       // what was measured is still kept
         return;
     }
     const int i = sideIndex(edgeSide);
-    const double onEdge = single + miss;     // where this side's arrival would have put the hole on the edge
+    if (!edgeLearning) {
+        // how far, in X, the hole landed from where the midpoint of the two sides puts it at the spot
+        const cv::Point2d middle = (edgeMean(0) + edgeMean(1)) * 0.5;
+        s.missX = (middle + ax * pair + ay * edgeSpotX - hole.centre).dot(ay) / ay.dot(ay);
+        edgeHits[i] = (std::abs(s.missX) < edgeTolerance) ? edgeHits[i] + 1 : 0;
+    }
+    edgeStops << s;
+    edgeApertures[i] << hole.aperture;       // learning or predicting, every landing refines this side
 
     if (edgeLearning) {
-        if (std::abs(miss) < edgeTolerance) {
-            edgeOnEdge[i] << onEdge;         // learned: the hole is on the edge, arrived from this side
-            edgeNextSide();
-            return;
-        }
-        if (miss * edgeSide > 0.0) {
-            // past the edge (the miss points back the way it came): start this side again rather than reverse
-            if (++edgeRestarts > MAX_RESTARTS) {
-                endEdgeSlop(QString("Measuring the X slop stopped: creeping %1 overshot the edge %2 times.").arg(sideName(edgeSide)).arg(edgeRestarts));
-                return;
+        // learned once each side has a few and the X slop between them is pinned down to well within the tolerance
+        const int n0 = edgeApertures[0].count(), n1 = edgeApertures[1].count();
+        if (n0 >= MIN_LEARN && n1 >= MIN_LEARN) {
+            double v[2] = { 0.0, 0.0 };
+            for (int k = 0; k < 2; k++) {
+                const cv::Point2d mean = edgeMean(k);
+                for (const cv::Point2d &a : edgeApertures[k]) {
+                    const double d = (a - mean).dot(ay) / ay.dot(ay);
+                    v[k] += d * d / std::max(1, (int)edgeApertures[k].count() - 1);
+                }
             }
-            edgeStartSide();
-            return;
+            const double standardError = std::sqrt(v[0] / n0 + v[1] / n1);
+            if (standardError < 0.5 * edgeTolerance || (n0 >= MAX_LEARN && n1 >= MAX_LEARN)) {
+                edgeLearning = false;
+            }
         }
-        if (++edgeCreeps > MAX_CREEPS) {
-            endEdgeSlop(QString("Measuring the X slop stopped: %1 creeps %2 didn't reach the edge.").arg(MAX_CREEPS).arg(sideName(edgeSide)));
-            return;
-        }
-        const double step = (std::abs(miss) * CREEP_SHARE < SMALLEST_STEP_MM) ? miss : miss * CREEP_SHARE;
-        edgeMoveTo(edgeX + step, EdgeCreep, QString("Learning %1: creeping onto the edge, %2 mm to go (creep %3)...")
-                                                 .arg(sideName(edgeSide)).arg(std::abs(miss), 0, 'f', 3).arg(edgeCreeps));
-        return;
-    }
-
-    // a single move: how far it landed from the edge refines this side's X
-    edgeSingles[i]++;
-    edgeHits[i] = (std::abs(miss) < edgeTolerance) ? edgeHits[i] + 1 : 0;
-    edgeOnEdge[i] << onEdge;
-    edgeNextSide();
-}
-
-// on to the other side, or finished
-void LAUGantryMainWindow::edgeNextSide()
-{
-    edgeRestarts = 0;
-    if (edgeLearning) {
-        if (edgeOnEdge[1].isEmpty()) {
-            edgeSide = -1;                   // learn the left side too
-            edgeStartSide();
-            return;
-        }
-        edgeLearning = false;                // both learned: single moves, alternating
-        edgeSide = +1;
-        edgeStartSide();
-        return;
-    }
-    const bool done = edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries;   // however many single moves it takes
-    if (done) {
+    } else if (edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries) {
         finishEdgeSlop();
         return;
     }
-    edgeSide = -edgeSide;                   // move and return, from the other side
-    edgeStartSide();
+    edgeSide = -edgeSide;                    // move and return, the other way
+    edgeNextReturn();
 }
 
-// Abort: the sliders have stopped; whatever was measured is still saved and plotted, if both sides were learned
+// The close-up's live tracking: the hole found in the live picture a few times a second, over paper
+void LAUGantryMainWindow::trackHoleLive(const cv::Mat &raw16)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!edgeSloping || raw16.empty() || now - edgeTrackedAt < TRACK_EVERY_MS || !singleRail.isKnown() || !pairRail.isKnown()) {
+        return;
+    }
+    edgeTrackedAt = now;
+    const double t = guideClock.elapsed() / 1000.0;
+    const double pair = pairRail.estimate(t), single = singleRail.estimate(t);
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    cv::Mat gray;
+    raw16.convertTo(gray, CV_8U, 0.25);
+    LAUHoleView::Hole hole;
+    QString why;
+    if (!holeView.findHole(gray, pair, single, (edgeTracked ? edgeTrackedAperture : slopAperture) + ax * pair + ay * single, &hole, &why)) {
+        return;                              // over print or the board: keep the last
+    }
+    edgeTracked = true;
+    edgeTrackedAperture = hole.aperture;
+    edgeTrail << hole.centre;
+    while (edgeTrail.count() > TRAIL) {
+        edgeTrail.removeFirst();
+    }
+    slopSeen = LAUHoleView::Corner();
+    slopSeenValid = true;
+    slopSeenHole = true;
+    slopSeenAperture = hole.aperture;
+    slopSeenRadius = 0.0;
+    if (!edgeApertures[0].isEmpty() && !edgeApertures[1].isEmpty()) {
+        const cv::Point2d middle = (edgeMean(0) + edgeMean(1)) * 0.5;
+        slopZoomNote = QString("hole vs carriage: %1 mm in X from the midpoint").arg((hole.aperture - middle).dot(ay) / ay.dot(ay), 0, 'f', 3);
+    }
+}
+
+// Abort: the sliders have stopped; whatever was measured is still saved and plotted, if both sides were seen
 void LAUGantryMainWindow::edgeAborted()
 {
-    if (edgeOnEdge[0].isEmpty() || edgeOnEdge[1].isEmpty()) {
-        endEdgeSlop(QString("Measuring the X slop was aborted before both sides were learned, so there's no slop to report. "
+    if (edgeApertures[0].isEmpty() || edgeApertures[1].isEmpty()) {
+        endEdgeSlop(QString("Measuring the slop was stopped before the hole was seen arriving from both sides, so there's no slop to report. "
                             "The stops so far are in %1").arg(QDir::toNativeSeparators(edgeFolder)));
         return;
     }
@@ -475,120 +482,153 @@ void LAUGantryMainWindow::edgeAborted()
 
 void LAUGantryMainWindow::finishEdgeSlop()
 {
-    const double xl = edgeEstimate(+1), xr = edgeEstimate(-1);
-    const double slop = xr - xl;
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    const double det = ax.x * ay.y - ay.x * ax.y;
+    const auto toSliders = [&](const cv::Point2d &m) {   // board mm -> (X single, Y pair) slider mm
+        return cv::Point2d((ax.x * m.y - m.x * ax.y) / det, (m.x * ay.y - ay.x * m.y) / det);
+    };
+    const cv::Point2d left = edgeMean(0), right = edgeMean(1), middle = (left + right) * 0.5;
+    const cv::Point2d slop = toSliders(right - left);   // arriving moving right, less arriving moving left
     const bool converged = edgeHits[0] >= edgeTries && edgeHits[1] >= edgeTries;
 
     // ---- the log
-    QFile csv(QDir(edgeFolder).filePath(QString("edge_slop.csv")));
+    QFile csv(QDir(edgeFolder).filePath(QString("hole_slop.csv")));
     if (csv.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         QTextStream out(&csv);
-        out << "stop,stage,arriving,commanded_x_mm,reported_x_mm,found,miss_x_mm,on_edge_x_mm,note\n";
-        const QStringList stages{ QString("out"), QString("short"), QString("creep"), QString("single") };
+        out << "stop,stage,arriving,commanded_x_mm,reported_x_mm,reported_y_mm,found,hole_vs_carriage_x_mm,hole_vs_carriage_y_mm,miss_x_mm,note\n";
         for (int k = 0; k < edgeStops.count(); k++) {
             const EdgeStop &s = edgeStops[k];
-            out << k + 1 << ',' << stages.value((int)s.stage) << ',' << (s.side > 0 ? "moving_left" : "moving_right") << ','
-                << QString::number(s.commanded, 'f', 4) << ',' << QString::number(s.reported, 'f', 4) << ',' << (s.found ? 1 : 0) << ','
-                << QString::number(s.miss, 'f', 4) << ',' << QString::number(s.reported + s.miss, 'f', 4) << ",\""
-                << QString(s.note).replace(QChar('"'), QChar('\'')) << "\"\n";
+            const cv::Point2d d = toSliders(s.aperture - middle);
+            out << k + 1 << ',' << (s.predicting ? "predict" : "learn") << ',' << (s.side > 0 ? "moving_left" : "moving_right") << ','
+                << QString::number(s.commandedX, 'f', 4) << ',' << QString::number(s.reportedX, 'f', 4) << ',' << QString::number(s.reportedY, 'f', 4) << ','
+                << (s.found ? 1 : 0) << ',' << (s.found ? QString::number(d.x, 'f', 4) : QString()) << ',' << (s.found ? QString::number(d.y, 'f', 4) : QString())
+                << ',' << (s.predicting ? QString::number(s.missX, 'f', 4) : QString()) << ",\"" << QString(s.note).replace(QChar('"'), QChar('\'')) << "\"\n";
         }
     }
 
-    // ---- the plot: each stop's miss, by stop, the two sides in their own colours, the tolerance shaded
-    const int width = 1000, height = 640, left = 80, right = 30, top = 120, bottom = 60;
+    // ---- the plot: left, where the hole sat relative to the carriage after each return (slider mm from the
+    // midpoint); right, how far each predicted return landed from where it was meant to, in X
+    const int width = 1200, height = 680, top = 130;
     cv::Mat plot(height, width, CV_8UC3, cv::Scalar(255, 255, 255));
-    double largest = edgeTolerance * 2.0;
-    for (const EdgeStop &s : edgeStops) {
-        largest = std::max(largest, std::abs(s.miss));
-    }
-    largest = std::min(largest, std::max(edgeShort * 1.1, edgeTolerance * 2.0));
-    const int count = std::max(2, (int)edgeStops.count());
-    const auto toPlot = [&](int k, double miss) {
-        const double x = left + (width - left - right) * (k / (double)(count - 1));
-        const double y = top + (height - top - bottom) * 0.5 * (1.0 - std::clamp(miss / largest, -1.0, 1.0));
-        return cv::Point((int)std::lround(x), (int)std::lround(y));
-    };
     const cv::Scalar ink(40, 40, 40), grid(215, 215, 215), leftColour(200, 90, 20), rightColour(30, 120, 230);
-    cv::rectangle(plot, toPlot(0, edgeTolerance), toPlot(count - 1, -edgeTolerance), cv::Scalar(225, 245, 225), cv::FILLED);
-    cv::line(plot, toPlot(0, 0.0), toPlot(count - 1, 0.0), grid, 1, cv::LINE_AA);
-    for (double v : { largest, largest / 2.0, -largest / 2.0, -largest }) {
-        cv::line(plot, toPlot(0, v), toPlot(count - 1, v), grid, 1, cv::LINE_AA);
-        cv::putText(plot, QString("%1").arg(v, 0, 'f', 3).toStdString(), toPlot(0, v) + cv::Point(-70, 4), cv::FONT_HERSHEY_SIMPLEX, 0.4, ink, 1, cv::LINE_AA);
+    double largest = std::max(edgeTolerance * 2.0, 0.02);
+    for (const EdgeStop &s : edgeStops) {
+        if (s.found) {
+            largest = std::max(largest, cv::norm(toSliders(s.aperture - middle)));
+        }
+    }
+    largest *= 1.15;
+    const cv::Point centre(300, top + (height - top) / 2 - 10);
+    const double half = 0.5 * (height - top) - 40.0, pxPerMM = half / largest;
+    const auto scatterAt = [&](const cv::Point2d &d) {
+        return cv::Point((int)std::lround(centre.x + d.x * pxPerMM), (int)std::lround(centre.y - d.y * pxPerMM));
+    };
+    for (int r = 1; r <= 4; r++) {
+        cv::circle(plot, centre, (int)std::lround(half * r / 4.0), grid, 1, cv::LINE_AA);
+        cv::putText(plot, QString("%1").arg(largest * r / 4.0, 0, 'f', 3).toStdString(), centre + cv::Point((int)std::lround(half * r / 4.0) + 2, -3),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(150, 150, 150), 1, cv::LINE_AA);
+    }
+    cv::line(plot, centre - cv::Point((int)half, 0), centre + cv::Point((int)half, 0), grid, 1, cv::LINE_AA);
+    cv::line(plot, centre - cv::Point(0, (int)half), centre + cv::Point(0, (int)half), grid, 1, cv::LINE_AA);
+    cv::putText(plot, "+X", centre + cv::Point((int)half + 4, 4), cv::FONT_HERSHEY_SIMPLEX, 0.45, ink, 1, cv::LINE_AA);
+    cv::putText(plot, "+Y", centre + cv::Point(-10, -(int)half - 6), cv::FONT_HERSHEY_SIMPLEX, 0.45, ink, 1, cv::LINE_AA);
+    for (const EdgeStop &s : edgeStops) {
+        if (!s.found) {
+            continue;
+        }
+        const cv::Scalar colour = (s.side > 0) ? leftColour : rightColour;
+        cv::circle(plot, scatterAt(toSliders(s.aperture - middle)), 5, colour, s.predicting ? cv::FILLED : 1, cv::LINE_AA);
+    }
+    for (int k = 0; k < 2; k++) {
+        const cv::Point m = scatterAt(toSliders(edgeMean(k) - middle));
+        cv::drawMarker(plot, m, k == 0 ? leftColour : rightColour, cv::MARKER_CROSS, 26, 2, cv::LINE_AA);
+    }
+    cv::putText(plot, "hole relative to the carriage, mm from the midpoint", cv::Point(70, top - 8), cv::FONT_HERSHEY_SIMPLEX, 0.45, ink, 1, cv::LINE_AA);
+
+    // misses of the predicted returns
+    std::vector<const EdgeStop *> predicted;
+    for (const EdgeStop &s : edgeStops) {
+        if (s.predicting && s.found) {
+            predicted.push_back(&s);
+        }
+    }
+    const int x0 = 660, x1 = width - 30, y0 = top + 10, y1 = height - 50;
+    double worst = edgeTolerance * 2.0;
+    for (const EdgeStop *s : predicted) {
+        worst = std::max(worst, std::abs(s->missX));
+    }
+    worst *= 1.1;
+    const int count = std::max(2, (int)predicted.size());
+    const auto missAt = [&](int k, double miss) {
+        return cv::Point((int)std::lround(x0 + (x1 - x0) * (k / (double)(count - 1))),
+                         (int)std::lround(y0 + (y1 - y0) * 0.5 * (1.0 - std::clamp(miss / worst, -1.0, 1.0))));
+    };
+    cv::rectangle(plot, missAt(0, edgeTolerance), missAt(count - 1, -edgeTolerance), cv::Scalar(225, 245, 225), cv::FILLED);
+    for (double v : { worst, 0.0, -worst }) {
+        cv::line(plot, missAt(0, v), missAt(count - 1, v), grid, 1, cv::LINE_AA);
+        cv::putText(plot, QString("%1").arg(v, 0, 'f', 3).toStdString(), missAt(0, v) + cv::Point(-56, 4), cv::FONT_HERSHEY_SIMPLEX, 0.35, ink, 1, cv::LINE_AA);
     }
     cv::Point previous[2];
     bool havePrevious[2] = { false, false };
-    for (int k = 0; k < edgeStops.count(); k++) {
-        const EdgeStop &s = edgeStops[k];
-        const int i = sideIndex(s.side);
-        const cv::Scalar colour = (s.side > 0) ? leftColour : rightColour;
-        const cv::Point p = toPlot(k, s.miss);
+    for (int k = 0; k < (int)predicted.size(); k++) {
+        const int i = sideIndex(predicted[k]->side);
+        const cv::Scalar colour = (i == 0) ? leftColour : rightColour;
+        const cv::Point p = missAt(k, predicted[k]->missX);
         if (havePrevious[i]) {
             cv::line(plot, previous[i], p, colour, 1, cv::LINE_AA);
         }
         previous[i] = p;
         havePrevious[i] = true;
-        if (s.stage == EdgeSingle) {
-            cv::circle(plot, p, 6, colour, cv::FILLED, cv::LINE_AA);
-        } else {
-            cv::circle(plot, p, 5, colour, 1, cv::LINE_AA);
-        }
+        cv::circle(plot, p, 5, colour, cv::FILLED, cv::LINE_AA);
     }
+    cv::putText(plot, "predicted returns: how far each landed from the midpoint, mm in X", cv::Point(x0, top - 8), cv::FONT_HERSHEY_SIMPLEX, 0.45, ink, 1,
+                cv::LINE_AA);
+
     const QStringList lines{
-        QString("X slop on the page's %1 edge, scan %2: miss from the edge at each stop (mm in X)").arg(edgeName, edgeScan),
-        QString("arriving moving left  X_L = %1 mm      arriving moving right  X_R = %2 mm").arg(xl, 0, 'f', 3).arg(xr, 0, 'f', 3),
-        QString("slop X_R - X_L = %1 mm     %2").arg(slop, 0, 'f', 3)
-            .arg(converged ? QString("single moves land within %1 mm from both sides").arg(edgeTolerance, 0, 'f', 3)
-                           : QString("ABORTED before converging: %1 and %2 in a row on the edge, %3 needed").arg(edgeHits[0]).arg(edgeHits[1]).arg(edgeTries)),
-        QString("open circles: learning (short stop, creeps); filled: single moves.  blue: moving left   orange: moving right"),
+        QString("Slop by tracking the hole, scan %1, moving %2 mm each way").arg(edgeScan).arg(edgeAway, 0, 'f', 1),
+        QString("arriving moving right vs moving left, the hole shifts X %1 mm, Y %2 mm  (in slider mm)").arg(slop.x, 0, 'f', 3).arg(slop.y, 0, 'f', 3),
+        QString("correction: add %1 mm x lastX to X   (lastX: +1 after moving right, -1 after moving left)").arg(-0.5 * slop.x, 0, 'f', 4),
+        converged ? QString("predicted returns land within %1 mm from both sides, %2 in a row").arg(edgeTolerance, 0, 'f', 3).arg(edgeTries)
+                  : QString("ABORTED: %1 and %2 in a row within %3 mm, %4 needed").arg(edgeHits[0]).arg(edgeHits[1]).arg(edgeTolerance, 0, 'f', 3).arg(edgeTries),
+        QString("open: learning   filled: predicted   crosses: averages   blue: arriving moving left   orange: moving right"),
     };
     for (int k = 0; k < lines.count(); k++) {
-        cv::putText(plot, lines[k].toStdString(), cv::Point(14, 24 + 22 * k), cv::FONT_HERSHEY_SIMPLEX, 0.52, ink, 1, cv::LINE_AA);
+        cv::putText(plot, lines[k].toStdString(), cv::Point(14, 22 + 20 * k), cv::FONT_HERSHEY_SIMPLEX, 0.5, ink, 1, cv::LINE_AA);
     }
-    const QString plotPath = QDir(edgeFolder).filePath(QString("edge_slop.png"));
+    const QString plotPath = QDir(edgeFolder).filePath(QString("hole_slop.png"));
     QImage(plot.data, plot.cols, plot.rows, (int)plot.step, QImage::Format_BGR888).save(plotPath);
 
     QJsonObject json;
     json["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     json["scan"] = edgeScan;
-    json["edge"] = edgeName;
-    json["y_mm"] = edgeY;
-    json["model_x_mm"] = edgeModelX;
-    json["x_arriving_moving_left_mm"] = xl;
-    json["x_arriving_moving_right_mm"] = xr;
-    json["x_slop_mm"] = slop;
-    json["per_last_x_sign_mm"] = 0.5 * slop;   // add lastX * this to the midpoint of the two
+    json["spot_x_y_mm"] = QJsonArray{ edgeSpotX, edgeY };
+    json["away_mm"] = edgeAway;
+    json["hole_vs_carriage_moving_left_board_mm"] = QJsonArray{ left.x, left.y };
+    json["hole_vs_carriage_moving_right_board_mm"] = QJsonArray{ right.x, right.y };
+    json["returns"] = QJsonArray{ (int)edgeApertures[0].count(), (int)edgeApertures[1].count() };
+    json["slop_right_minus_left_x_mm"] = slop.x;
+    json["slop_right_minus_left_y_mm"] = slop.y;
+    json["correction_x_per_last_x_sign_mm"] = -0.5 * slop.x;   // add lastX * this to X to land at the midpoint
     json["converged"] = converged;
     json["aborted"] = edgeWasAborted;
+    json["tolerance_mm"] = edgeTolerance;
     json["in_a_row_needed"] = edgeTries;
     json["in_a_row_reached"] = QJsonArray{ edgeHits[0], edgeHits[1] };
-    json["tolerance_mm"] = edgeTolerance;
-    json["away_mm"] = edgeAway;
-    json["short_mm"] = edgeShort;
-    json["single_moves"] = QJsonArray{ edgeSingles[0], edgeSingles[1] };
-    QJsonArray onLeft, onRight;
-    for (double x : edgeOnEdge[0]) {
-        onLeft.append(x);
-    }
-    for (double x : edgeOnEdge[1]) {
-        onRight.append(x);
-    }
-    json["on_edge_x_moving_left_mm"] = onLeft;
-    json["on_edge_x_moving_right_mm"] = onRight;
-    QFile jsonFile(QDir(edgeFolder).filePath(QString("edge_slop.json")));
+    QFile jsonFile(QDir(edgeFolder).filePath(QString("hole_slop.json")));
     if (jsonFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         jsonFile.write(QJsonDocument(json).toJson());
     }
 
-    endEdgeSlop(QString("X slop on the %1 edge: %2 mm (arriving moving left the hole is on the edge at X %3 mm, moving right at X %4 mm). %5 "
-                        "Results are in %6")
-                    .arg(edgeName).arg(slop, 0, 'f', 3).arg(xl, 0, 'f', 3).arg(xr, 0, 'f', 3)
-                    .arg(converged ? QString("Single moves now land within %1 mm from both sides.").arg(edgeTolerance, 0, 'f', 3)
-                                   : QString("Aborted before single moves landed within %1 mm %2 times in a row from both sides (%3 moving left, %4 moving right).")
-                                       .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries).arg(edgeHits[0]).arg(edgeHits[1]))
+    endEdgeSlop(QString("Slop by tracking the hole: arriving moving right the hole sits %1 mm further in X (%2 mm in Y) than arriving moving left, "
+                        "over %3 + %4 returns. %5 Results are in %6")
+                    .arg(slop.x, 0, 'f', 3).arg(slop.y, 0, 'f', 3).arg(edgeApertures[0].count()).arg(edgeApertures[1].count())
+                    .arg(converged ? QString("Corrected returns now land within %1 mm from both sides.").arg(edgeTolerance, 0, 'f', 3)
+                                   : QString("Stopped before corrected returns landed within %1 mm %2 times in a row from both sides.")
+                                         .arg(edgeTolerance, 0, 'f', 3).arg(edgeTries))
                     .arg(QDir::toNativeSeparators(edgeFolder)));
     const QImage shown(plotPath);
     if (!shown.isNull()) {
-        LAUImageInspectDialog *inspect = new LAUImageInspectDialog(shown, QString("X Slop"), this);
+        LAUImageInspectDialog *inspect = new LAUImageInspectDialog(shown, QString("Slop"), this);
         inspect->setAttribute(Qt::WA_DeleteOnClose);
         inspect->show();
     }

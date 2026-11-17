@@ -479,6 +479,17 @@ void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
         }
     }
 
+    // tracking the hole: where it has been, fixed to the board, as a fading trail
+    if (edgeSloping) {
+        for (int k = 0; k < edgeTrail.count(); k++) {
+            cv::Point p;
+            if (project(edgeTrail[k], &p)) {
+                const double age = (edgeTrail.count() - 1 - k) / std::max(1.0, (double)edgeTrail.count());
+                cv::circle(colour, p, 2 * 16, cv::Scalar(0, (int)std::lround(230 - 150 * age), 255), cv::FILLED, cv::LINE_AA, 4);
+            }
+        }
+    }
+
     // the i1's hole, always as a bullseye: bright where its rim was found, dim where it is expected until then
     {
         const double r = (found && slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;

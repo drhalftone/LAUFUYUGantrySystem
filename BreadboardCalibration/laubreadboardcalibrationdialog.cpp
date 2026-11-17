@@ -419,7 +419,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     slopConfirmAction->setEnabled(false);
     connect(slopConfirmAction, &QAction::triggered, this, [this]() { emit emitSlopConfirmRequested(); });
     addAction(slopConfirmAction);
-    edgeSlopAction = new QAction(QString("Measure X slop on page edge..."), this);
+    edgeSlopAction = new QAction(QString("Measure slop by tracking the hole..."), this);
     edgeSlopAction->setEnabled(false);
     connect(edgeSlopAction, &QAction::triggered, this, [this]() { emit emitEdgeSlopRequested(); });
     addAction(edgeSlopAction);
