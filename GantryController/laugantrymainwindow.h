@@ -83,8 +83,6 @@ private slots:
     void onImageScanRequested();
     void onCornerTuneRequested();
     void onPagePositionRequested();
-    void onSlopRequested();
-    void onSlopConfirmRequested();
     void onEdgeSlopRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
@@ -198,40 +196,8 @@ private:
     QString pageMoveMessage;
     void showTuneZoom(const cv::Mat &raw16);
 
-    // Measure slop (laugantryslop.cpp): the i1's hole brought back to one spot on plain paper beside a page corner
-    // from each of the twelve hours of a clock, and where the camera sees the hole each time
-    struct SlopShot
-    {
-        int round = 0, hour = 0;             // hour 12 = from +Y (rail pair), 3 = from +X (single rail)
-        int lastX = 0, lastY = 0;            // the sign of the last move each slider made before the hole was seen
-        int prevX = 0, prevY = 0;            // and of the move each made before that
-        int via = 0;                         // the hour it went out to first, or 0 straight out and back, or -1 farther out first
-        bool ok = false;
-        cv::Point2d hole, corner;            // where the camera saw the hole and the page's corner, board mm
-        cv::Point2d offset;                  // hole - corner: what the slop moves
-        double radius = 0.0;                 // of the rim as the camera saw it
-        QString note;
-    };
-    // checking a measurement: the hole sent onto the corner itself, each approach corrected by the slop it predicts
-    bool slopVerify = false;
-    // the correction, slider mm, is linear in the signs of each slider's last two moves:
-    // c0 + c1 * lastX + c2 * lastY + c3 * prevX + c4 * prevY
-    static const int SLOP_TERMS = 5;
-    double slopFitX[SLOP_TERMS] = { 0, 0, 0, 0, 0 }, slopFitY[SLOP_TERMS] = { 0, 0, 0, 0, 0 };
-    int slopPrevX = 0, slopPrevY = 0;        // the sign of each slider's move before its last one
-    QList<cv::Point2d> slopLegs;             // this shot's way out, slider mm, before it comes back to the corner
-    int slopLeg = 0;
-    double slopRimRadius = 0.0;
-    QString slopMeasured;                    // the measurement being checked
-    // confirming revises the estimate: after each pass the slop still left is added to the fit, and the next pass
-    // uses the revised fit, until it stops changing or the passes run out; the result is saved as a new measurement
-    int slopPass = 1, slopPasses = 1;
-    QJsonArray slopHistory;
-    cv::Point2d slopCentred;                 // the sliders' position with the corner in the middle of the hole, before the slop
-    cv::Point2d slopAperture;                // the hole at rails zero, as the corner fine-tune saw it (else the calibration's)
-    cv::Point2d slopAlong1, slopAlong2;      // the page's two edges leaving the corner
-    QString slopFolder;
-    // what the camera found at the last stop, drawn on the dialog's live zoom
+    // what the camera found at the last stop, for the slop close-up (laugantryedgeslop.cpp)
+    cv::Point2d slopAperture;                // the hole relative to the carriage (rails at zero): where to look for it next
     LAUHoleView::Corner slopSeen;
     bool slopSeenValid = false, slopSeenHole = false;
     cv::Point2d slopSeenAperture;            // the hole found, less the rails then: it moves with the carriage
@@ -292,27 +258,23 @@ private:
     QString writeEdgeResults(QString *plotOut);
     void edgeAborted();
     void endEdgeSlop(const QString &message);
-    bool sloping = false;
-    bool slopCancelling = false;
-    bool slopWaitingFrame = false;
-    bool slopAtCentre = false;               // the move under way ends at the centre (else at an hour's start)
-    QTimer *slopTimer = nullptr;
-    LAUPlatenGeometry slopGeometry;
-    double slopSingle = 0.0, slopPair = 0.0; // the spot, slider mm
-    double slopDistance = 10.0;              // each hour's start, this far out from the spot
-    int slopRounds = 3, slopStep = 0;
-    double slopAtSingle = 0.0, slopAtPair = 0.0;   // where the sliders were last sent
-    int slopLastX = 0, slopLastY = 0;
-    QString slopCorner, slopScan;
-    QList<SlopShot> slopShots;
-    void startSlop(bool checkMode);
-    void slopNextMove();
-    void onSlopMoveFinished(bool ok, const QString &message);
-    void onSlopTimer();
-    void onSlopFrame(const cv::Mat &raw16);
-    void finishSlop();
-    void endSlop(const QString &message);
-    void showSlopPlot(const QString &path);
+
+    // The slop correction (from the newest hole_slop.json) applied to the corner fine-tune's and Go to page
+    // position's moves: positions there are slop-free ("logical"); each move adds lastX * the correction, lastX the
+    // sign of the last logical X move, so the hole lands where the midpoint of the two directions puts it.  The camera
+    // rides on the carriage, so it is told where the carriage really is: logical + slopShift.
+    bool slopCorrectionLoaded = false;
+    double slopCorrX = 0.0, slopCorrY = 0.0; // per sign of the last X move, slider mm
+    QString slopCorrSource;
+    int slopDir = 0;                         // the sign of the last logical X move, 0 not known yet
+    double slopLogicalX = 0.0;
+    bool slopLogicalKnown = false;
+    bool loadSlopCorrection();
+    void resetSlopTracking();
+    void moveRailsSlop(double single, double pair);
+    double slopShiftX() const { return slopDir * slopCorrX; }
+    double slopShiftY() const { return slopDir * slopCorrY; }
+    LAUPlatenGeometry slopGeometry;          // the page's scan, its travel replaced by the limit sliders'
     QList<TuneCorner> tuneCorners;
     int tuneIndex = -1;
     bool tuning = false;

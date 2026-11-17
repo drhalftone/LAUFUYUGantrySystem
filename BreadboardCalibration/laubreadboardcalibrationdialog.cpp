@@ -403,6 +403,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     scanImageAction->setEnabled(false);
     connect(scanImageAction, &QAction::triggered, this, [this]() { emit emitImageScanRequested(); });
     addAction(scanImageAction);
+    edgeSlopAction = new QAction(QString("Measure slop by tracking the hole..."), this);
+    edgeSlopAction->setEnabled(false);
+    connect(edgeSlopAction, &QAction::triggered, this, [this]() { emit emitEdgeSlopRequested(); });
+    addAction(edgeSlopAction);
     tuneAction = new QAction(QString("Fine-tune page corners..."), this);
     tuneAction->setEnabled(false);
     connect(tuneAction, &QAction::triggered, this, [this]() { emit emitCornerTuneRequested(); });
@@ -411,18 +415,6 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     pageGoAction->setEnabled(false);
     connect(pageGoAction, &QAction::triggered, this, [this]() { emit emitPagePositionRequested(); });
     addAction(pageGoAction);
-    slopAction = new QAction(QString("Measure slop..."), this);
-    slopAction->setEnabled(false);
-    connect(slopAction, &QAction::triggered, this, [this]() { emit emitSlopRequested(); });
-    addAction(slopAction);
-    slopConfirmAction = new QAction(QString("Confirm slop..."), this);
-    slopConfirmAction->setEnabled(false);
-    connect(slopConfirmAction, &QAction::triggered, this, [this]() { emit emitSlopConfirmRequested(); });
-    addAction(slopConfirmAction);
-    edgeSlopAction = new QAction(QString("Measure slop by tracking the hole..."), this);
-    edgeSlopAction->setEnabled(false);
-    connect(edgeSlopAction, &QAction::triggered, this, [this]() { emit emitEdgeSlopRequested(); });
-    addAction(edgeSlopAction);
 
     scanTargetAction = new QAction(QString("Scan target"), this);
     scanTargetAction->setEnabled(false);
@@ -445,8 +437,6 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
         scanImageAction->setEnabled(true);
         tuneAction->setEnabled(true);
         pageGoAction->setEnabled(true);
-        slopAction->setEnabled(true);
-        slopConfirmAction->setEnabled(true);
         edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
@@ -461,8 +451,6 @@ void LAUBreadboardCalibrationWidget::beginScan()
     scanImageAction->setEnabled(false);
     tuneAction->setEnabled(false);
     pageGoAction->setEnabled(false);
-    slopAction->setEnabled(false);
-    slopConfirmAction->setEnabled(false);
     edgeSlopAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
@@ -478,8 +466,6 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     scanImageAction->setEnabled(true);
     tuneAction->setEnabled(true);
     pageGoAction->setEnabled(true);
-    slopAction->setEnabled(true);
-    slopConfirmAction->setEnabled(true);
     edgeSlopAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
@@ -493,8 +479,6 @@ void LAUBreadboardCalibrationWidget::lockScanActions(bool locked)
     scanImageAction->setEnabled(!locked);
     tuneAction->setEnabled(!locked);
     pageGoAction->setEnabled(!locked);
-    slopAction->setEnabled(!locked);
-    slopConfirmAction->setEnabled(!locked);
     edgeSlopAction->setEnabled(!locked);
     scanTargetAction->setEnabled(!locked);
 }
@@ -559,8 +543,6 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
         scanImageAction->setEnabled(true);
         tuneAction->setEnabled(true);
         pageGoAction->setEnabled(true);
-        slopAction->setEnabled(true);
-        slopConfirmAction->setEnabled(true);
         edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }

@@ -116,8 +116,6 @@ signals:
     void emitImageScanRequested();           // a picture of whatever is on the platen, merged against the platen calibration
     void emitCornerTuneRequested();
     void emitPagePositionRequested();        // move the i1's hole to a point given in mm on the page
-    void emitSlopRequested();                // measure the i1 bracket's slop from twelve directions
-    void emitSlopConfirmRequested();         // check that measurement: the corner sent into the bullseye, slop corrected
     void emitEdgeSlopRequested();            // measure the slop by tracking where the hole lands after moving each way
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
@@ -151,8 +149,6 @@ private:
     QAction *scanImageAction = nullptr;
     QAction *tuneAction = nullptr;
     QAction *pageGoAction = nullptr;
-    QAction *slopAction = nullptr;
-    QAction *slopConfirmAction = nullptr;
     QAction *edgeSlopAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet

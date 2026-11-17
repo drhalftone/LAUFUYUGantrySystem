@@ -73,7 +73,7 @@ namespace
 void LAUGantryMainWindow::onEdgeSlopRequested()
 {
     const QString title = QString("Measure Slop by Tracking the Hole");
-    if (scanning || measuring || merging || returningHome || tuning || sloping || edgeSloping || pageMoving || railWidget->isHoming()) {
+    if (scanning || measuring || merging || returningHome || tuning || edgeSloping || pageMoving || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
     }
@@ -439,6 +439,196 @@ void LAUGantryMainWindow::onEdgeFrame(const cv::Mat &raw16)
     edgeNextReturn();
 }
 
+// The live picture around the hole, enlarged, with what the camera found at the last stop: the page's two edges
+// (cyan) and their corner (magenta), and the i1's hole as a bullseye (green) where its rim was found.  The corner is
+// fixed to the page and the hole to the carriage, so each is carried along with the sliders between stops.
+void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
+{
+    if (!edgeSloping || !homeDialog || raw16.empty() || !singleRail.isKnown() || !pairRail.isKnown()) {
+        return;
+    }
+    const double ZOOM_HALF_MM = 9.0;
+    const double now = guideClock.elapsed() / 1000.0;
+    const double pair = pairRail.estimate(now), single = singleRail.estimate(now);
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    const bool found = slopSeenValid && slopSeenHole;
+    const cv::Point2d hole = (found ? slopSeenAperture : slopAperture) + ax * pair + ay * single;
+    // tracking the hole: the bullseye stays fixed to the carriage, at the midpoint of the two sides once both are
+    // known (else where the hole was first seen), and the hole the camera sees is drawn against it; otherwise the
+    // bullseye is the hole
+    const bool tracking = edgeSloping;
+    cv::Point2d reference = hole;
+    if (tracking) {
+        const cv::Point2d anchor = (!edgeApertures[0].isEmpty() && !edgeApertures[1].isEmpty()) ? (edgeMean(0) + edgeMean(1)) * 0.5
+                                   : edgeReferenceSet                                            ? edgeReference
+                                                                                                 : slopAperture;
+        reference = anchor + ax * pair + ay * single;
+    }
+    cv::Point2d centre, edge;
+    if (!platenOverlay.project(reference, pair, single, &centre) || !platenOverlay.project(reference + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
+        return;
+    }
+    const double pxPerMM = cv::norm(edge - centre) / 4.9;
+    const int half = std::max(8, (int)std::lround(ZOOM_HALF_MM * pxPerMM));
+    const cv::Rect box((int)std::lround(centre.x) - half, (int)std::lround(centre.y) - half, 2 * half + 1, 2 * half + 1);
+    const cv::Rect inside = box & cv::Rect(0, 0, raw16.cols, raw16.rows);
+    if (inside.area() <= 0) {
+        return;
+    }
+    cv::Mat crop = cv::Mat::zeros(box.size(), CV_8U), grey;
+    raw16(inside).convertTo(grey, CV_8U, 0.25);  // Mono10 -> 8 bits
+    grey.copyTo(crop(inside - box.tl()));
+    const int size = 460;
+    const double scale = size / (double)box.width;
+    cv::Mat big, colour;
+    cv::resize(crop, big, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+    cv::cvtColor(big, colour, cv::COLOR_GRAY2BGR);
+    const auto at = [&](const cv::Point2d &pixel) {   // raw pixel -> zoom, 1/16 pixel
+        return cv::Point((int)std::lround(((pixel.x - box.x + 0.5) * scale - 0.5) * 16.0), (int)std::lround(((pixel.y - box.y + 0.5) * scale - 0.5) * 16.0));
+    };
+    const auto project = [&](const cv::Point2d &board, cv::Point *zoomed) {
+        cv::Point2d p;
+        if (!platenOverlay.project(board, pair, single, &p)) {
+            return false;
+        }
+        *zoomed = at(p);
+        return true;
+    };
+    // a board-mm line, a little at a time (the lens bends straight lines)
+    const auto drawLine = [&](const cv::Point2d &from, const cv::Point2d &to, const cv::Scalar &c, int thickness) {
+        std::vector<cv::Point> run;
+        for (int s = 0; s <= 80; s++) {
+            cv::Point p;
+            if (project(from + (to - from) * (s / 80.0), &p)) {
+                run.push_back(p);
+            }
+        }
+        cv::polylines(colour, run, false, c, thickness, cv::LINE_AA, 4);
+    };
+    const auto drawCircle = [&](const cv::Point2d &c, double r, const cv::Scalar &ink, int thickness) {
+        std::vector<cv::Point> ring;
+        for (int s = 0; s <= 72; s++) {
+            cv::Point p;
+            if (project(c + cv::Point2d(std::cos(s * CV_PI / 36.0), std::sin(s * CV_PI / 36.0)) * r, &p)) {
+                ring.push_back(p);
+            }
+        }
+        cv::polylines(colour, ring, false, ink, thickness, cv::LINE_AA, 4);
+    };
+    const cv::Scalar green(0, 220, 0), cyan(255, 255, 0), magenta(255, 0, 255), grey160(160, 160, 160);
+
+    // the page's edges and corner, as found at the last stop
+    if (slopSeenValid) {
+        for (int e = 0; e < 2; e++) {
+            for (const cv::Point2d &b : slopSeen.edgePoints[e]) {
+                cv::Point p;
+                if (project(b, &p)) {
+                    cv::circle(colour, p, 16, cyan, 1, cv::LINE_AA, 4);
+                }
+            }
+            if (slopSeen.edgeFitted[e]) {
+                drawLine(slopSeen.edgeAt[e] - slopSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, slopSeen.edgeAt[e] + slopSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, cyan, 1);
+            }
+        }
+        cv::Point k;
+        if (slopSeen.atValid && project(slopSeen.at, &k)) {
+            cv::circle(colour, k, 6 * 16, magenta, 2, cv::LINE_AA, 4);
+            cv::line(colour, k - cv::Point(9 * 16, 0), k + cv::Point(9 * 16, 0), magenta, 1, cv::LINE_AA, 4);
+            cv::line(colour, k - cv::Point(0, 9 * 16), k + cv::Point(0, 9 * 16), magenta, 1, cv::LINE_AA, 4);
+        }
+    }
+
+    // tracking the hole: where it has been, fixed to the board, as a fading trail
+    if (edgeSloping) {
+        for (int k = 0; k < edgeTrail.count(); k++) {
+            cv::Point p;
+            if (project(edgeTrail[k], &p)) {
+                const double age = (edgeTrail.count() - 1 - k) / std::max(1.0, (double)edgeTrail.count());
+                cv::circle(colour, p, 2 * 16, cv::Scalar(0, (int)std::lround(230 - 150 * age), 255), cv::FILLED, cv::LINE_AA, 4);
+            }
+        }
+    }
+
+    // the i1's hole, always as a bullseye: bright where its rim was found, dim where it is expected until then
+    {
+        const cv::Point2d at = tracking ? reference : hole;
+        const double r = (!tracking && found && slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
+        const cv::Scalar ink = (found || tracking) ? green : cv::Scalar(0, 150, 0);
+        for (double f : { 1.0, 2.0 / 3.0, 1.0 / 3.0 }) {
+            drawCircle(at, r * f, ink, f == 1.0 ? 2 : 1);
+        }
+        cv::Point c;
+        if (project(at, &c)) {
+            cv::circle(colour, c, 3 * 16, ink, cv::FILLED, cv::LINE_AA, 4);
+        }
+        drawLine(at - cv::Point2d(r, 0), at + cv::Point2d(r, 0), ink, 1);
+        drawLine(at - cv::Point2d(0, r), at + cv::Point2d(0, r), ink, 1);
+    }
+    // tracking: the hole as the camera sees it, a yellow circle and centre, joined to the bullseye's centre
+    if (tracking && found) {
+        const cv::Scalar yellow(0, 230, 255);
+        if (edgeEllipseValid) {
+            // the best-fit ellipse to the hole's outline, as the camera sees it
+            const cv::Point2d c0 = edgeEllipse.ellipseCentre + ax * pair + ay * single;
+            const double t = edgeEllipse.ellipseAngleDeg * CV_PI / 180.0;
+            const cv::Point2d u(std::cos(t), std::sin(t)), v(-std::sin(t), std::cos(t));
+            std::vector<cv::Point> ring;
+            for (int s = 0; s <= 96; s++) {
+                const double a = s * CV_PI / 48.0;
+                cv::Point p;
+                if (project(c0 + u * (edgeEllipse.ellipseSemiA * std::cos(a)) + v * (edgeEllipse.ellipseSemiB * std::sin(a)), &p)) {
+                    ring.push_back(p);
+                }
+            }
+            cv::polylines(colour, ring, false, yellow, 2, cv::LINE_AA, 4);
+        } else {
+            drawCircle(hole, 4.9, yellow, 2);
+        }
+        cv::Point c, b;
+        if (project(hole, &c)) {
+            cv::line(colour, c - cv::Point(7 * 16, 0), c + cv::Point(7 * 16, 0), yellow, 2, cv::LINE_AA, 4);
+            cv::line(colour, c - cv::Point(0, 7 * 16), c + cv::Point(0, 7 * 16), yellow, 2, cv::LINE_AA, 4);
+            if (project(reference, &b)) {
+                cv::line(colour, b, c, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
+            }
+        }
+        const cv::Point2d d = hole - reference;
+        const double det = ax.x * ay.y - ay.x * ax.y;
+        const double dx = (ax.x * d.y - d.x * ax.y) / det, dy = (d.x * ay.y - ay.x * d.y) / det;   // slider mm
+        cv::putText(colour, QString("hole from the bullseye: X %1, Y %2 mm").arg(dx, 0, 'f', 3).arg(dy, 0, 'f', 3).toStdString(), cv::Point(10, 66),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, yellow, 1, cv::LINE_AA);
+    }
+    if (found) {
+        cv::Point c;
+        if (slopSeen.atValid) {
+            cv::Point k;
+            if (project(slopSeen.at, &k) && project(hole, &c)) {
+                cv::line(colour, c, k, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
+            }
+            const cv::Point2d d = hole - slopSeen.at;
+            cv::putText(colour, QString("hole from corner: %1, %2 mm").arg(d.x, 0, 'f', 3).arg(d.y, 0, 'f', 3).toStdString(), cv::Point(10, 46),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, green, 1, cv::LINE_AA);
+        }
+    }
+
+    QString title = QString("the i1's hole");
+    if (!slopZoomTitle.isEmpty()) {
+        title = slopZoomTitle;
+    }
+    cv::putText(colour, title.toStdString(), cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    if (!slopZoomNote.isEmpty()) {
+        cv::putText(colour, slopZoomNote.toStdString(), cv::Point(10, 46), cv::FONT_HERSHEY_SIMPLEX, 0.5, green, 1, cv::LINE_AA);
+    }
+    if (slopSeenValid && !slopSeenHole && !slopSeenWhy.isEmpty()) {
+        cv::putText(colour, slopSeenWhy.left(64).toStdString(), cv::Point(10, 66), cv::FONT_HERSHEY_SIMPLEX, 0.4, cyan, 1, cv::LINE_AA);
+    }
+    cv::putText(colour, tracking ? "green bullseye: fixed to the carriage   yellow: the hole the camera sees" : "green bullseye: i1 hole   magenta: corner   cyan: page edges", cv::Point(10, size - 28), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                cv::Scalar(220, 220, 220), 1, cv::LINE_AA);
+    cv::putText(colour, QString("%1 mm across").arg(2 * ZOOM_HALF_MM, 0, 'f', 0).toStdString(), cv::Point(10, size - 10), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
+    homeDialog->setZoom(QImage(colour.data, colour.cols, colour.rows, (int)colour.step, QImage::Format_BGR888).copy());
+}
+
 // the hole's ellipse for the close-up, its centre made relative to the carriage so it moves with it
 void LAUGantryMainWindow::keepEdgeEllipse(const LAUHoleView::Hole &hole, double pairMM, double singleMM)
 {
@@ -718,4 +908,53 @@ void LAUGantryMainWindow::endEdgeSlop(const QString &message)
     railBox->setEnabled(true);
     cameraWidget->lockScanActions(false);
     cameraWidget->showMessage(message);
+}
+
+// ---- the slop correction, for the corner fine-tune and Go to page position --------------------------------------
+
+// the newest hole-slop measurement's correction: X and Y, slider mm, per sign of the last X move
+bool LAUGantryMainWindow::loadSlopCorrection()
+{
+    slopCorrectionLoaded = false;
+    slopCorrX = slopCorrY = 0.0;
+    slopCorrSource.clear();
+    QDir base(scanBase);
+    for (const QString &name : base.entryList(QStringList{ QString("*_holeslop") }, QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::Reversed)) {
+        QFile f(base.filePath(name + QString("/hole_slop.json")));
+        const QJsonObject o = f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
+        if (o.contains(QString("correction_x_per_last_x_sign_mm"))) {
+            slopCorrX = o["correction_x_per_last_x_sign_mm"].toDouble();
+            slopCorrY = -0.5 * o["slop_right_minus_left_y_mm"].toDouble();
+            slopCorrSource = name + (o["converged"].toBool() ? QString() : QString(" (not converged)"));
+            slopCorrectionLoaded = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+// a new run of corrected moves: the direction of the last X move isn't known until the first move
+void LAUGantryMainWindow::resetSlopTracking()
+{
+    slopDir = 0;
+    slopLogicalX = railWidget->reportedMM(0);
+    slopLogicalKnown = true;
+}
+
+// move to a slop-free position: the correction for the direction this move leaves X moving in is added
+void LAUGantryMainWindow::moveRailsSlop(double single, double pair)
+{
+    if (slopLogicalKnown) {
+        const double d = single - slopLogicalX;
+        if (std::abs(d) > 0.005) {
+            slopDir = (d > 0.0) ? 1 : -1;
+        }
+    }
+    slopLogicalX = single;
+    slopLogicalKnown = true;
+    if (!slopCorrectionLoaded) {
+        railWidget->moveRails(single, pair);
+        return;
+    }
+    railWidget->moveRails(single + slopShiftX(), pair + slopShiftY());
 }
