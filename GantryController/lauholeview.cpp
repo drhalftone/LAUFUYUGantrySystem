@@ -493,7 +493,7 @@ bool LAUHoleView::findCorner(const cv::Mat &gray, double pairMM, double singleMM
 }
 
 bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along1,
-                                   cv::Point2d along2, cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check) const
+                                   cv::Point2d along2, cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check, double *radiusMM) const
 {
     if (!valid) {
         *why = QString("There's no platen calibration to see the hole with.");
@@ -641,5 +641,8 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
         return false;
     }
     *holeCentre = centre;
+    if (radiusMM) {
+        *radiusMM = radius;
+    }
     return true;
 }

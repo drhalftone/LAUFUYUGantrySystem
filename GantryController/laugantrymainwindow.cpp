@@ -59,6 +59,10 @@ LAUHomeDialog::LAUHomeDialog(QWidget *parent) : QDialog(parent)
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setSpacing(12);
+    zoom = new QLabel();
+    zoom->setAlignment(Qt::AlignHCenter);
+    zoom->hide();
+    layout->addWidget(zoom);
     label = new QLabel(QString("Moving the sliders to their home position..."));
     label->setAlignment(Qt::AlignHCenter);
     layout->addWidget(label);
@@ -88,6 +92,12 @@ void LAUHomeDialog::setMessage(const QString &text)
     if (abortButton->isEnabled()) {
         label->setText(text);
     }
+}
+
+void LAUHomeDialog::setZoom(const QImage &image)
+{
+    zoom->setPixmap(QPixmap::fromImage(image));
+    zoom->show();
 }
 
 void LAUHomeDialog::setProgress(int value, int maximum)

@@ -41,6 +41,7 @@ public:
     void finish();
     void setMessage(const QString &text);
     void setProgress(int value, int maximum);
+    void setZoom(const QImage &image);       // a picture above the message, shown from the first one on
 
 public slots:
     void reject() override;                  // Abort, Esc and the title bar's X all stop the rails
@@ -49,6 +50,7 @@ signals:
     void emitAbort();
 
 private:
+    QLabel *zoom = nullptr;
     QLabel *label = nullptr;
     QProgressBar *bar = nullptr;
     QPushButton *abortButton = nullptr;
@@ -208,6 +210,13 @@ private:
     cv::Point2d slopAperture;                // the hole at rails zero, as the corner fine-tune saw it (else the calibration's)
     cv::Point2d slopAlong1, slopAlong2;      // the page's two edges leaving the corner
     QString slopFolder;
+    // what the camera found at the last stop, drawn on the dialog's live zoom
+    LAUHoleView::Corner slopSeen;
+    bool slopSeenValid = false, slopSeenHole = false;
+    cv::Point2d slopSeenAperture;            // the hole found, less the rails then: it moves with the carriage
+    double slopSeenRadius = 0.0;
+    QString slopSeenWhy;
+    void showSlopZoom(const cv::Mat &raw16);
     bool sloping = false;
     bool slopCancelling = false;
     bool slopWaitingFrame = false;

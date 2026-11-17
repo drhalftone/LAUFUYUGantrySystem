@@ -253,8 +253,140 @@ void LAUGantryMainWindow::onSlopRequested()
             endSlop(QString("Measuring the slop was cancelled."));
         }
     });
+    slopSeenValid = false;
+    slopSeenHole = false;
+    slopSeenWhy.clear();
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitLiveFrame, homeDialog, [this](cv::Mat raw16) { showSlopZoom(raw16); });
     homeDialog->open();
     slopNextMove();
+}
+
+// The live picture around the hole, enlarged, with what the camera found at the last stop: the page's two edges
+// (cyan) and their corner (magenta), and the i1's hole as a bullseye (green) where its rim was found.  The corner is
+// fixed to the page and the hole to the carriage, so each is carried along with the sliders between stops.
+void LAUGantryMainWindow::showSlopZoom(const cv::Mat &raw16)
+{
+    if (!sloping || !homeDialog || raw16.empty() || !singleRail.isKnown() || !pairRail.isKnown()) {
+        return;
+    }
+    const double ZOOM_HALF_MM = 9.0;
+    const double now = guideClock.elapsed() / 1000.0;
+    const double pair = pairRail.estimate(now), single = singleRail.estimate(now);
+    const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
+    const bool found = slopSeenValid && slopSeenHole;
+    const cv::Point2d hole = (found ? slopSeenAperture : slopAperture) + ax * pair + ay * single;
+    cv::Point2d centre, edge;
+    if (!platenOverlay.project(hole, pair, single, &centre) || !platenOverlay.project(hole + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
+        return;
+    }
+    const double pxPerMM = cv::norm(edge - centre) / 4.9;
+    const int half = std::max(8, (int)std::lround(ZOOM_HALF_MM * pxPerMM));
+    const cv::Rect box((int)std::lround(centre.x) - half, (int)std::lround(centre.y) - half, 2 * half + 1, 2 * half + 1);
+    const cv::Rect inside = box & cv::Rect(0, 0, raw16.cols, raw16.rows);
+    if (inside.area() <= 0) {
+        return;
+    }
+    cv::Mat crop = cv::Mat::zeros(box.size(), CV_8U), grey;
+    raw16(inside).convertTo(grey, CV_8U, 0.25);  // Mono10 -> 8 bits
+    grey.copyTo(crop(inside - box.tl()));
+    const int size = 460;
+    const double scale = size / (double)box.width;
+    cv::Mat big, colour;
+    cv::resize(crop, big, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+    cv::cvtColor(big, colour, cv::COLOR_GRAY2BGR);
+    const auto at = [&](const cv::Point2d &pixel) {   // raw pixel -> zoom, 1/16 pixel
+        return cv::Point((int)std::lround(((pixel.x - box.x + 0.5) * scale - 0.5) * 16.0), (int)std::lround(((pixel.y - box.y + 0.5) * scale - 0.5) * 16.0));
+    };
+    const auto project = [&](const cv::Point2d &board, cv::Point *zoomed) {
+        cv::Point2d p;
+        if (!platenOverlay.project(board, pair, single, &p)) {
+            return false;
+        }
+        *zoomed = at(p);
+        return true;
+    };
+    // a board-mm line, a little at a time (the lens bends straight lines)
+    const auto drawLine = [&](const cv::Point2d &from, const cv::Point2d &to, const cv::Scalar &c, int thickness) {
+        std::vector<cv::Point> run;
+        for (int s = 0; s <= 80; s++) {
+            cv::Point p;
+            if (project(from + (to - from) * (s / 80.0), &p)) {
+                run.push_back(p);
+            }
+        }
+        cv::polylines(colour, run, false, c, thickness, cv::LINE_AA, 4);
+    };
+    const auto drawCircle = [&](const cv::Point2d &c, double r, const cv::Scalar &ink, int thickness) {
+        std::vector<cv::Point> ring;
+        for (int s = 0; s <= 72; s++) {
+            cv::Point p;
+            if (project(c + cv::Point2d(std::cos(s * CV_PI / 36.0), std::sin(s * CV_PI / 36.0)) * r, &p)) {
+                ring.push_back(p);
+            }
+        }
+        cv::polylines(colour, ring, false, ink, thickness, cv::LINE_AA, 4);
+    };
+    const cv::Scalar green(0, 220, 0), cyan(255, 255, 0), magenta(255, 0, 255), grey160(160, 160, 160);
+
+    // the page's edges and corner, as found at the last stop
+    if (slopSeenValid) {
+        for (int e = 0; e < 2; e++) {
+            for (const cv::Point2d &b : slopSeen.edgePoints[e]) {
+                cv::Point p;
+                if (project(b, &p)) {
+                    cv::circle(colour, p, 16, cyan, 1, cv::LINE_AA, 4);
+                }
+            }
+            if (slopSeen.edgeFitted[e]) {
+                drawLine(slopSeen.edgeAt[e] - slopSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, slopSeen.edgeAt[e] + slopSeen.edgeDir[e] * 2.0 * ZOOM_HALF_MM, cyan, 1);
+            }
+        }
+        cv::Point k;
+        if (slopSeen.atValid && project(slopSeen.at, &k)) {
+            cv::circle(colour, k, 6 * 16, magenta, 2, cv::LINE_AA, 4);
+            cv::line(colour, k - cv::Point(9 * 16, 0), k + cv::Point(9 * 16, 0), magenta, 1, cv::LINE_AA, 4);
+            cv::line(colour, k - cv::Point(0, 9 * 16), k + cv::Point(0, 9 * 16), magenta, 1, cv::LINE_AA, 4);
+        }
+    }
+
+    // the i1's hole: a bullseye where its rim was found, else a grey ring where it is expected
+    if (found) {
+        const double r = (slopSeenRadius > 0.0) ? slopSeenRadius : 4.9;
+        for (double f : { 1.0, 2.0 / 3.0, 1.0 / 3.0 }) {
+            drawCircle(hole, r * f, green, f == 1.0 ? 2 : 1);
+        }
+        cv::Point c;
+        if (project(hole, &c)) {
+            cv::circle(colour, c, 3 * 16, green, cv::FILLED, cv::LINE_AA, 4);
+        }
+        drawLine(hole - cv::Point2d(r, 0), hole + cv::Point2d(r, 0), green, 1);
+        drawLine(hole - cv::Point2d(0, r), hole + cv::Point2d(0, r), green, 1);
+        if (slopSeen.atValid) {
+            cv::Point k;
+            if (project(slopSeen.at, &k) && project(hole, &c)) {
+                cv::line(colour, c, k, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
+            }
+            const cv::Point2d d = hole - slopSeen.at;
+            cv::putText(colour, QString("hole from corner: %1, %2 mm").arg(d.x, 0, 'f', 3).arg(d.y, 0, 'f', 3).toStdString(), cv::Point(10, 46),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, green, 1, cv::LINE_AA);
+        }
+    } else {
+        drawCircle(hole, 4.9, grey160, 1);
+    }
+
+    QString title = QString("%1 corner").arg(slopCorner);
+    if (!slopShots.isEmpty()) {
+        title += QString(", last stop from %1 o'clock").arg(slopShots.last().hour);
+    }
+    cv::putText(colour, title.toStdString(), cv::Point(10, 24), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    if (slopSeenValid && !slopSeenHole && !slopSeenWhy.isEmpty()) {
+        cv::putText(colour, slopSeenWhy.left(64).toStdString(), cv::Point(10, 66), cv::FONT_HERSHEY_SIMPLEX, 0.4, cyan, 1, cv::LINE_AA);
+    }
+    cv::putText(colour, "green bullseye: i1 hole   magenta: corner   cyan: page edges", cv::Point(10, size - 28), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                cv::Scalar(220, 220, 220), 1, cv::LINE_AA);
+    cv::putText(colour, QString("%1 mm across").arg(2 * ZOOM_HALF_MM, 0, 'f', 0).toStdString(), cv::Point(10, size - 10), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
+    homeDialog->setZoom(QImage(colour.data, colour.cols, colour.rows, (int)colour.step, QImage::Format_BGR888).copy());
 }
 
 // out to the hour's start, or back in to the spot
@@ -353,7 +485,14 @@ void LAUGantryMainWindow::onSlopFrame(const cv::Mat &raw16)
     LAUHoleView::Corner corner;
     QString why;
     cv::Mat check;
-    shot.ok = holeView.findHoleAtCorner(gray, pair, single, guess, slopAlong1, slopAlong2, &shot.hole, &corner, &why, &check);
+    double radius = 0.0;
+    shot.ok = holeView.findHoleAtCorner(gray, pair, single, guess, slopAlong1, slopAlong2, &shot.hole, &corner, &why, &check, &radius);
+    slopSeen = corner;
+    slopSeenValid = true;
+    slopSeenHole = shot.ok;
+    slopSeenAperture = shot.hole - holeView.boardAxis(0) * pair - holeView.boardAxis(1) * single;
+    slopSeenRadius = radius;
+    slopSeenWhy = why;
     shot.corner = corner.at;
     shot.offset = shot.hole - shot.corner;
     shot.note = why;
