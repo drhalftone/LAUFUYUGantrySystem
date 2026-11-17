@@ -123,9 +123,31 @@ void LAUGantryMainWindow::onSlopRequested()
         const cv::Point2d spot = P[k] + unitOf(P[(k + 1) % 4] - P[k]) * in + unitOf(P[(k + 3) % 4] - P[k]) * in;
         slopGeometry.railsFor(spot, single, pair, true);
     };
-    const auto fits = [&](int k, double out) {
+    // the newest measurement of this scan, to check: the corner it used, the slider position that centres that corner
+    // in the hole, and the fit that predicts each approach's slop
+    QString measured;
+    QJsonObject measurement;
+    for (const QString &name : base.entryList(QStringList{ QString("*_slop") }, QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::Reversed)) {
+        QFile f(base.filePath(name + QString("/slop.json")));
+        const QJsonObject o = f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
+        if (o["mode"].toString() == QString("measure") && o["scan"].toString() == slopScan && o["corner_centred_single_pair_mm"].toArray().count() == 2) {
+            measured = name;
+            measurement = o;
+            break;
+        }
+    }
+    const int measuredCorner = measurement["corner_index"].toInt(-1);
+    const cv::Point2d centred(measurement["corner_centred_single_pair_mm"].toArray().at(0).toDouble(),
+                              measurement["corner_centred_single_pair_mm"].toArray().at(1).toDouble());
+
+    const auto fits = [&](int k, double out, bool check) {
         double single = 0.0, pair = 0.0;
-        spotFor(k, CORNER_IN_MM, &single, &pair);
+        if (check) {
+            single = centred.x;
+            pair = centred.y;
+        } else {
+            spotFor(k, CORNER_IN_MM, &single, &pair);
+        }
         if (!slopGeometry.reachable(single, pair)) {
             return false;
         }
@@ -149,6 +171,12 @@ void LAUGantryMainWindow::onSlopRequested()
     label->setWordWrap(true);
     layout->addWidget(label);
     QFormLayout *form = new QFormLayout();
+    QComboBox *mode = new QComboBox();
+    mode->addItem(QString("Measure the slop"));
+    mode->addItem(measured.isEmpty() ? QString("Check a measurement (none yet for this scan)")
+                                     : QString("Check measurement %1: corner centred, slop corrected").arg(measured));
+    qobject_cast<QStandardItemModel *>(mode->model())->item(1)->setEnabled(!measured.isEmpty());
+    form->addRow(QString("Mode"), mode);
     QComboBox *corner = new QComboBox();
     corner->addItems(names);
     corner->setCurrentIndex(std::clamp(settings.value(QString("LAUGantryMainWindow::slopCorner"), 0).toInt(), 0, 3));
@@ -175,9 +203,14 @@ void LAUGantryMainWindow::onSlopRequested()
     // grey out the corners too close to the edge of the travel, for the inset and approach chosen
     QStandardItemModel *model = qobject_cast<QStandardItemModel *>(corner->model());
     const auto refresh = [&]() {
+        const bool check = mode->currentIndex() == 1;
+        if (check) {
+            corner->setCurrentIndex(measuredCorner);
+        }
+        corner->setEnabled(!check);
         int first = -1;
         for (int k = 0; k < 4; k++) {
-            const bool ok = fits(k, distance->value());
+            const bool ok = check ? (k == measuredCorner && fits(k, distance->value(), true)) : fits(k, distance->value(), false);
             model->item(k)->setEnabled(ok);
             model->item(k)->setText(ok ? names[k] : names[k] + QString("  (too close to the edge of the travel)"));
             if (ok && first < 0) {
@@ -194,13 +227,26 @@ void LAUGantryMainWindow::onSlopRequested()
         none->setVisible(first < 0);
     };
     connect(distance, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
+    connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, refresh);
     refresh();
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    const int k = corner->currentIndex();
-    if (!fits(k, distance->value())) {
+    slopVerify = mode->currentIndex() == 1;
+    const int k = slopVerify ? measuredCorner : corner->currentIndex();
+    if (k < 0 || !fits(k, distance->value(), slopVerify)) {
         return;
+    }
+    if (slopVerify) {
+        const QJsonObject fx = measurement["fit_x"].toObject(), fy = measurement["fit_y"].toObject();
+        slopFitX[0] = fx["constant"].toDouble();
+        slopFitX[1] = fx["per_last_x_sign"].toDouble();
+        slopFitX[2] = fx["per_last_y_sign"].toDouble();
+        slopFitY[0] = fy["constant"].toDouble();
+        slopFitY[1] = fy["per_last_x_sign"].toDouble();
+        slopFitY[2] = fy["per_last_y_sign"].toDouble();
+        slopRimRadius = measurement["rim_radius_mm"].toDouble();
+        slopMeasured = measured;
     }
     settings.setValue(QString("LAUGantryMainWindow::slopCorner"), k);
     settings.setValue(QString("LAUGantryMainWindow::slopDistance"), distance->value());
@@ -209,7 +255,12 @@ void LAUGantryMainWindow::onSlopRequested()
     slopDistance = distance->value();
     slopRounds = (int)rounds->value();
 
-    spotFor(k, CORNER_IN_MM, &slopSingle, &slopPair);
+    if (slopVerify) {
+        slopSingle = centred.x;              // the corner in the middle of the hole
+        slopPair = centred.y;
+    } else {
+        spotFor(k, CORNER_IN_MM, &slopSingle, &slopPair);
+    }
     slopAlong1 = P[(k + 1) % 4] - P[k];
     slopAlong2 = P[(k + 3) % 4] - P[k];
     slopAperture = holeView.calibratedAperture();
@@ -223,7 +274,7 @@ void LAUGantryMainWindow::onSlopRequested()
             }
         }
     }
-    slopFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString("_slop"));
+    slopFolder = QDir(scanBase).filePath(QDateTime::currentDateTime().toString(QString("yyyyMMdd_HHmmss")) + QString(slopVerify ? "_slopcheck" : "_slop"));
     QDir().mkpath(slopFolder);
 
     if (!slopTimer) {
@@ -400,6 +451,19 @@ void LAUGantryMainWindow::slopNextMove()
         single += d.x;
         pair += d.y;
         homeDialog->setMessage(QString("Round %1 of %2: out to %3 o'clock...").arg(round + 1).arg(slopRounds).arg(hour));
+    } else if (slopVerify) {
+        // the slop this approach will leave, from the sign each slider's last move will have, added in advance; the
+        // correction can flip a small move's sign (12 and 6 o'clock in X), so settle on signs that agree with it
+        int sx = signOf(single - slopAtSingle), sy = signOf(pair - slopAtPair);
+        for (int iteration = 0; iteration < 3; iteration++) {
+            const int lx = sx ? sx : slopLastX, ly = sy ? sy : slopLastY;
+            single = slopSingle + slopFitX[0] + slopFitX[1] * lx + slopFitX[2] * ly;
+            pair = slopPair + slopFitY[0] + slopFitY[1] * lx + slopFitY[2] * ly;
+            sx = signOf(single - slopAtSingle);
+            sy = signOf(pair - slopAtPair);
+        }
+        homeDialog->setMessage(QString("Round %1 of %2: onto the corner from %3 o'clock, %4 mm X and %5 mm Y added for the slop...")
+                                   .arg(round + 1).arg(slopRounds).arg(hour).arg(single - slopSingle, 0, 'f', 3).arg(pair - slopPair, 0, 'f', 3));
     } else {
         homeDialog->setMessage(QString("Round %1 of %2: back to the spot from %3 o'clock...").arg(round + 1).arg(slopRounds).arg(hour));
     }
@@ -486,7 +550,9 @@ void LAUGantryMainWindow::onSlopFrame(const cv::Mat &raw16)
     QString why;
     cv::Mat check;
     double radius = 0.0;
-    shot.ok = holeView.findHoleAtCorner(gray, pair, single, guess, slopAlong1, slopAlong2, &shot.hole, &corner, &why, &check, &radius);
+    shot.ok = holeView.findHoleAtCorner(gray, pair, single, guess, slopAlong1, slopAlong2, &shot.hole, &corner, &why, &check, &radius,
+                                        slopVerify ? slopRimRadius : 0.0);
+    shot.radius = radius;
     slopSeen = corner;
     slopSeenValid = true;
     slopSeenHole = shot.ok;
@@ -526,10 +592,19 @@ void LAUGantryMainWindow::finishSlop()
     }
 
     // each shot's hole-from-corner offset against the average, as the slider move that would undo it:
-    // ax * dPair + ay * dSingle = mean - offset
+    // ax * dPair + ay * dSingle = mean - offset.  A check aims at the corner itself, so against zero: what is left.
     cv::Point2d mean(0, 0);
+    double rimRadius = 0.0, missRms = 0.0, missWorst = 0.0;
     for (const SlopShot &s : good) {
         mean += s.offset * (1.0 / good.count());
+        rimRadius += s.radius / good.count();
+        missRms += s.offset.dot(s.offset) / good.count();
+        missWorst = std::max(missWorst, cv::norm(s.offset));
+    }
+    missRms = std::sqrt(missRms);
+    const cv::Point2d measuredMean = mean;
+    if (slopVerify) {
+        mean = cv::Point2d(0, 0);
     }
     const cv::Point2d ax = holeView.boardAxis(0), ay = holeView.boardAxis(1);
     const double det = ax.x * ay.y - ay.x * ax.y;
@@ -649,8 +724,9 @@ void LAUGantryMainWindow::finishSlop()
             cv::putText(plot, QString::number(h).toStdString(), cv::Point(p.x / 16 + 9, p.y / 16 - 6), cv::FONT_HERSHEY_SIMPLEX, 0.5, ink, 1, cv::LINE_AA);
         }
     }
-    const QStringList lines{
-        QString("Slider correction to add (mm), by the hour the hole came back from"),
+    QStringList lines{
+        slopVerify ? QString("CHECK of %1: slider correction still needed (mm) with the slop corrected, by hour").arg(slopMeasured)
+                   : QString("Slider correction to add (mm), by the hour the hole came back from"),
         QString("%1 corner of scan %2, %3 mm approach, %4 of %5 shots found").arg(slopCorner, slopScan).arg(slopDistance, 0, 'f', 1).arg(n).arg(slopShots.count()),
         QString("X: %1 %2 %3 x lastX %4 %5 x lastY   (rms left %6)").arg(fx.at<double>(0), 0, 'f', 3).arg(fx.at<double>(1) < 0 ? "-" : "+")
             .arg(std::abs(fx.at<double>(1)), 0, 'f', 3).arg(fx.at<double>(2) < 0 ? "-" : "+").arg(std::abs(fx.at<double>(2)), 0, 'f', 3).arg(rx, 0, 'f', 3),
@@ -658,6 +734,9 @@ void LAUGantryMainWindow::finishSlop()
             .arg(std::abs(fy.at<double>(1)), 0, 'f', 3).arg(fy.at<double>(2) < 0 ? "-" : "+").arg(std::abs(fy.at<double>(2)), 0, 'f', 3).arg(ry, 0, 'f', 3),
         QString("slop between +X and -X approaches: %1 mm").arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3),
     };
+    if (slopVerify) {
+        lines << QString("hole's centre from the corner: %1 mm rms, %2 mm worst").arg(missRms, 0, 'f', 3).arg(missWorst, 0, 'f', 3);
+    }
     for (int i = 0; i < lines.count(); i++) {
         cv::putText(plot, lines[i].toStdString(), cv::Point(14, 24 + 20 * i), cv::FONT_HERSHEY_SIMPLEX, 0.5, ink, 1, cv::LINE_AA);
     }
@@ -680,11 +759,34 @@ void LAUGantryMainWindow::finishSlop()
     json["x_slop_mm"] = 2.0 * std::abs(fx.at<double>(1));
     json["y_slop_mm"] = 2.0 * std::abs(fy.at<double>(2));
     json["hours"] = hours;
+    json["mode"] = slopVerify ? QString("check") : QString("measure");
+    json["corner_index"] = (int)QStringList{ QString("top-left"), QString("top-right"), QString("bottom-right"), QString("bottom-left") }.indexOf(slopCorner);
+    json["rim_radius_mm"] = slopVerify ? slopRimRadius : rimRadius;
+    json["mean_hole_from_corner_board_mm"] = QJsonArray{ measuredMean.x, measuredMean.y };
+    if (slopVerify) {
+        json["checked"] = slopMeasured;
+        json["applied_fit_x"] = QJsonArray{ slopFitX[0], slopFitX[1], slopFitX[2] };
+        json["applied_fit_y"] = QJsonArray{ slopFitY[0], slopFitY[1], slopFitY[2] };
+        json["miss_rms_mm"] = missRms;
+        json["miss_worst_mm"] = missWorst;
+    } else {
+        // where the sliders put the corner in the middle of the hole, before the slop: the spot, less the average offset
+        const cv::Point2d m = -measuredMean;
+        json["corner_centred_single_pair_mm"] = QJsonArray{ slopSingle + (ax.x * m.y - m.x * ax.y) / det, slopPair + (m.x * ay.y - ay.x * m.y) / det };
+    }
     QFile jsonFile(QDir(folder).filePath(QString("slop.json")));
     if (jsonFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         jsonFile.write(QJsonDocument(json).toJson());
     }
 
+    if (slopVerify) {
+        endSlop(QString("Checked %1: with the slop corrected, the hole's centre landed %2 mm rms (worst %3 mm) from the corner over %4 of %5 "
+                        "approaches, with %6 mm of X slop left. Results are in %7")
+                    .arg(slopMeasured).arg(missRms, 0, 'f', 3).arg(missWorst, 0, 'f', 3).arg(n).arg(slopShots.count())
+                    .arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(QDir::toNativeSeparators(folder)));
+        QDesktopServices::openUrl(QUrl::fromLocalFile(plotPath));
+        return;
+    }
     endSlop(QString("Slop measured from %1 of %2 approaches: %3 mm in X between +X and -X moves, %4 mm in Y between +Y and -Y; %5 mm left unexplained. "
                     "Results are in %6")
                 .arg(n).arg(slopShots.count()).arg(2.0 * std::abs(fx.at<double>(1)), 0, 'f', 3).arg(2.0 * std::abs(fy.at<double>(2)), 0, 'f', 3)

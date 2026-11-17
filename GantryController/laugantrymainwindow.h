@@ -205,8 +205,14 @@ private:
         bool ok = false;
         cv::Point2d hole, corner;            // where the camera saw the hole and the page's corner, board mm
         cv::Point2d offset;                  // hole - corner: what the slop moves
+        double radius = 0.0;                 // of the rim as the camera saw it
         QString note;
     };
+    // checking a measurement: the hole sent onto the corner itself, each approach corrected by the slop it predicts
+    bool slopVerify = false;
+    double slopFitX[3] = { 0, 0, 0 }, slopFitY[3] = { 0, 0, 0 };   // correction = c0 + c1 * lastX + c2 * lastY, slider mm
+    double slopRimRadius = 0.0;
+    QString slopMeasured;                    // the measurement being checked
     cv::Point2d slopAperture;                // the hole at rails zero, as the corner fine-tune saw it (else the calibration's)
     cv::Point2d slopAlong1, slopAlong2;      // the page's two edges leaving the corner
     QString slopFolder;

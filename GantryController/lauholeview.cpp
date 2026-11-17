@@ -493,7 +493,7 @@ bool LAUHoleView::findCorner(const cv::Mat &gray, double pairMM, double singleMM
 }
 
 bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along1,
-                                   cv::Point2d along2, cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check, double *radiusMM) const
+                                   cv::Point2d along2, cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check, double *radiusMM, double knownRadiusMM) const
 {
     if (!valid) {
         *why = QString("There's no platen calibration to see the hole with.");
@@ -606,6 +606,55 @@ bool LAUHoleView::findHoleAtCorner(const cv::Mat &gray, double pairMM, double si
                 keep[i] = residual[i] < limit;
             }
         }
+    }
+
+    // a known radius: only the centre is fitted (Gauss-Newton on the distances, refitted on the points within three
+    // robust sigmas), which holds up on the quarter of the rim seen when the corner is in the middle of the hole
+    if (knownRadiusMM > 0.0 && (int)rim.size() >= 30) {
+        cv::Point2d c = fitted ? centre : holeGuess;
+        std::vector<bool> keep(rim.size(), true);
+        for (int round = 0; round < 4; round++) {
+            for (int iteration = 0; iteration < 10; iteration++) {
+                double a11 = 0.0, a12 = 0.0, a22 = 0.0, b1 = 0.0, b2 = 0.0;
+                for (size_t i = 0; i < rim.size(); i++) {
+                    const cv::Point2d v = rim[i] - c;
+                    const double d = cv::norm(v);
+                    if (!keep[i] || d < 1e-9) {
+                        continue;
+                    }
+                    const cv::Point2d u = v * (1.0 / d);   // the residual d - R falls by u per unit move of the centre
+                    const double r = d - knownRadiusMM;
+                    a11 += u.x * u.x;
+                    a12 += u.x * u.y;
+                    a22 += u.y * u.y;
+                    b1 += u.x * r;
+                    b2 += u.y * r;
+                }
+                const double det = a11 * a22 - a12 * a12;
+                if (std::abs(det) < 1e-12) {
+                    break;
+                }
+                const cv::Point2d step((a22 * b1 - a12 * b2) / det, (a11 * b2 - a12 * b1) / det);
+                c += step;
+                if (cv::norm(step) < 1e-6) {
+                    break;
+                }
+            }
+            std::vector<double> residual, kept;
+            for (size_t i = 0; i < rim.size(); i++) {
+                residual.push_back(std::abs(cv::norm(rim[i] - c) - knownRadiusMM));
+                if (keep[i]) {
+                    kept.push_back(residual.back());
+                }
+            }
+            const double limit = std::max(0.03, 3.0 * 1.4826 * percentileOf(kept, 50.0));
+            for (size_t i = 0; i < rim.size(); i++) {
+                keep[i] = residual[i] < limit;
+            }
+        }
+        centre = c;
+        radius = knownRadiusMM;
+        fitted = true;
     }
 
     if (check) {

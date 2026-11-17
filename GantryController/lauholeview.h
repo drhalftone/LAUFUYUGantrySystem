@@ -65,7 +65,8 @@ public:
     // board mm.  The circle is the rim as the camera sees it, a fixed shift from the true hole, so differences between
     // views are true to the hole's movement.
     bool findHoleAtCorner(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &holeGuess, cv::Point2d along1, cv::Point2d along2,
-                          cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check = nullptr, double *radiusMM = nullptr) const;
+                          cv::Point2d *holeCentre, Corner *corner, QString *why, cv::Mat *check = nullptr, double *radiusMM = nullptr,
+                          double knownRadiusMM = 0.0) const;   // > 0: the rim's radius is known, fit only its centre (a short arc)
 
     cv::Point2d boardAxis(int rail) const    // board mm per mm of the rail pair (0) or the single rail (1)
     {
