@@ -84,6 +84,7 @@ private slots:
     void onCornerTuneRequested();
     void onPagePositionRequested();
     void onSlopRequested();
+    void onSlopConfirmRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
     void onI1Ready(bool ok, QString message, int serial);
@@ -236,6 +237,7 @@ private:
     int slopLastX = 0, slopLastY = 0;
     QString slopCorner, slopScan;
     QList<SlopShot> slopShots;
+    void startSlop(bool checkMode);
     void slopNextMove();
     void onSlopMoveFinished(bool ok, const QString &message);
     void onSlopTimer();

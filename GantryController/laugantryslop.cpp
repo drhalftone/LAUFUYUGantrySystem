@@ -68,7 +68,18 @@ namespace
 
 void LAUGantryMainWindow::onSlopRequested()
 {
-    const QString title = QString("Measure Slop");
+    startSlop(false);
+}
+
+void LAUGantryMainWindow::onSlopConfirmRequested()
+{
+    startSlop(true);
+}
+
+// checkMode: confirm the newest measurement, the corner sent into the middle of the hole with the slop corrected
+void LAUGantryMainWindow::startSlop(bool checkMode)
+{
+    const QString title = checkMode ? QString("Confirm Slop") : QString("Measure Slop");
     if (scanning || measuring || merging || returningHome || tuning || sloping || pageMoving || railWidget->isHoming()) {
         cameraWidget->showMessage(QString("Wait until the sliders and the merge are finished, then try again."));
         return;
@@ -136,6 +147,10 @@ void LAUGantryMainWindow::onSlopRequested()
         }
     }
     const int measuredCorner = measurement["corner_index"].toInt(-1);
+    if (checkMode && (measured.isEmpty() || measuredCorner < 0)) {
+        QMessageBox::information(this, title, QString("The slop hasn't been measured on the page of scan %1 yet. Choose Measure slop first.").arg(slopScan));
+        return;
+    }
     const cv::Point2d centred(measurement["corner_centred_single_pair_mm"].toArray().at(0).toDouble(),
                               measurement["corner_centred_single_pair_mm"].toArray().at(1).toDouble());
 
@@ -162,20 +177,19 @@ void LAUGantryMainWindow::onSlopRequested()
     QDialog dialog(this);
     dialog.setWindowTitle(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog);
-    QLabel *label = new QLabel(QString("The sliders bring the i1's hole back over a corner of the page found in scan %1, with the corner %2 mm in from "
-                                       "the hole's centre along both edges, from each of the twelve hours of a clock. Each time the camera finds the "
-                                       "corner and the hole's rim, and how far the hole lands from the corner shows the slop.\n\n"
-                                       "Take the i1 Pro out of its holder first so the camera sees the paper through the hole, and don't move the page.")
-                                   .arg(slopScan).arg(CORNER_IN_MM, 0, 'f', 1));
+    const QString measureText = QString("The sliders bring the i1's hole back over a corner of the page found in scan %1, with the corner %2 mm in from "
+                                        "the hole's centre along both edges, from each of the twelve hours of a clock. Each time the camera finds the "
+                                        "corner and the hole's rim, and how far the hole lands from the corner shows the slop.")
+                                    .arg(slopScan).arg(CORNER_IN_MM, 0, 'f', 1);
+    const QString confirmText = QString("The sliders bring the i1's hole onto the %1 corner measured in %2, from each of the twelve hours of a clock, "
+                                        "adding to each approach the slop that measurement predicts. If the slop was measured right, the corner lands "
+                                        "in the middle of the bullseye every time.")
+                                    .arg(names.value(measuredCorner), measured);
+    QLabel *label = new QLabel((checkMode ? confirmText : measureText) +
+                               QString("\n\nTake the i1 Pro out of its holder first so the camera sees the paper through the hole, and don't move the page."));
     label->setWordWrap(true);
     layout->addWidget(label);
     QFormLayout *form = new QFormLayout();
-    QComboBox *mode = new QComboBox();
-    mode->addItem(QString("Measure the slop"));
-    mode->addItem(measured.isEmpty() ? QString("Check a measurement (none yet for this scan)")
-                                     : QString("Check measurement %1: corner centred, slop corrected").arg(measured));
-    qobject_cast<QStandardItemModel *>(mode->model())->item(1)->setEnabled(!measured.isEmpty());
-    form->addRow(QString("Mode"), mode);
     QComboBox *corner = new QComboBox();
     corner->addItems(names);
     corner->setCurrentIndex(std::clamp(settings.value(QString("LAUGantryMainWindow::slopCorner"), 0).toInt(), 0, 3));
@@ -202,7 +216,7 @@ void LAUGantryMainWindow::onSlopRequested()
     // grey out the corners too close to the edge of the travel, for the inset and approach chosen
     QStandardItemModel *model = qobject_cast<QStandardItemModel *>(corner->model());
     const auto refresh = [&]() {
-        const bool check = mode->currentIndex() == 1;
+        const bool check = checkMode;
         if (check) {
             corner->setCurrentIndex(measuredCorner);
         }
@@ -226,12 +240,11 @@ void LAUGantryMainWindow::onSlopRequested()
         none->setVisible(first < 0);
     };
     connect(distance, QOverload<double>::of(&QDoubleSpinBox::valueChanged), &dialog, refresh);
-    connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, refresh);
     refresh();
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    slopVerify = mode->currentIndex() == 1;
+    slopVerify = checkMode;
     const int k = slopVerify ? measuredCorner : corner->currentIndex();
     if (k < 0 || !fits(k, distance->value(), slopVerify)) {
         return;

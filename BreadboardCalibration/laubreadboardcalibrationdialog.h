@@ -117,6 +117,7 @@ signals:
     void emitCornerTuneRequested();
     void emitPagePositionRequested();        // move the i1's hole to a point given in mm on the page
     void emitSlopRequested();                // measure the i1 bracket's slop from twelve directions
+    void emitSlopConfirmRequested();         // check that measurement: the corner sent into the bullseye, slop corrected
     void emitScanFrame(cv::Mat raw16, double exposureMs);
     void emitPrintTargetRequested();
     void emitLiveFrame(cv::Mat raw16);       // every frame shown, for whoever else wants to watch
@@ -150,6 +151,7 @@ private:
     QAction *tuneAction = nullptr;
     QAction *pageGoAction = nullptr;
     QAction *slopAction = nullptr;
+    QAction *slopConfirmAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
 

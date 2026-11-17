@@ -156,6 +156,7 @@ LAUGantryMainWindow::LAUGantryMainWindow(QWidget *parent) : QMainWindow(parent)
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitCornerTuneRequested, this, &LAUGantryMainWindow::onCornerTuneRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitPagePositionRequested, this, &LAUGantryMainWindow::onPagePositionRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitSlopRequested, this, &LAUGantryMainWindow::onSlopRequested);
+    connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitSlopConfirmRequested, this, &LAUGantryMainWindow::onSlopConfirmRequested);
     connect(cameraWidget, &LAUBreadboardCalibrationWidget::emitScanFrame, this, &LAUGantryMainWindow::onScanFrame);
     scanBase = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QString("GantryScans"));
     scanTimer = new QTimer(this);
