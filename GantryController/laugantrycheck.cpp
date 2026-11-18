@@ -33,7 +33,6 @@ namespace
     const int CHECK_SETTLE_MS = 500;
     const int CHECK_FRAME_TIMEOUT_MS = 15000;
     const double CHECK_ZOOM_HALF_MM = 8.0;   // the close-up around the hole, each way
-    const double CHECK_ZOOM_RES = 0.04;      // mm a pixel
     const double HOLE_RADIUS_MM = 4.9;       // the i1 holder's 9.8 mm hole
     const double FALLBACK_WINDOW_MM = 4.5;   // the paper seen through the hole, when it couldn't be seen on plain paper
 
@@ -316,50 +315,91 @@ void LAUGantryMainWindow::onCheckFrame(const cv::Mat &raw16)
     checkNextVisit();
 }
 
-// the paper around the hole, square-on, with the hole as a bullseye and what was found of the corner
+// The camera's own picture around the hole, enlarged, as the live view and the fine-tune's close-up show it (not the
+// paper square-on in board mm, which is mirrored from the camera's view): the hole as a bullseye, and what was found of
+// the corner.  Board points are projected into the frame with the platen calibration.
 void LAUGantryMainWindow::showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text)
 {
-    if (!homeDialog) {
+    if (!homeDialog || gray.empty()) {
         return;
     }
     const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
-    cv::Mat L = holeView.ortho(gray, pair, single, hole, CHECK_ZOOM_HALF_MM, CHECK_ZOOM_RES), grey, colour;
-    L.convertTo(grey, CV_8U);
-    cv::cvtColor(grey, colour, cv::COLOR_GRAY2BGR);
-    const int n = colour.cols;
-    const auto px = [&](const cv::Point2d &board) {
-        return cv::Point((int)std::lround((board.x - hole.x + CHECK_ZOOM_HALF_MM) / CHECK_ZOOM_RES),
-                         (int)std::lround((board.y - hole.y + CHECK_ZOOM_HALF_MM) / CHECK_ZOOM_RES));
-    };
-    const double perMM = 1.0 / CHECK_ZOOM_RES;
-    const cv::Point mid(n / 2, n / 2);
-    // the bullseye: the hole's outline, rings every mm, and its centre
-    const cv::Scalar green(0, 220, 0), magenta(255, 0, 255), cyan(255, 255, 0);
-    cv::circle(colour, mid, (int)std::lround(HOLE_RADIUS_MM * perMM), green, 2, cv::LINE_AA);
-    for (int r = 1; r <= 3; r++) {
-        cv::circle(colour, mid, (int)std::lround(r * perMM), green, 1, cv::LINE_AA);
+    cv::Point2d centre, edge;
+    if (!platenOverlay.project(hole, pair, single, &centre) || !platenOverlay.project(hole + cv::Point2d(HOLE_RADIUS_MM, 0.0), pair, single, &edge)) {
+        return;
     }
-    cv::line(colour, mid - cv::Point(12, 0), mid + cv::Point(12, 0), green, 1, cv::LINE_AA);
-    cv::line(colour, mid - cv::Point(0, 12), mid + cv::Point(0, 12), green, 1, cv::LINE_AA);
-    if (corner) {
-        for (int e = 0; e < 2; e++) {
-            for (const cv::Point2d &p : corner->edgePoints[e]) {
-                cv::circle(colour, px(p), 1, cyan, cv::FILLED);
-            }
-            if (corner->edgeFitted[e]) {
-                cv::line(colour, px(corner->edgeAt[e] - corner->edgeDir[e] * 20.0), px(corner->edgeAt[e] + corner->edgeDir[e] * 20.0), cyan, 1, cv::LINE_AA);
+    const double pxPerMM = cv::norm(edge - centre) / HOLE_RADIUS_MM;
+    const int half = std::max(8, (int)std::lround(CHECK_ZOOM_HALF_MM * pxPerMM));
+    const cv::Rect box((int)std::lround(centre.x) - half, (int)std::lround(centre.y) - half, 2 * half + 1, 2 * half + 1);
+    const cv::Rect inside = box & cv::Rect(0, 0, gray.cols, gray.rows);
+    if (inside.area() <= 0) {
+        return;
+    }
+    cv::Mat crop = cv::Mat::zeros(box.size(), CV_8U);
+    gray(inside).copyTo(crop(inside - box.tl()));
+    const int size = 420;
+    const double scale = size / (double)box.width;
+    cv::Mat big, colour;
+    cv::resize(crop, big, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+    cv::cvtColor(big, colour, cv::COLOR_GRAY2BGR);
+    const auto at = [&](const cv::Point2d &pixel) {   // camera pixel -> zoom, 1/16 pixel
+        return cv::Point((int)std::lround(((pixel.x - box.x + 0.5) * scale - 0.5) * 16.0), (int)std::lround(((pixel.y - box.y + 0.5) * scale - 0.5) * 16.0));
+    };
+    const auto onBoard = [&](const cv::Point2d &board, cv::Point *out) {
+        cv::Point2d p;
+        if (!platenOverlay.project(board, pair, single, &p)) {
+            return false;
+        }
+        *out = at(p);
+        return true;
+    };
+    const cv::Scalar green(0, 220, 0), magenta(255, 0, 255), cyan(255, 255, 0);
+
+    // the bullseye: the hole's outline, rings every mm in board, and its centre
+    const auto ring = [&](double radius, int thickness) {
+        std::vector<cv::Point> points;
+        for (int n = 0; n <= 48; n++) {
+            cv::Point q;
+            if (onBoard(hole + cv::Point2d(std::cos(n * CV_PI / 24.0), std::sin(n * CV_PI / 24.0)) * radius, &q)) {
+                points.push_back(q);
             }
         }
-        if (corner->atValid) {
-            const cv::Point at = px(corner->at);
-            cv::line(colour, at - cv::Point(10, 10), at + cv::Point(10, 10), magenta, 2, cv::LINE_AA);
-            cv::line(colour, at - cv::Point(10, -10), at + cv::Point(10, -10), magenta, 2, cv::LINE_AA);
-            cv::line(colour, mid, at, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+        cv::polylines(colour, points, false, green, thickness, cv::LINE_AA, 4);
+    };
+    ring(HOLE_RADIUS_MM, 2);
+    for (int r = 1; r <= 3; r++) {
+        ring(r, 1);
+    }
+    const cv::Point mid = at(centre);
+    const int arm = 12 * 16;
+    cv::line(colour, mid - cv::Point(arm, 0), mid + cv::Point(arm, 0), green, 1, cv::LINE_AA, 4);
+    cv::line(colour, mid - cv::Point(0, arm), mid + cv::Point(0, arm), green, 1, cv::LINE_AA, 4);
+
+    if (corner) {
+        for (int e = 0; e < 2; e++) {
+            for (const cv::Point2d &b : corner->edgePoints[e]) {
+                cv::Point q;
+                if (onBoard(b, &q)) {
+                    cv::circle(colour, q, 16, cyan, cv::FILLED, cv::LINE_AA, 4);
+                }
+            }
+            if (corner->edgeFitted[e]) {
+                cv::Point q0, q1;
+                if (onBoard(corner->edgeAt[e] - corner->edgeDir[e] * CHECK_ZOOM_HALF_MM, &q0) && onBoard(corner->edgeAt[e] + corner->edgeDir[e] * CHECK_ZOOM_HALF_MM, &q1)) {
+                    cv::line(colour, q0, q1, cyan, 1, cv::LINE_AA, 4);
+                }
+            }
+        }
+        cv::Point k;
+        if (corner->atValid && onBoard(corner->at, &k)) {
+            cv::line(colour, k - cv::Point(arm / 2, arm / 2), k + cv::Point(arm / 2, arm / 2), magenta, 2, cv::LINE_AA, 4);
+            cv::line(colour, k - cv::Point(arm / 2, -arm / 2), k + cv::Point(arm / 2, -arm / 2), magenta, 2, cv::LINE_AA, 4);
+            cv::line(colour, mid, k, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
         }
     }
     cv::putText(colour, text.toStdString(), cv::Point(10, 22), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
     cv::putText(colour, QString("green hole (rings 1 mm)  cyan edges  magenta corner  %1 mm across").arg(2 * CHECK_ZOOM_HALF_MM, 0, 'f', 0).toStdString(),
-                cv::Point(10, n - 12), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
+                cv::Point(10, size - 12), cv::FONT_HERSHEY_SIMPLEX, 0.38, cv::Scalar(200, 200, 200), 1, cv::LINE_AA);
     homeDialog->setZoom(QImage(colour.data, colour.cols, colour.rows, (int)colour.step, QImage::Format_BGR888).copy());
 }
 
