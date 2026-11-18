@@ -176,6 +176,10 @@ private:
         QString note;                                    // why the camera couldn't, if it couldn't
         double missMM = -1.0;                            // the camera's last measured miss before the final step
         int moves = 0;
+        // how the sliders arrived where the corner was confirmed, for the slop
+        bool arrivalKnown = false;
+        int arriveDir = 0;
+        double arriveRunX = 0.0, arriveShiftX = 0.0, arriveShiftY = 0.0;
     };
     enum TuneStage { TuneToInset, TuneToCorner, TuneManual };
     TuneStage tuneStage = TuneManual;
@@ -271,7 +275,44 @@ private:
     bool slopLogicalKnown = false;
     bool loadSlopCorrection();
     void resetSlopTracking();
-    void moveRailsSlop(double single, double pair);
+    void moveRailsSlop(double single, double pair, const QString &what = QString());
+    // every corrected move, for the logs: what it was for, which way X arrived, how far X ran since it last turned
+    // round (a short run may not take up all the slop), the correction added, and where the sliders said they stopped
+    struct SlopMove
+    {
+        QString what;
+        double logicalSingle = 0.0, logicalPair = 0.0;
+        int dir = 0;
+        double runX = 0.0;
+        double shiftX = 0.0, shiftY = 0.0;
+        double commandedSingle = 0.0, commandedPair = 0.0;
+        bool arrived = false;
+        double reportedSingle = 0.0, reportedPair = 0.0;
+    };
+    QList<SlopMove> slopMoves;
+    double slopRunX = 0.0;                   // X travelled since its direction last changed, slider mm
+    cv::Point2d slopHoleLeft, slopHoleRight; // the slop test's hole relative to the carriage, arriving moving left / right, board mm
+    bool slopHolesKnown = false;
+    void noteSlopArrival();
+    bool writeSlopMoves(const QString &path) const;
+    static QString slopDirName(int dir)
+    {
+        return dir > 0 ? QString("moving_right") : dir < 0 ? QString("moving_left") : QString("unknown");
+    }
+    // each time the fine-tune saw the hole on plain paper: which way X arrived, and the hole relative to the carriage
+    struct TuneSighting
+    {
+        QString corner;
+        int inset = 0;
+        bool found = false;
+        int dir = 0;
+        double runX = 0.0, shiftX = 0.0, shiftY = 0.0;
+        double reportedSingle = 0.0, reportedPair = 0.0;
+        cv::Point2d physical, logical;       // hole - axes * (reported rails), and the same with the slop-free rails
+        QString why;
+    };
+    QList<TuneSighting> tuneSightings;
+    bool writeTuneSightings(const QString &path) const;
     double slopShiftX() const { return slopDir * slopCorrX; }
     double slopShiftY() const { return slopDir * slopCorrY; }
     LAUPlatenGeometry slopGeometry;          // the page's scan, its travel replaced by the limit sliders'

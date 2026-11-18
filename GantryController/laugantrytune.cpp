@@ -190,6 +190,7 @@ void LAUGantryMainWindow::onCornerTuneRequested()
     tuneWaitingFrame = false;
     tuneIndex = -1;
     tuneApertures.clear();
+    tuneSightings.clear();
     tuneWindow.release();
     cameraWidget->lockScanActions(true);
     railBox->setEnabled(false);              // the dialog's arrows move the sliders now
@@ -205,6 +206,15 @@ void LAUGantryMainWindow::onCornerTuneRequested()
 
 void LAUGantryMainWindow::nextTuneCorner()
 {
+    if (tuneIndex >= 0 && tuneIndex < tuneCorners.count()) {
+        // how the sliders came to where this corner was left, for the slop
+        TuneCorner &c = tuneCorners[tuneIndex];
+        c.arrivalKnown = true;
+        c.arriveDir = slopDir;
+        c.arriveRunX = slopRunX;
+        c.arriveShiftX = slopCorrectionLoaded ? slopShiftX() : 0.0;
+        c.arriveShiftY = slopCorrectionLoaded ? slopShiftY() : 0.0;
+    }
     tuneIndex++;
     if (tuneIndex >= tuneCorners.count()) {
         finishTune();
@@ -227,12 +237,12 @@ void LAUGantryMainWindow::goToTuneCorner()
     if (holeView.isValid() && !c.insets.isEmpty()) {
         tuneStage = TuneToInset;
         tuneDialog->setMessage(QString("The page's %1 corner: finding the hole on plain paper next to it...").arg(c.name));
-        moveRailsSlop(c.insets[0].x, c.insets[0].y);
+        moveRailsSlop(c.insets[0].x, c.insets[0].y, QString("%1: plain paper 1").arg(c.name));
         return;
     }
     tuneStage = (holeView.isValid() && !tuneApertures.isEmpty()) ? TuneToCorner : TuneManual;
     tuneDialog->setMessage(QString("Moving the hole to the page's %1 corner...").arg(c.name));
-    moveRailsSlop(c.single, c.pair);  // answers with emitHomeFinished -> onTuneMoveFinished
+    moveRailsSlop(c.single, c.pair, QString("%1: to the corner").arg(c.name));  // answers with emitHomeFinished -> onTuneMoveFinished
 }
 
 void LAUGantryMainWindow::onTuneMoveFinished(bool ok, const QString &message)
@@ -320,18 +330,32 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         LAUHoleView::Hole hole;
         QString why;
         cv::Mat check;
+        TuneSighting seen;
+        seen.corner = c.name;
+        seen.inset = c.insetTry;
+        seen.dir = slopDir;
+        seen.runX = slopRunX;
+        seen.shiftX = slopCorrectionLoaded ? slopShiftX() : 0.0;
+        seen.shiftY = slopCorrectionLoaded ? slopShiftY() : 0.0;
+        seen.reportedSingle = single;
+        seen.reportedPair = pair;
         if (holeView.findHole(gray, pair, single, aperture + holeView.boardAxis(0) * logicalPair + holeView.boardAxis(1) * logicalSingle, &hole, &why, &check)) {
             tuneApertures << hole.centre - holeView.boardAxis(0) * logicalPair - holeView.boardAxis(1) * logicalSingle;
             tuneWindow = hole.window;
+            seen.found = true;
+            seen.logical = tuneApertures.last();
+            seen.physical = hole.centre - holeView.boardAxis(0) * pair - holeView.boardAxis(1) * single;
         } else {
             c.note = QString("the hole wasn't clear on the paper next to the corner (%1)").arg(why);
+            seen.why = why;
         }
+        tuneSightings << seen;
         if (!check.empty()) {
             QImage(check.data, check.cols, check.rows, (int)check.step, QImage::Format_BGR888).save(checkPath);
         }
         if (!c.note.isEmpty() && ++c.insetTry < c.insets.count()) {
             c.note.clear();                  // print under the hole, most likely: try further in
-            moveRailsSlop(c.insets[c.insetTry].x, c.insets[c.insetTry].y);
+            moveRailsSlop(c.insets[c.insetTry].x, c.insets[c.insetTry].y, QString("%1: plain paper %2").arg(c.name).arg(c.insetTry + 1));
             return;
         }
         if (tuneApertures.isEmpty()) {
@@ -340,7 +364,7 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
             tuneStage = TuneToCorner;
             tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole...").arg(c.name));
         }
-        moveRailsSlop(c.single, c.pair);
+        moveRailsSlop(c.single, c.pair, QString("%1: to the corner").arg(c.name));
         return;
     }
 
@@ -379,7 +403,7 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
                 c.pair = toPair;
                 tuneStage = TuneManual;
                 tuneDialog->setMessage(QString("The page's %1 corner: moving the hole onto the corner the camera saw...").arg(c.name));
-                moveRailsSlop(c.single, c.pair);   // onTuneMoveFinished then shows the arrows
+                moveRailsSlop(c.single, c.pair, QString("%1: onto the corner the camera saw").arg(c.name));   // onTuneMoveFinished then shows the arrows
                 return;
             }
         }
@@ -432,7 +456,7 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     c.moves++;
     tuneDialog->setMessage(QString("The page's %1 corner: centring it in the hole. It was %2 mm off; move %3...")
                                .arg(c.name).arg(c.missMM, 0, 'f', 2).arg(c.moves));
-    moveRailsSlop(nextSingle, nextPair);
+    moveRailsSlop(nextSingle, nextPair, QString("%1: camera move %2").arg(c.name).arg(c.moves));
 }
 
 // The live picture around the hole, enlarged for the dialog.  The hole is fixed to the camera, so it is always in the
@@ -584,7 +608,7 @@ void LAUGantryMainWindow::tuneByHand(const QString &reason)
     if (overCorner) {
         onTuneMoveFinished(true, QString()); // shows the corner's message with the arrows enabled
     } else {
-        moveRailsSlop(c.single, c.pair);   // still beside it, over plain paper
+        moveRailsSlop(c.single, c.pair, QString("%1: to the corner, by hand").arg(c.name));   // still beside it, over plain paper
     }
 }
 
@@ -648,7 +672,7 @@ void LAUGantryMainWindow::onTuneNudge(int right, int down)
     c.single += ds;
     c.pair += dp;
     tuneDialog->setBusy(true);
-    moveRailsSlop(c.single, c.pair);
+    moveRailsSlop(c.single, c.pair, QString("%1: nudge %2, %3 mm").arg(c.name).arg(ds, 0, 'f', 3).arg(dp, 0, 'f', 3));
 }
 
 void LAUGantryMainWindow::onTuneCentered()
@@ -743,6 +767,11 @@ void LAUGantryMainWindow::finishTune()
         o["started_single_pair_mm"] = QJsonArray{ c.startSingle, c.startPair };
         o["reachable"] = c.reachable;
         o["confirmed"] = c.confirmed;
+        if (c.arrivalKnown) {
+            o["arrived"] = slopDirName(c.arriveDir);
+            o["x_run_since_turn_mm"] = c.arriveRunX;
+            o["slop_shift_single_pair_mm"] = QJsonArray{ c.arriveShiftX, c.arriveShiftY };
+        }
         if (!c.note.isEmpty()) {
             o["camera_note"] = c.note;
         }
@@ -823,6 +852,33 @@ void LAUGantryMainWindow::finishTune()
                                                                      { "y_per_last_x_sign_mm", slopCorrY } }
                                                      : QJsonObject();
     record["positions"] = QString("slop-free: the correction for the direction of arrival is added to every move");
+    if (slopHolesKnown) {
+        record["slop_test_hole_vs_carriage_moving_left_board_mm"] = QJsonArray{ slopHoleLeft.x, slopHoleLeft.y };
+        record["slop_test_hole_vs_carriage_moving_right_board_mm"] = QJsonArray{ slopHoleRight.x, slopHoleRight.y };
+    }
+    QJsonArray sightings;
+    for (const TuneSighting &t : tuneSightings) {
+        QJsonObject o;
+        o["corner"] = t.corner;
+        o["inset"] = t.inset + 1;
+        o["found"] = t.found;
+        o["arrived"] = slopDirName(t.dir);
+        o["x_run_since_turn_mm"] = t.runX;
+        o["slop_shift_single_pair_mm"] = QJsonArray{ t.shiftX, t.shiftY };
+        o["reported_single_pair_mm"] = QJsonArray{ t.reportedSingle, t.reportedPair };
+        if (t.found) {
+            o["hole_vs_carriage_physical_mm"] = QJsonArray{ t.physical.x, t.physical.y };
+            o["hole_vs_carriage_logical_mm"] = QJsonArray{ t.logical.x, t.logical.y };
+            if (slopHolesKnown && t.dir != 0) {
+                o["miss_vs_slop_test_mm"] = cv::norm(t.physical - ((t.dir > 0) ? slopHoleRight : slopHoleLeft));
+            }
+        } else {
+            o["why"] = t.why;
+        }
+        sightings.append(o);
+    }
+    record["hole_sightings"] = sightings;
+    record["logs"] = QString("corner_tune_moves.csv (every move) and corner_tune_holes.csv (every sighting of the hole)");
     record["fit"] = (used.count() >= 3) ? QString("affine") : (used.count() == 2) ? QString("similarity") : QString("offset");
     record["worst_nudge_mm"] = worstNudge;
     record["worst_left_after_fit_mm"] = worstLeft;
@@ -968,11 +1024,20 @@ void LAUGantryMainWindow::onPagePositionRequested()
     homeDialog->setMessage(QString("Moving the i1's hole to (%1, %2) mm on the page...").arg(x->value(), 0, 'f', 2).arg(y->value(), 0, 'f', 2));
     connect(homeDialog, &LAUHomeDialog::emitAbort, railWidget, &LAUMultiVelmexWidget::abortHome);
     homeDialog->open();
-    moveRailsSlop(single, pair);     // answers with emitHomeFinished
+    moveRailsSlop(single, pair, QString("page position"));     // answers with emitHomeFinished
 }
 
 void LAUGantryMainWindow::endTune(const QString &message)
 {
+    // the logs, kept whether the correction was saved or not
+    QString logs;
+    if (!tuneFolder.isEmpty()) {
+        const bool moves = writeSlopMoves(QDir(tuneFolder).filePath(QString("corner_tune_moves.csv")));
+        const bool holes = writeTuneSightings(QDir(tuneFolder).filePath(QString("corner_tune_holes.csv")));
+        if (moves || holes) {
+            logs = QString(" The moves and the hole's sightings are logged in %1.").arg(QDir::toNativeSeparators(tuneFolder));
+        }
+    }
     tuning = false;
     tuneCancelling = false;
     tuneWaitingFrame = false;
@@ -985,5 +1050,5 @@ void LAUGantryMainWindow::endTune(const QString &message)
     }
     railBox->setEnabled(true);
     cameraWidget->lockScanActions(false);
-    cameraWidget->showMessage(message);
+    cameraWidget->showMessage(message + logs);
 }

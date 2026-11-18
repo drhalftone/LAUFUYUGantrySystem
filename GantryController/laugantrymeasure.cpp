@@ -219,6 +219,7 @@ void LAUGantryMainWindow::startI1()
     }
 
     readings = QVector<QVector<double>>(measureTarget.patches.count());
+    slopMoves.clear();                       // this run's moves only, for its log
     patchIndex = 0;
     measuring = true;
     measureAborting = false;
@@ -284,7 +285,7 @@ void LAUGantryMainWindow::moveToNextPatch()
     const PatchStop &stop = patchStops.at(patchIndex);
     homeDialog->setMessage(QString("Measuring patch %1 (%2 of %3)...").arg(measureTarget.patches.at(stop.patch).location).arg(patchIndex + 1).arg(patchStops.count()));
     homeDialog->setProgress(patchIndex, patchStops.count());
-    moveRailsSlop(stop.singleMM, stop.pairMM);
+    moveRailsSlop(stop.singleMM, stop.pairMM, measureTarget.patches.at(stop.patch).location);
 }
 
 void LAUGantryMainWindow::onPatchMoveFinished(bool ok, const QString &message)
@@ -410,6 +411,14 @@ void LAUGantryMainWindow::onMeasureAbort()
 
 void LAUGantryMainWindow::endMeasure(const QString &message)
 {
+    // every move to a patch: which way X arrived and the slop correction added, kept with the readings
+    QString logs;
+    if (!measureFolder.isEmpty() && !slopMoves.isEmpty() && QDir().mkpath(measureFolder)) {
+        const QString path = QDir(measureFolder).filePath(measureName + QString("_moves.csv"));
+        if (writeSlopMoves(path)) {
+            logs = QString(" The moves are logged in %1").arg(QDir::toNativeSeparators(path));
+        }
+    }
     measuring = false;
     waitingForReading = false;
     measureTimer->stop();
@@ -418,5 +427,5 @@ void LAUGantryMainWindow::endMeasure(const QString &message)
         homeDialog = nullptr;
     }
     railBox->setEnabled(true);
-    cameraWidget->endScan(message);
+    cameraWidget->endScan(message + logs);
 }
