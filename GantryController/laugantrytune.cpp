@@ -166,15 +166,10 @@ void LAUGantryMainWindow::onCornerTuneRequested()
         text += QString("\n\nThe %1 corner%2 may be past the i1's travel: the sliders will go as close as they can, and you'll be told if %3 can't be reached.")
                     .arg(unreachable.join(QString(", "))).arg(unreachable.count() > 1 ? "s" : "").arg(unreachable.count() > 1 ? "they" : "it");
     }
-    // the slop: every move adds the correction for the way it leaves X moving, so the hole lands in the same place
-    // whichever way the sliders arrive
-    if (loadSlopCorrection()) {
-        text += QString("\n\nSlop: each move is corrected by %1 mm in X and %2 mm in Y for the way it arrives, from the slop measured in %3.")
-                    .arg(std::abs(slopCorrX), 0, 'f', 3).arg(std::abs(slopCorrY), 0, 'f', 3).arg(slopCorrSource);
-    } else {
-        text += QString("\n\nThe slop hasn't been measured, so the moves aren't corrected for it. For the best corners, choose "
-                        "Measure slop by tracking the hole first.");
-    }
+    // the slop: every move ends the same way, so the i1 holder hangs the same way at every stop
+    text += QString("\n\nSlop: every move ends with the last %1 mm moving X alone to the right, so the i1's holder hangs the same way at every stop.")
+                .arg(SLOP_APPROACH_MM, 0, 'f', 0);
+    loadSlopTest();                          // only to compare the hole's sightings with, in the log
     if (QMessageBox::information(this, title, text, QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok) != QMessageBox::Ok) {
         return;
     }
@@ -206,15 +201,6 @@ void LAUGantryMainWindow::onCornerTuneRequested()
 
 void LAUGantryMainWindow::nextTuneCorner()
 {
-    if (tuneIndex >= 0 && tuneIndex < tuneCorners.count()) {
-        // how the sliders came to where this corner was left, for the slop
-        TuneCorner &c = tuneCorners[tuneIndex];
-        c.arrivalKnown = true;
-        c.arriveDir = slopDir;
-        c.arriveRunX = slopRunX;
-        c.arriveShiftX = slopCorrectionLoaded ? slopShiftX() : 0.0;
-        c.arriveShiftY = slopCorrectionLoaded ? slopShiftY() : 0.0;
-    }
     tuneIndex++;
     if (tuneIndex >= tuneCorners.count()) {
         finishTune();
@@ -260,8 +246,8 @@ void LAUGantryMainWindow::onTuneMoveFinished(bool ok, const QString &message)
         tuneTimer->start(SETTLE_MS);         // then a frame of the hole on plain paper
         return;
     }
-    c.single = railWidget->reportedMM(0) - slopShiftX();   // slop-free: where the move was sent, less its correction
-    c.pair = railWidget->reportedMM(2) - slopShiftY();
+    c.single = railWidget->reportedMM(0);
+    c.pair = railWidget->reportedMM(2);
     if (tuneStage == TuneToCorner) {
         tuneTimer->start(SETTLE_MS);         // then a frame of the corner
         return;
@@ -316,10 +302,7 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     const QString checkPath = QDir(tuneFolder).filePath(QString("corner_tune_%1%2.png").arg(c.name).arg(tuneStage == TuneToInset ? "_hole" : ""));
 
     if (tuneStage == TuneToInset) {
-        // the camera rides on the carriage, so it sees from where the carriage really is; the hole is placed from the
-        // slop-free position, so it sits where the midpoint of the two directions of arrival puts it
         const double pair = railWidget->reportedMM(2), single = railWidget->reportedMM(0);
-        const double logicalPair = pair - slopShiftY(), logicalSingle = single - slopShiftX();
         cv::Point2d aperture = holeView.calibratedAperture();
         if (!tuneApertures.isEmpty()) {
             aperture = cv::Point2d(0, 0);
@@ -333,18 +316,15 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         TuneSighting seen;
         seen.corner = c.name;
         seen.inset = c.insetTry;
-        seen.dir = slopDir;
-        seen.runX = slopRunX;
-        seen.shiftX = slopCorrectionLoaded ? slopShiftX() : 0.0;
-        seen.shiftY = slopCorrectionLoaded ? slopShiftY() : 0.0;
         seen.reportedSingle = single;
         seen.reportedPair = pair;
-        if (holeView.findHole(gray, pair, single, aperture + holeView.boardAxis(0) * logicalPair + holeView.boardAxis(1) * logicalSingle, &hole, &why, &check)) {
-            tuneApertures << hole.centre - holeView.boardAxis(0) * logicalPair - holeView.boardAxis(1) * logicalSingle;
+        if (holeView.findHole(gray, pair, single, aperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single, &hole, &why, &check)) {
+            tuneApertures << hole.centre - holeView.boardAxis(0) * pair - holeView.boardAxis(1) * single;
             tuneWindow = hole.window;
+            c.holeKnown = true;              // this corner is centred with the hole seen beside it
+            c.hole = tuneApertures.last();
             seen.found = true;
-            seen.logical = tuneApertures.last();
-            seen.physical = hole.centre - holeView.boardAxis(0) * pair - holeView.boardAxis(1) * single;
+            seen.hole = c.hole;
         } else {
             c.note = QString("the hole wasn't clear on the paper next to the corner (%1)").arg(why);
             seen.why = why;
@@ -368,10 +348,14 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
         return;
     }
 
-    // over the corner: where the hole is now, from where it was seen, and where the corner is
+    // over the corner: where the hole is now, from where it was seen beside this corner (or, if it wasn't, on average
+    // beside the others), and where the corner is
     cv::Point2d aperture(0, 0);
     for (const cv::Point2d &a : tuneApertures) {
         aperture += a * (1.0 / tuneApertures.count());
+    }
+    if (c.holeKnown) {
+        aperture = c.hole;
     }
     const double pair = c.pair, single = c.single;   // reported where the move ended
     const cv::Point2d hole = aperture + holeView.boardAxis(0) * pair + holeView.boardAxis(1) * single;
@@ -380,8 +364,7 @@ void LAUGantryMainWindow::onTuneFrame(const cv::Mat &raw16)
     LAUHoleView::Corner found;
     QString why;
     cv::Mat check;
-    // the camera sees from where the carriage really is: the slop-free position plus its correction
-    const bool ok = holeView.findCorner(gray, pair + slopShiftY(), single + slopShiftX(), hole, tuneWindow, c.board, along1, along2, &found, &why, &check);
+    const bool ok = holeView.findCorner(gray, pair, single, hole, tuneWindow, c.board, along1, along2, &found, &why, &check);
     tuneSeen = found;
     tuneSeenValid = true;
     tuneSeenWhy = ok ? QString() : why;
@@ -469,14 +452,16 @@ void LAUGantryMainWindow::showTuneZoom(const cv::Mat &raw16)
     const double now = guideClock.elapsed() / 1000.0;
     const double pair = pairRail.estimate(now), single = singleRail.estimate(now);
     cv::Point2d aperture = holeView.isValid() ? holeView.calibratedAperture() : tuneGeometry.A0;
-    if (!tuneApertures.isEmpty()) {
+    if (tuneCorners[tuneIndex].holeKnown) {
+        aperture = tuneCorners[tuneIndex].hole;   // seen beside this corner
+    } else if (!tuneApertures.isEmpty()) {
         aperture = cv::Point2d(0, 0);
         for (const cv::Point2d &a : tuneApertures) {
             aperture += a * (1.0 / tuneApertures.count());
         }
     }
     const cv::Point2d ax(tuneGeometry.ex[0], tuneGeometry.ex[1]), ay(tuneGeometry.ey[0], tuneGeometry.ey[1]);
-    const cv::Point2d hole = aperture + ax * (pair - slopShiftY()) + ay * (single - slopShiftX());   // placed slop-free
+    const cv::Point2d hole = aperture + ax * pair + ay * single;
     cv::Point2d centre, edge, corner;
     if (!platenOverlay.project(hole, pair, single, &centre) || !platenOverlay.project(hole + cv::Point2d(4.9, 0.0), pair, single, &edge)) {
         return;
@@ -767,10 +752,8 @@ void LAUGantryMainWindow::finishTune()
         o["started_single_pair_mm"] = QJsonArray{ c.startSingle, c.startPair };
         o["reachable"] = c.reachable;
         o["confirmed"] = c.confirmed;
-        if (c.arrivalKnown) {
-            o["arrived"] = slopDirName(c.arriveDir);
-            o["x_run_since_turn_mm"] = c.arriveRunX;
-            o["slop_shift_single_pair_mm"] = QJsonArray{ c.arriveShiftX, c.arriveShiftY };
+        if (c.holeKnown) {
+            o["hole_beside_it_at_rails_zero_mm"] = QJsonArray{ c.hole.x, c.hole.y };
         }
         if (!c.note.isEmpty()) {
             o["camera_note"] = c.note;
@@ -848,11 +831,10 @@ void LAUGantryMainWindow::finishTune()
     record["hole_seen_at_rails_zero_mm"] = apertures;
     record["calibrated_hole_at_rails_zero_mm"] = QJsonArray{ holeView.calibratedAperture().x, holeView.calibratedAperture().y };
     record["fix_single_pair"] = QJsonArray{ QJsonArray{ F(0, 0), F(0, 1), F(0, 2) }, QJsonArray{ F(1, 0), F(1, 1), F(1, 2) } };
-    record["slop_correction"] = slopCorrectionLoaded ? QJsonObject{ { "from", slopCorrSource }, { "x_per_last_x_sign_mm", slopCorrX },
-                                                                     { "y_per_last_x_sign_mm", slopCorrY } }
-                                                     : QJsonObject();
-    record["positions"] = QString("slop-free: the correction for the direction of arrival is added to every move");
+    record["approach"] = QString("every move ends X alone, moving right (X increasing), over its last %1 mm").arg(SLOP_APPROACH_MM, 0, 'f', 1);
+    record["hole"] = QString("each corner centred with the hole seen on plain paper beside it, or the mean of the others if it wasn't seen");
     if (slopHolesKnown) {
+        record["slop_test"] = slopTestSource;
         record["slop_test_hole_vs_carriage_moving_left_board_mm"] = QJsonArray{ slopHoleLeft.x, slopHoleLeft.y };
         record["slop_test_hole_vs_carriage_moving_right_board_mm"] = QJsonArray{ slopHoleRight.x, slopHoleRight.y };
     }
@@ -862,15 +844,11 @@ void LAUGantryMainWindow::finishTune()
         o["corner"] = t.corner;
         o["inset"] = t.inset + 1;
         o["found"] = t.found;
-        o["arrived"] = slopDirName(t.dir);
-        o["x_run_since_turn_mm"] = t.runX;
-        o["slop_shift_single_pair_mm"] = QJsonArray{ t.shiftX, t.shiftY };
         o["reported_single_pair_mm"] = QJsonArray{ t.reportedSingle, t.reportedPair };
         if (t.found) {
-            o["hole_vs_carriage_physical_mm"] = QJsonArray{ t.physical.x, t.physical.y };
-            o["hole_vs_carriage_logical_mm"] = QJsonArray{ t.logical.x, t.logical.y };
-            if (slopHolesKnown && t.dir != 0) {
-                o["miss_vs_slop_test_mm"] = cv::norm(t.physical - ((t.dir > 0) ? slopHoleRight : slopHoleLeft));
+            o["hole_vs_carriage_mm"] = QJsonArray{ t.hole.x, t.hole.y };
+            if (slopHolesKnown) {
+                o["from_slop_test_moving_right_mm"] = cv::norm(t.hole - slopHoleRight);
             }
         } else {
             o["why"] = t.why;
@@ -1016,7 +994,6 @@ void LAUGantryMainWindow::onPagePositionRequested()
     pageMoveMessage = QString("The i1's hole is over (%1, %2) mm on the page: sliders at X %3 mm, Y %4 mm.")
                           .arg(x->value(), 0, 'f', 2).arg(y->value(), 0, 'f', 2).arg(single, 0, 'f', 2).arg(pair, 0, 'f', 2);
     pageMoving = true;
-    loadSlopCorrection();                    // the page's positions are slop-free, as the fine-tune found them
     resetSlopTracking();
     railBox->setEnabled(false);
     homeDialog = new LAUHomeDialog(this);

@@ -609,7 +609,9 @@ void LAUGantryMainWindow::onGoHome()
 
 void LAUGantryMainWindow::onHomeFinished(bool ok, QString message)
 {
-    noteSlopArrival();                       // a corrected move's end, for the slop logs
+    if (continueSlopMove(ok)) {              // the first leg of a one-way move: the last leg is on its way
+        return;
+    }
     if (tuning) {
         onTuneMoveFinished(ok, message);
         return;

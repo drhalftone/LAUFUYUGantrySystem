@@ -200,15 +200,9 @@ void LAUGantryMainWindow::locateTarget(const QString &mosaicFolder)
 // the hand-over from the camera to the i1: open it, calibrate it on its tile, then see it go into its cradle
 void LAUGantryMainWindow::startI1()
 {
-    // the slop: every move to a patch adds the correction for the way it leaves X moving, so the i1 lands where the
-    // patch is whichever way the sliders arrive
-    QString slopText;
-    if (loadSlopCorrection()) {
-        slopText = QString("\n\nSlop: each move is corrected by %1 mm in X and %2 mm in Y for the way it arrives, from the slop measured in %3.")
-                       .arg(std::abs(slopCorrX), 0, 'f', 3).arg(std::abs(slopCorrY), 0, 'f', 3).arg(slopCorrSource);
-    } else {
-        slopText = QString("\n\nThe slop hasn't been measured, so the moves aren't corrected for it.");
-    }
+    // the slop: every move to a patch ends the same way, as the fine-tune's do, so the i1 holder hangs the same way
+    const QString slopText = QString("\n\nSlop: every move to a patch ends with the last %1 mm moving X alone to the right, as the corner fine-tune's do.")
+                                 .arg(SLOP_APPROACH_MM, 0, 'f', 0);
     const QMessageBox::StandardButton answer = QMessageBox::information(this, QString("Switching to the i1 Pro"),
         QString("The camera has found all %1 patches. The i1 Pro measures them next.\n\n"
                 "Connect the i1 Pro's USB cable and put it on its white tile, then press OK to calibrate it.").arg(patchStops.count()) + slopText,

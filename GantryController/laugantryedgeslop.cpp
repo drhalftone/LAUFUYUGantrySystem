@@ -910,86 +910,80 @@ void LAUGantryMainWindow::endEdgeSlop(const QString &message)
     cameraWidget->showMessage(message);
 }
 
-// ---- the slop correction, for the corner fine-tune and Go to page position --------------------------------------
+// ---- one-way moves, for the corner fine-tune, Go to page position and the patches -------------------------------
+//
+// The slop isn't only a matter of which way X arrives: a long move, or one with the rail pair moving too, leaves the
+// holder somewhere else than a short X-only move the same way does, and a tiny reversal doesn't take it all up.  So
+// every move ends the same way: first to SLOP_APPROACH_MM short of the target in X (both rails, any direction), then
+// X alone, moving right (X increasing), onto it.  The holder then always hangs the same way at a stop, and that is
+// part of every position found or used.
 
-// the newest hole-slop measurement's correction: X and Y, slider mm, per sign of the last X move
-bool LAUGantryMainWindow::loadSlopCorrection()
+// the newest hole-slop measurement, only to compare the fine-tune's sightings of the hole with
+bool LAUGantryMainWindow::loadSlopTest()
 {
-    slopCorrectionLoaded = false;
     slopHolesKnown = false;
-    slopCorrX = slopCorrY = 0.0;
-    slopCorrSource.clear();
+    slopTestSource.clear();
     QDir base(scanBase);
     for (const QString &name : base.entryList(QStringList{ QString("*_holeslop") }, QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::Reversed)) {
         QFile f(base.filePath(name + QString("/hole_slop.json")));
         const QJsonObject o = f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
-        if (o.contains(QString("correction_x_per_last_x_sign_mm"))) {
-            slopCorrX = o["correction_x_per_last_x_sign_mm"].toDouble();
-            slopCorrY = -0.5 * o["slop_right_minus_left_y_mm"].toDouble();
-            slopCorrSource = name + (o["converged"].toBool() ? QString() : QString(" (not converged)"));
-            slopCorrectionLoaded = true;
-            const QJsonArray left = o["hole_vs_carriage_moving_left_board_mm"].toArray(), right = o["hole_vs_carriage_moving_right_board_mm"].toArray();
-            slopHolesKnown = (left.count() == 2 && right.count() == 2);
-            if (slopHolesKnown) {
-                slopHoleLeft = cv::Point2d(left[0].toDouble(), left[1].toDouble());
-                slopHoleRight = cv::Point2d(right[0].toDouble(), right[1].toDouble());
-            }
+        const QJsonArray left = o["hole_vs_carriage_moving_left_board_mm"].toArray(), right = o["hole_vs_carriage_moving_right_board_mm"].toArray();
+        if (left.count() == 2 && right.count() == 2) {
+            slopHoleLeft = cv::Point2d(left[0].toDouble(), left[1].toDouble());
+            slopHoleRight = cv::Point2d(right[0].toDouble(), right[1].toDouble());
+            slopTestSource = name + (o["converged"].toBool() ? QString() : QString(" (not converged)"));
+            slopHolesKnown = true;
             return true;
         }
     }
     return false;
 }
 
-// a new run of corrected moves: the direction of the last X move isn't known until the first move
+// a new run of one-way moves, and its log
 void LAUGantryMainWindow::resetSlopTracking()
 {
-    slopDir = 0;
-    slopRunX = 0.0;
-    slopLogicalX = railWidget->reportedMM(0);
-    slopLogicalKnown = true;
+    slopLegPending = false;
     slopMoves.clear();
 }
 
-// move to a slop-free position: the correction for the direction this move leaves X moving in is added
+// to (single, pair), the last SLOP_APPROACH_MM of it X alone, moving right
 void LAUGantryMainWindow::moveRailsSlop(double single, double pair, const QString &what)
 {
-    if (slopLogicalKnown) {
-        const double d = single - slopLogicalX;
-        if (std::abs(d) > 0.005) {
-            const int dir = (d > 0.0) ? 1 : -1;
-            slopRunX = (dir == slopDir) ? slopRunX + std::abs(d) : std::abs(d);
-            slopDir = dir;
-        }
-    }
-    slopLogicalX = single;
-    slopLogicalKnown = true;
     SlopMove m;
     m.what = what;
-    m.logicalSingle = single;
-    m.logicalPair = pair;
-    m.dir = slopDir;
-    m.runX = slopRunX;
-    m.shiftX = slopCorrectionLoaded ? slopShiftX() : 0.0;
-    m.shiftY = slopCorrectionLoaded ? slopShiftY() : 0.0;
-    m.commandedSingle = single + m.shiftX;
-    m.commandedPair = pair + m.shiftY;
+    m.single = single;
+    m.pair = pair;
+    m.approachSingle = std::max(single - SLOP_APPROACH_MM, 0.0);
     slopMoves << m;
-    railWidget->moveRails(m.commandedSingle, m.commandedPair);
-}
-
-// a move has ended: where the sliders say they are, against the last corrected move if it hasn't been seen to end
-void LAUGantryMainWindow::noteSlopArrival()
-{
-    if (slopMoves.isEmpty() || slopMoves.last().arrived) {
+    if (single - m.approachSingle < 0.005) {
+        railWidget->moveRails(single, pair);   // at the end of the travel: no room to come from the left
         return;
     }
-    SlopMove &m = slopMoves.last();
-    m.arrived = true;
-    m.reportedSingle = railWidget->reportedMM(0);
-    m.reportedPair = railWidget->reportedMM(2);
+    slopLegPending = true;                   // onHomeFinished sends the last leg
+    railWidget->moveRails(m.approachSingle, pair);
 }
 
-// the corrected moves as a table: one row a move
+// a move has ended.  The first leg of a one-way move: send the last one, and say so (true) so it isn't taken as the
+// end of the move.  Otherwise, where the sliders say they are, for the log.
+bool LAUGantryMainWindow::continueSlopMove(bool ok)
+{
+    if (slopLegPending) {
+        slopLegPending = false;
+        if (ok && !slopMoves.isEmpty()) {
+            railWidget->moveRails(slopMoves.last().single, slopMoves.last().pair);
+            return true;
+        }
+    }
+    if (!slopMoves.isEmpty() && !slopMoves.last().arrived) {
+        SlopMove &m = slopMoves.last();
+        m.arrived = true;
+        m.reportedSingle = railWidget->reportedMM(0);
+        m.reportedPair = railWidget->reportedMM(2);
+    }
+    return false;
+}
+
+// the one-way moves as a table: one row a move
 bool LAUGantryMainWindow::writeSlopMoves(const QString &path) const
 {
     if (slopMoves.isEmpty()) {
@@ -1000,24 +994,20 @@ bool LAUGantryMainWindow::writeSlopMoves(const QString &path) const
         return false;
     }
     QTextStream out(&file);
-    out << "# slop correction: " << (slopCorrectionLoaded ? QString("%1, X %2 mm and Y %3 mm per sign of the last X move")
-                                                                .arg(slopCorrSource).arg(slopCorrX, 0, 'f', 4).arg(slopCorrY, 0, 'f', 4)
-                                                          : QString("none (the slop hasn't been measured)")) << "\n";
-    out << "move,what,arrived,x_run_since_turn_mm,logical_single_mm,logical_pair_mm,shift_single_mm,shift_pair_mm,"
-           "commanded_single_mm,commanded_pair_mm,reported_single_mm,reported_pair_mm\n";
+    out << "# every move ends X alone, moving right, over the last " << QString::number(SLOP_APPROACH_MM, 'f', 1)
+        << " mm: approach_single_mm is where that last leg started\n";
+    out << "move,what,target_single_mm,target_pair_mm,approach_single_mm,reported_single_mm,reported_pair_mm\n";
     for (int k = 0; k < slopMoves.count(); k++) {
         const SlopMove &m = slopMoves[k];
-        out << (k + 1) << ",\"" << m.what << "\"," << slopDirName(m.dir) << "," << QString::number(m.runX, 'f', 3) << ","
-            << QString::number(m.logicalSingle, 'f', 4) << "," << QString::number(m.logicalPair, 'f', 4) << ","
-            << QString::number(m.shiftX, 'f', 4) << "," << QString::number(m.shiftY, 'f', 4) << ","
-            << QString::number(m.commandedSingle, 'f', 4) << "," << QString::number(m.commandedPair, 'f', 4) << ","
+        out << (k + 1) << ",\"" << m.what << "\"," << QString::number(m.single, 'f', 4) << "," << QString::number(m.pair, 'f', 4) << ","
+            << QString::number(m.approachSingle, 'f', 4) << ","
             << (m.arrived ? QString::number(m.reportedSingle, 'f', 4) : QString()) << ","
             << (m.arrived ? QString::number(m.reportedPair, 'f', 4) : QString()) << "\n";
     }
     return true;
 }
 
-// the fine-tune's views of the hole on plain paper, against where the slop test had it for that direction of arrival
+// the fine-tune's views of the hole on plain paper, against where the slop test had it arriving moving right
 bool LAUGantryMainWindow::writeTuneSightings(const QString &path) const
 {
     if (tuneSightings.isEmpty()) {
@@ -1028,28 +1018,36 @@ bool LAUGantryMainWindow::writeTuneSightings(const QString &path) const
         return false;
     }
     QTextStream out(&file);
-    out << "# hole relative to the carriage (board mm, rails at zero). physical: from where the sliders reported; logical: from the "
-           "slop-free position, which is what the fine-tune uses. With the slop corrected, logical should be the same every time, "
-           "and physical should match the slop test's for the same direction of arrival.\n";
-    out << "sighting,corner,inset,found,arrived,x_run_since_turn_mm,shift_single_mm,shift_pair_mm,reported_single_mm,reported_pair_mm,"
-           "physical_x_mm,physical_y_mm,logical_x_mm,logical_y_mm,slop_test_x_mm,slop_test_y_mm,miss_vs_slop_test_mm,note\n";
+    out << "# the hole relative to the carriage (board mm, rails at zero), each arriving X alone moving right. Each corner is "
+           "centred with the hole seen beside it. Differences from place to place are the platen calibration's, not slop.";
+    if (slopHolesKnown) {
+        out << " slop_test: where " << slopTestSource << " had it arriving moving right.";
+    }
+    out << "\n";
+    out << "sighting,corner,inset,found,reported_single_mm,reported_pair_mm,hole_x_mm,hole_y_mm,slop_test_x_mm,slop_test_y_mm,"
+           "from_slop_test_mm,from_first_sighting_mm,note\n";
+    const TuneSighting *first = nullptr;
+    for (const TuneSighting &s : tuneSightings) {
+        if (s.found) {
+            first = &s;
+            break;
+        }
+    }
     for (int k = 0; k < tuneSightings.count(); k++) {
         const TuneSighting &s = tuneSightings[k];
-        out << (k + 1) << "," << s.corner << "," << (s.inset + 1) << "," << (s.found ? 1 : 0) << "," << slopDirName(s.dir) << ","
-            << QString::number(s.runX, 'f', 3) << "," << QString::number(s.shiftX, 'f', 4) << "," << QString::number(s.shiftY, 'f', 4) << ","
+        out << (k + 1) << "," << s.corner << "," << (s.inset + 1) << "," << (s.found ? 1 : 0) << ","
             << QString::number(s.reportedSingle, 'f', 4) << "," << QString::number(s.reportedPair, 'f', 4) << ",";
         if (s.found) {
-            out << QString::number(s.physical.x, 'f', 4) << "," << QString::number(s.physical.y, 'f', 4) << ","
-                << QString::number(s.logical.x, 'f', 4) << "," << QString::number(s.logical.y, 'f', 4) << ",";
-            if (slopHolesKnown && s.dir != 0) {
-                const cv::Point2d expected = (s.dir > 0) ? slopHoleRight : slopHoleLeft;
-                out << QString::number(expected.x, 'f', 4) << "," << QString::number(expected.y, 'f', 4) << ","
-                    << QString::number(cv::norm(s.physical - expected), 'f', 4) << ",";
+            out << QString::number(s.hole.x, 'f', 4) << "," << QString::number(s.hole.y, 'f', 4) << ",";
+            if (slopHolesKnown) {
+                out << QString::number(slopHoleRight.x, 'f', 4) << "," << QString::number(slopHoleRight.y, 'f', 4) << ","
+                    << QString::number(cv::norm(s.hole - slopHoleRight), 'f', 4) << ",";
             } else {
                 out << ",,,";
             }
+            out << QString::number(cv::norm(s.hole - first->hole), 'f', 4) << ",";
         } else {
-            out << ",,,,,,,";
+            out << ",,,,,,";
         }
         out << "\"" << QString(s.why).replace(QChar('"'), QChar('\'')) << "\"\n";
     }
