@@ -31,6 +31,7 @@ from pathlib import Path
 import cadquery as cq
 import trimesh
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
+from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
 from carriage_chain import (L, r, first_link, SWING_CLEAR, LINK_CLEAR, PIN_ABOVE_TABLE, N_LINKS, hinge_half, screw_at,
                             nut_at, carriage_plate, link_pitches, drape_angles, hanging_chain, chain_end, SPANS, KNUCKLE_GAP)
 
@@ -38,6 +39,16 @@ SOURCE = Path(__file__).parent / "xRitei1.stl"
 BAR = 15.0            # solid bar between the hinge leaf line and the cradle's wide end (keeps the link off the i1)
 PLATE_GAP = 8.0       # between parts on the combined print plate
 PIVOT_Z = SWING_CLEAR  # pin above the underside: link knuckle corner reach r * sqrt(2) + SWING_GAP
+
+
+def export_stl(shape, path):
+    """STL without the zero-area slivers OCC's mesher leaves where the big underside rounds meet: those open the mesh."""
+    cq.exporters.export(shape, str(path), tolerance=0.01, angularTolerance=0.1)
+    m = trimesh.load(str(path))
+    m.update_faces(m.nondegenerate_faces())
+    m.merge_vertices()
+    m.remove_unreferenced_vertices()
+    m.export(str(path))
 
 
 def mesh_solid(path):
@@ -62,6 +73,19 @@ CRADLE_H = bb.zlen    # 10.76 at the raised pocket end
 cradle = (cq.Workplane().add(src)
           .rotate((0, 0, 0), (0, 0, 1), 180)
           .translate((L / 2 + (bb.xmin + bb.xmax) / 2, SWING_CLEAR + BAR + bb.ymax, -bb.zmin)))
+
+# Thicker sides: the cradle's walls are about 1.3 mm, too thin to round its underside much.  A solid band SIDE_ADD wide
+# goes around the whole outline, SKIRT_H tall (every wall is 5.26 mm or taller, so it never stands above one), so the
+# underside's outer edge can take the larger UNDER_R_OUT round below: a longer, shallower ramp for a page's edge to
+# ride up and lift over instead of being dragged off the platen.
+SIDE_ADD = 3.5
+SKIRT_H = 5.0
+_c = cradle.val()
+_foot = [f for f in _c.Faces() if abs(f.Center().z) < 1e-3 and f.normalAt().z < -0.999][0]
+_outline = cq.Face.makeFromWires(_foot.outerWire())
+_band = (cq.Workplane("XY").add(cq.Face.makeFromWires(_foot.outerWire().offset2D(SIDE_ADD, "arc")[0])).wires().toPending().extrude(SKIRT_H)
+         .cut(cq.Workplane("XY").add(_outline).wires().toPending().extrude(SKIRT_H)))
+cradle = cradle.union(_band).clean()
 cb = cradle.val().BoundingBox()
 
 bar = (cq.Workplane("XY").box(cb.xlen, BAR + 0.01, CRADLE_H, centered=False)
@@ -79,12 +103,25 @@ xrite_plate = xrite_plate.union(filler).clean()
 
 # Round the underside's edges so the plate slides over a sheet's edge instead of catching and tearing it: the
 # outline and the triangular opening.  The measuring aperture stays sharp (it's in the 1 mm floor, and the i1 reads there).
+# The outer edge takes the larger round the thicker sides allow; the hinge end (bar and knuckle, which the chain
+# link swings past) and the triangular opening keep UNDER_R.
 UNDER_R = 2.0         # walls above these edges are 5.26 mm or taller
+UNDER_R_OUT = 4.5     # outer edge, on the SIDE_ADD band: a page's edge meets it at about 12 deg where it is 0.1 mm up
 _s = xrite_plate.val()
 _under = [f for f in _s.Faces() if abs(f.Center().z) < 1e-3 and f.normalAt().z < -0.999][0]
 _aperture = min(_under.innerWires(), key=lambda w: w.BoundingBox().xlen)
-xrite_plate = cq.Workplane("XY").add(_s.fillet(UNDER_R, [e for w in _under.Wires() if not w.isSame(_aperture)
-                                                           for e in w.Edges()]))
+_hinge_end = SWING_CLEAR + BAR - 1.0  # edges nearer the pin axis than this belong to the bar and knuckle
+_fillet = BRepFilletAPI_MakeFillet(_s.wrapped)
+for _w in _under.Wires():
+    if _w.isSame(_aperture):
+        continue
+    for _e in _w.Edges():
+        _big = _w.isSame(_under.outerWire()) and _e.Center().y > _hinge_end
+        _fillet.Add(UNDER_R_OUT if _big else UNDER_R, _e.wrapped)
+_fillet.Build()
+if not _fillet.IsDone():
+    raise RuntimeError("the underside rounds failed")
+xrite_plate = cq.Workplane("XY").add(cq.Shape.cast(_fillet.Shape()))
 
 # Aperture centre in the plate frame (source ring centre 35.85, 51.29)
 APERTURE = (L / 2 + (bb.xmin + bb.xmax) / 2 - 35.85, SWING_CLEAR + BAR + bb.ymax - 51.29)
@@ -113,7 +150,7 @@ def chain_with_plate(pin_above_table=PIN_ABOVE_TABLE, n=N_LINKS):
 if __name__ == "__main__":
     here = Path(__file__).parent
     cq.exporters.export(xrite_plate, str(here / "xrite_i1_plate.step"))
-    cq.exporters.export(xrite_plate, str(here / "xrite_i1_plate.stl"), tolerance=0.01, angularTolerance=0.1)
+    export_stl(xrite_plate, here / "xrite_i1_plate.stl")
     b = xrite_plate.val().BoundingBox()
     print(f"i1 plate {b.xlen:.1f} x {b.ylen:.1f} x {b.zlen:.2f} mm, aperture at "
           f"({APERTURE[0]:.2f}, {APERTURE[1]:.2f}) from the hinge end / pin axis")
@@ -125,7 +162,7 @@ if __name__ == "__main__":
         tray.append(part.translate((x - pb.xmin, -pb.ymin, -pb.zmin)).val())
         x += pb.xlen + PLATE_GAP
     tray = cq.Workplane("XY").add(cq.Compound.makeCompound(tray))
-    cq.exporters.export(tray, str(here / "chain_print_plate.stl"), tolerance=0.01, angularTolerance=0.1)
+    export_stl(tray, here / "chain_print_plate.stl")
     tb = tray.val().BoundingBox()
     print(f"chain_print_plate.stl  {tb.xlen:.1f} x {tb.ylen:.1f} x {tb.zlen:.2f} mm")
 
