@@ -866,6 +866,13 @@ void LAUGantryMainWindow::finishTune()
                                         "Go to page position now puts the hole anywhere on the %4 x %5 mm page.")
                         .arg(QDir::toNativeSeparators(tuneFolder)).arg(worstNudge, 0, 'f', 2).arg(worstLeft, 0, 'f', 2).arg(pageW, 0, 'f', 1).arg(pageH, 0, 'f', 1)
                   : QString("Couldn't save the page-corner correction in %1").arg(QDir::toNativeSeparators(tuneFolder)));
+    if (saved && mapped &&
+        QMessageBox::question(this, QString("Fine-tune Page Corners"),
+                              QString("Check the corners now? The sliders visit each corner again, a few times, and the camera measures how far "
+                                      "it is from the hole's centre."),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes) == QMessageBox::Yes) {
+        onCornerCheckRequested();
+    }
 }
 
 // The page's own coordinates to slider positions: mm from the page's top-left corner as the merged picture shows it,

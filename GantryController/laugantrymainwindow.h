@@ -83,6 +83,7 @@ private slots:
     void onImageScanRequested();
     void onCornerTuneRequested();
     void onPagePositionRequested();
+    void onCornerCheckRequested();
     void onEdgeSlopRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
@@ -315,6 +316,50 @@ private:
     void nextTuneCorner();
     void finishTune();
     void endTune(const QString &message);
+
+    // Check page corners (laugantrycheck.cpp): the sliders visit the four fine-tuned corners round after round, with
+    // the one-way approach; at each visit the hole is seen on plain paper beside the corner, then the camera finds the
+    // corner and measures how far it is from the hole's centre.  The spread over the rounds is the repeatability.
+    struct CheckCorner
+    {
+        QString name;
+        cv::Point2d board;                   // the corner, board mm
+        double single = 0.0, pair = 0.0;     // where the fine-tune put it (page_sliders.json)
+        bool tunedHoleKnown = false;
+        cv::Point2d tunedHole;               // the hole the fine-tune centred it with, rails at zero
+        QList<cv::Point2d> insets;           // plain paper beside it, slider mm, nearest first
+        int insetUsed = 0;                   // the one the hole was last seen on, tried first
+    };
+    struct CheckVisit
+    {
+        int round = 0, corner = 0, inset = 0;
+        bool holeFound = false;
+        cv::Point2d hole;                    // seen on plain paper on this visit, rails at zero
+        QString holeWhy;
+        double single = 0.0, pair = 0.0;     // reported, over the corner
+        bool found = false;
+        cv::Point2d miss, missTuned;         // the corner less the hole's centre: this visit's hole, and the fine-tune's
+        double missSingle = 0.0, missPair = 0.0;   // the move that would close the miss, slider mm
+        QString why;
+    };
+    enum CheckStage { CheckToInset, CheckToCorner };
+    bool checking = false, checkCancelling = false, checkWaitingFrame = false;
+    CheckStage checkStage = CheckToInset;
+    QTimer *checkTimer = nullptr;
+    QString checkFolder;
+    QList<CheckCorner> checkCorners;
+    QList<CheckVisit> checkVisits;
+    int checkRounds = 3, checkRound = 0, checkIndex = 0, checkInsetTry = 0;
+    CheckVisit checkVisit;                   // the visit under way
+    cv::Mat checkWindow;
+    void checkNextVisit();
+    void onCheckMoveFinished(bool ok, const QString &message);
+    void onCheckTimer();
+    void onCheckFrame(const cv::Mat &raw16);
+    void onCheckAbort();
+    void showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text);
+    void finishCheck(const QString &stopped);
+    void endCheck(const QString &message);
 
     void returnHomeAfterScan();
     void wrapUp();

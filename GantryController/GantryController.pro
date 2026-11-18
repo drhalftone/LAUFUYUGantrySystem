@@ -47,7 +47,7 @@ HEADERS += \
 SOURCES += \
     main.cpp \
     laugantrymainwindow.cpp \
-    laugantrymeasure.cpp     laugantrytune.cpp     laugantryedgeslop.cpp     laucornertunedialog.cpp     lauholeview.cpp \
+    laugantrymeasure.cpp     laugantrytune.cpp     laugantrycheck.cpp     laugantryedgeslop.cpp     laucornertunedialog.cpp     lauholeview.cpp \
     lauplatenmosaic.cpp \
     lauimageinspectdialog.cpp \
     lauplatenoverlay.cpp \
