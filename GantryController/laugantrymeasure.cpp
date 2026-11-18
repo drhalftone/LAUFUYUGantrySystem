@@ -200,9 +200,18 @@ void LAUGantryMainWindow::locateTarget(const QString &mosaicFolder)
 // the hand-over from the camera to the i1: open it, calibrate it on its tile, then see it go into its cradle
 void LAUGantryMainWindow::startI1()
 {
+    // the slop: every move to a patch adds the correction for the way it leaves X moving, so the i1 lands where the
+    // patch is whichever way the sliders arrive
+    QString slopText;
+    if (loadSlopCorrection()) {
+        slopText = QString("\n\nSlop: each move is corrected by %1 mm in X and %2 mm in Y for the way it arrives, from the slop measured in %3.")
+                       .arg(std::abs(slopCorrX), 0, 'f', 3).arg(std::abs(slopCorrY), 0, 'f', 3).arg(slopCorrSource);
+    } else {
+        slopText = QString("\n\nThe slop hasn't been measured, so the moves aren't corrected for it.");
+    }
     const QMessageBox::StandardButton answer = QMessageBox::information(this, QString("Switching to the i1 Pro"),
         QString("The camera has found all %1 patches. The i1 Pro measures them next.\n\n"
-                "Connect the i1 Pro's USB cable and put it on its white tile, then press OK to calibrate it.").arg(patchStops.count()),
+                "Connect the i1 Pro's USB cable and put it on its white tile, then press OK to calibrate it.").arg(patchStops.count()) + slopText,
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok);
     if (answer != QMessageBox::Ok) {
         cameraWidget->showMessage(QString("The patches were found but not measured."));
@@ -266,6 +275,7 @@ void LAUGantryMainWindow::onI1Ready(bool ok, QString message, int serial)
     homeDialog->setWindowTitle(QString("Measuring the Target"));
     connect(homeDialog, &LAUHomeDialog::emitAbort, this, &LAUGantryMainWindow::onMeasureAbort);
     homeDialog->open();
+    resetSlopTracking();
     moveToNextPatch();
 }
 
@@ -274,7 +284,7 @@ void LAUGantryMainWindow::moveToNextPatch()
     const PatchStop &stop = patchStops.at(patchIndex);
     homeDialog->setMessage(QString("Measuring patch %1 (%2 of %3)...").arg(measureTarget.patches.at(stop.patch).location).arg(patchIndex + 1).arg(patchStops.count()));
     homeDialog->setProgress(patchIndex, patchStops.count());
-    railWidget->moveRails(stop.singleMM, stop.pairMM);
+    moveRailsSlop(stop.singleMM, stop.pairMM);
 }
 
 void LAUGantryMainWindow::onPatchMoveFinished(bool ok, const QString &message)
