@@ -182,7 +182,8 @@ cv::Mat LAUHoleView::ortho(const cv::Mat &gray, double pairMM, double singleMM, 
     return out;
 }
 
-bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &guess, Hole *hole, QString *why, cv::Mat *check) const
+bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &guess, Hole *hole, QString *why, cv::Mat *check,
+                           bool printAllowed) const
 {
     if (!valid) {
         *why = QString("There's no platen calibration to see the hole with.");
@@ -274,23 +275,30 @@ bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, 
         return false;
     }
     const double mean = coreCount ? sum / coreCount : 0.0, spread = coreCount ? std::sqrt(std::max(sum2 / coreCount - mean * mean, 0.0)) : 1e9;
-    if (spread > MAX_PAPER_SPREAD * mean) {
+    if (!printAllowed && spread > MAX_PAPER_SPREAD * mean) {
         *why = QString("Something is printed on the paper under the hole.");
         return false;
     }
 
-    double sw = 0.0, sx = 0.0, sy = 0.0;
-    for (int r = 0; r < n; r++) {
-        for (int c = 0; c < n; c++) {
-            if (region.at<uchar>(r, c)) {
-                const double wgt = std::min(std::max((L.at<float>(r, c) - black) / (white - black), 0.0), 1.0);
-                sw += wgt;
-                sx += wgt * c;
-                sy += wgt * r;
+    cv::Point2d visible;
+    if (printAllowed) {
+        // the convex outline's centre: print inside the disc doesn't move it
+        const cv::Moments m = cv::moments(body, true);
+        visible = cv::Point2d(guess.x - WINDOW_HALF + m.m10 / m.m00 * RES, guess.y - WINDOW_HALF + m.m01 / m.m00 * RES);
+    } else {
+        double sw = 0.0, sx = 0.0, sy = 0.0;
+        for (int r = 0; r < n; r++) {
+            for (int c = 0; c < n; c++) {
+                if (region.at<uchar>(r, c)) {
+                    const double wgt = std::min(std::max((L.at<float>(r, c) - black) / (white - black), 0.0), 1.0);
+                    sw += wgt;
+                    sx += wgt * c;
+                    sy += wgt * r;
+                }
             }
         }
+        visible = cv::Point2d(guess.x - WINDOW_HALF + sx / sw * RES, guess.y - WINDOW_HALF + sy / sw * RES);
     }
-    const cv::Point2d visible(guess.x - WINDOW_HALF + sx / sw * RES, guess.y - WINDOW_HALF + sy / sw * RES);
     // the plate's rim, above the paper, hides one side of the disc: its visible centroid sits half the rim's shift off
     const cv::Vec3d C = C0 + ex * pairMM + ey * singleMM;
     cv::Point2d c = visible;
@@ -314,6 +322,92 @@ bool LAUHoleView::findHole(const cv::Mat &gray, double pairMM, double singleMM, 
         cv::drawMarker(*check, at, cv::Scalar(0, 200, 0), cv::MARKER_CROSS, 40, 2);
         cv::circle(*check, at, (int)std::lround(APERTURE_RADIUS_MM / RES), cv::Scalar(0, 200, 0), 1, cv::LINE_AA);
     }
+    return true;
+}
+
+bool LAUHoleView::findMark(const cv::Mat &gray, double pairMM, double singleMM, const Hole &hole, const cv::Point2d &expected, double minMM2, double maxMM2,
+                           cv::Point2d *at, double *areaMM2, QString *why) const
+{
+    if (!valid || hole.window.empty()) {
+        *why = QString("The hole wasn't found, so there's nothing to look for the mark in.");
+        return false;
+    }
+    // the paper square-on around the hole; the window lines up with it (findHole recentred it on the hole)
+    const cv::Mat L = ortho(gray, pairMM, singleMM, hole.centre, WINDOW_HALF, RES);
+    const int n = L.cols;
+    cv::Mat inside;
+    const int in = (int)std::lround(2.0 * 0.3 / RES) | 1;    // clear of the rim's soft edge
+    cv::erode(hole.window, inside, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(in, in)));
+    std::vector<double> paper;
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (inside.at<uchar>(r, c)) {
+                paper.push_back(L.at<float>(r, c));
+            }
+        }
+    }
+    if (paper.empty()) {
+        *why = QString("The hole shows no paper.");
+        return false;
+    }
+    const double white = percentileOf(paper, 90.0);
+    cv::Mat dark = cv::Mat::zeros(L.size(), CV_8U);
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (inside.at<uchar>(r, c) && L.at<float>(r, c) < 0.5 * white) {
+                dark.at<uchar>(r, c) = 255;
+            }
+        }
+    }
+    cv::Mat lab, stats, centroids;
+    const int count = cv::connectedComponentsWithStats(dark, lab, stats, centroids);
+    cv::Mat core;                            // a mark reaching the paper's edge is cut off by the rim
+    cv::erode(inside, core, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+    const cv::Mat edgeBand = inside & ~core;
+    int best = -1;
+    double bestDistance = 1e12;
+    for (int k = 1; k < count; k++) {
+        const double area = stats.at<int>(k, cv::CC_STAT_AREA) * RES * RES;
+        if (area < minMM2 || area > maxMM2 || cv::countNonZero((lab == k) & edgeBand) > 0) {
+            continue;
+        }
+        const cv::Point2d centre(hole.centre.x - WINDOW_HALF + centroids.at<double>(k, 0) * RES, hole.centre.y - WINDOW_HALF + centroids.at<double>(k, 1) * RES);
+        const double d = cv::norm(centre - expected);
+        if (d < bestDistance) {
+            bestDistance = d;
+            best = k;
+        }
+    }
+    if (best < 0) {
+        *why = QString("No whole mark of the right size is inside the hole.");
+        return false;
+    }
+    // its centre, each pixel around it weighted by how dark it is, so the soft edges count in proportion
+    cv::Mat around;
+    cv::dilate(cv::Mat(lab == best), around, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9)));
+    around &= inside;
+    std::vector<double> ink;
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (lab.at<int>(r, c) == best) {
+                ink.push_back(L.at<float>(r, c));
+            }
+        }
+    }
+    const double black = percentileOf(ink, 10.0);
+    double sw = 0.0, sx = 0.0, sy = 0.0;
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            if (around.at<uchar>(r, c)) {
+                const double w = std::min(std::max((white - L.at<float>(r, c)) / std::max(white - black, 1.0), 0.0), 1.0);
+                sw += w;
+                sx += w * c;
+                sy += w * r;
+            }
+        }
+    }
+    *at = cv::Point2d(hole.centre.x - WINDOW_HALF + sx / sw * RES, hole.centre.y - WINDOW_HALF + sy / sw * RES);
+    *areaMM2 = stats.at<int>(best, cv::CC_STAT_AREA) * RES * RES;
     return true;
 }
 

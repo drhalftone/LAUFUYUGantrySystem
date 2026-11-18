@@ -318,7 +318,8 @@ void LAUGantryMainWindow::onCheckFrame(const cv::Mat &raw16)
 // The camera's own picture around the hole, enlarged, as the live view and the fine-tune's close-up show it (not the
 // paper square-on in board mm, which is mirrored from the camera's view): the hole as a bullseye, and what was found of
 // the corner.  Board points are projected into the frame with the platen calibration.
-void LAUGantryMainWindow::showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text)
+void LAUGantryMainWindow::showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text,
+                                        const cv::Point2d *mark)
 {
     if (!homeDialog || gray.empty()) {
         return;
@@ -396,6 +397,12 @@ void LAUGantryMainWindow::showCheckZoom(const cv::Mat &gray, const cv::Point2d &
             cv::line(colour, k - cv::Point(arm / 2, -arm / 2), k + cv::Point(arm / 2, -arm / 2), magenta, 2, cv::LINE_AA, 4);
             cv::line(colour, mid, k, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
         }
+    }
+    cv::Point m;
+    if (mark && onBoard(*mark, &m)) {
+        cv::line(colour, m - cv::Point(arm / 2, arm / 2), m + cv::Point(arm / 2, arm / 2), magenta, 2, cv::LINE_AA, 4);
+        cv::line(colour, m - cv::Point(arm / 2, -arm / 2), m + cv::Point(arm / 2, -arm / 2), magenta, 2, cv::LINE_AA, 4);
+        cv::line(colour, mid, m, cv::Scalar(255, 255, 255), 1, cv::LINE_AA, 4);
     }
     cv::putText(colour, text.toStdString(), cv::Point(10, 22), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
     cv::putText(colour, QString("green hole (rings 1 mm)  cyan edges  magenta corner  %1 mm across").arg(2 * CHECK_ZOOM_HALF_MM, 0, 'f', 0).toStdString(),

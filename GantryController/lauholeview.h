@@ -44,8 +44,16 @@ public:
         cv::Point2d ellipseCentre;
         double ellipseSemiA = 0.0, ellipseSemiB = 0.0, ellipseAngleDeg = 0.0;   // semi-axes, and the A axis from board X
     };
-    // guess: where the calibration puts the hole, board mm
-    bool findHole(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &guess, Hole *hole, QString *why, cv::Mat *check = nullptr) const;
+    // guess: where the calibration puts the hole, board mm.  printAllowed: something may be printed on the paper under
+    // the hole (a mark to be found in it): the hole is then the centre of the disc's convex outline, which the print
+    // doesn't change, rather than of its brightness
+    bool findHole(const cv::Mat &gray, double pairMM, double singleMM, const cv::Point2d &guess, Hole *hole, QString *why, cv::Mat *check = nullptr,
+                  bool printAllowed = false) const;
+
+    // A dark printed mark (a registration diamond, say) wholly inside the hole found by findHole(.., printAllowed): the
+    // one nearest expected whose area is between minMM2 and maxMM2, its centre by darkness, board mm
+    bool findMark(const cv::Mat &gray, double pairMM, double singleMM, const Hole &hole, const cv::Point2d &expected, double minMM2, double maxMM2,
+                  cv::Point2d *at, double *areaMM2, QString *why) const;
 
     struct Corner
     {

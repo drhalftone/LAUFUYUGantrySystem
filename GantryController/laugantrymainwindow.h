@@ -84,6 +84,7 @@ private slots:
     void onCornerTuneRequested();
     void onPagePositionRequested();
     void onCornerCheckRequested();
+    void onMarkCheckRequested();
     void onEdgeSlopRequested();
     void onScanFrame(cv::Mat raw16, double exposureMs);
     void onScanTimer();
@@ -357,9 +358,51 @@ private:
     void onCheckTimer();
     void onCheckFrame(const cv::Mat &raw16);
     void onCheckAbort();
-    void showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text);
+    void showCheckZoom(const cv::Mat &gray, const cv::Point2d &hole, const LAUHoleView::Corner *corner, const QString &text,
+                       const cv::Point2d *mark = nullptr);
     void finishCheck(const QString &stopped);
     void endCheck(const QString &message);
+
+    // Check side marks (laugantrymarks.cpp): the registration diamonds down the sides of a chart, found in the newest
+    // scan's merged picture, each visited once with the one-way approach the patches use.  The diamonds sit in plain
+    // margin, so the hole and the diamond are both measured in the same frame: how far the diamond is from the hole's
+    // centre is how far the i1 would land from where it was sent.
+    struct MarkStop
+    {
+        int column = 0, index = 0;
+        cv::Point2d picture, board;
+        double single = 0.0, pair = 0.0;
+    };
+    struct MarkVisit
+    {
+        int stop = 0;
+        double single = 0.0, pair = 0.0;     // reported
+        bool holeFound = false;
+        cv::Point2d hole;                    // board mm, at these rails
+        QString holeWhy;
+        bool found = false;
+        cv::Point2d mark;
+        double areaMM2 = 0.0;
+        cv::Point2d miss;                    // the diamond less the hole's centre, board mm
+        double missSingle = 0.0, missPair = 0.0;   // the slider move that would close it
+        QString why;
+    };
+    bool markChecking = false, markCancelling = false, markWaitingFrame = false;
+    QTimer *markTimer = nullptr;
+    QString markFolder;
+    LAUPlatenGeometry markGeometry;
+    cv::Point2d markAperture;                // where to look for the hole, rails at zero
+    double markAreaMM2 = 6.0;                // the diamonds' area as the merged picture shows them
+    QList<MarkStop> markStops;
+    QList<MarkVisit> markVisits;
+    int markIndex = 0;
+    bool findSideMarks(const cv::Mat &mosaic, const std::vector<cv::Point2d> &page, QList<MarkStop> *stops, cv::Mat *check, QString *why);
+    void markNextVisit();
+    void onMarkMoveFinished(bool ok, const QString &message);
+    void onMarkTimer();
+    void onMarkFrame(const cv::Mat &raw16);
+    void onMarkAbort();
+    void finishMarks(const QString &stopped);
 
     void returnHomeAfterScan();
     void wrapUp();

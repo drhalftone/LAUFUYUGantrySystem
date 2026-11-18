@@ -415,6 +415,10 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
     checkAction->setEnabled(false);
     connect(checkAction, &QAction::triggered, this, [this]() { emit emitCornerCheckRequested(); });
     addAction(checkAction);
+    markAction = new QAction(QString("Check side marks..."), this);
+    markAction->setEnabled(false);
+    connect(markAction, &QAction::triggered, this, [this]() { emit emitMarkCheckRequested(); });
+    addAction(markAction);
     pageGoAction = new QAction(QString("Go to page position..."), this);
     pageGoAction->setEnabled(false);
     connect(pageGoAction, &QAction::triggered, this, [this]() { emit emitPagePositionRequested(); });
@@ -442,6 +446,7 @@ void LAUBreadboardCalibrationWidget::enablePlatenScan()
         tuneAction->setEnabled(true);
         pageGoAction->setEnabled(true);
         checkAction->setEnabled(true);
+        markAction->setEnabled(true);
         edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
         setStatus(result.message);
@@ -457,6 +462,7 @@ void LAUBreadboardCalibrationWidget::beginScan()
     tuneAction->setEnabled(false);
     pageGoAction->setEnabled(false);
     checkAction->setEnabled(false);
+    markAction->setEnabled(false);
     edgeSlopAction->setEnabled(false);
     scanTargetAction->setEnabled(false);
     grabber->setAutoExposure(false);
@@ -473,6 +479,7 @@ void LAUBreadboardCalibrationWidget::endScan(const QString &message)
     tuneAction->setEnabled(true);
     pageGoAction->setEnabled(true);
     checkAction->setEnabled(true);
+    markAction->setEnabled(true);
     edgeSlopAction->setEnabled(true);
     scanTargetAction->setEnabled(true);
     setStatus(message);
@@ -487,6 +494,7 @@ void LAUBreadboardCalibrationWidget::lockScanActions(bool locked)
     tuneAction->setEnabled(!locked);
     pageGoAction->setEnabled(!locked);
     checkAction->setEnabled(!locked);
+    markAction->setEnabled(!locked);
     edgeSlopAction->setEnabled(!locked);
     scanTargetAction->setEnabled(!locked);
 }
@@ -552,6 +560,7 @@ void LAUBreadboardCalibrationWidget::applyResult(const LAUBreadboardCalibrationR
         tuneAction->setEnabled(true);
         pageGoAction->setEnabled(true);
         checkAction->setEnabled(true);
+        markAction->setEnabled(true);
         edgeSlopAction->setEnabled(true);
         scanTargetAction->setEnabled(true);
     }

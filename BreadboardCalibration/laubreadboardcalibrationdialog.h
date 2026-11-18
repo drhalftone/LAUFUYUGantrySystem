@@ -115,6 +115,7 @@ signals:
     void emitScanRequested(bool withTarget);
     void emitImageScanRequested();           // a picture of whatever is on the platen, merged against the platen calibration
     void emitCornerTuneRequested();
+    void emitMarkCheckRequested();           // visit the registration diamonds down a chart's sides and measure each in the hole
     void emitCornerCheckRequested();         // visit the fine-tuned corners again and measure how close each comes
     void emitPagePositionRequested();        // move the i1's hole to a point given in mm on the page
     void emitEdgeSlopRequested();            // measure the slop by tracking where the hole lands after moving each way
@@ -151,6 +152,7 @@ private:
     QAction *tuneAction = nullptr;
     QAction *pageGoAction = nullptr;
     QAction *checkAction = nullptr;
+    QAction *markAction = nullptr;
     QAction *edgeSlopAction = nullptr;
     LAULiveCalibrationDialog *liveDialog = nullptr;
     bool liveInFlight = false;                   // a frame requested for the live dialog hasn't come back yet
